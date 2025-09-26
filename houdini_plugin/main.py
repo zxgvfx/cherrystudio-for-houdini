@@ -77,15 +77,15 @@ def create_window(load_url: str):
         pass
 
     def _on_load_finished(ok: bool):
-        print(f"[web] loadFinished: {ok}")
+        pass
         if not ok:
             page: QWebEnginePage = web.page()
             pageUrl = page.url().toString()
-            print(f"[web] failed url: {pageUrl}")
+            pass
 
     def _on_render_terminated(status, exitCode):
         # PySide6 >=6.5: status is QWebEnginePage.RenderProcessTerminationStatus
-        print(f"[web] render process terminated: status={status} code={exitCode}")
+        pass
 
     def inject_electron_api():
         """注入真正的 Electron API 到页面"""
@@ -93,14 +93,12 @@ def create_window(load_url: str):
         scripts = [
             # 第一步：检查 Qt 对象
             """
-            console.log('[Houdini] Checking Qt objects...');
-            console.log('[Houdini] window.qt:', window.qt);
-            console.log('[Houdini] window.qt.electron:', window.qt?.electron);
+            // Checking Qt objects
             """,
-            
+
             # 第二步：注入 Electron API
             """
-            console.log('[Houdini] Injecting Electron API...');
+            // Injecting Electron API
             // 强制标记 Houdini 环境，避免 Cherry 误判为 Electron
             window.houdini = true;
             if (!window.__cherry_electron_injected) { window.__cherry_electron_injected = true; }
@@ -113,14 +111,14 @@ def create_window(load_url: str):
                             const result = await window.qt.electron.invoke(channel, ...args);
                             return JSON.parse(result);
                         }
-                    } catch (e) { console.error('[Houdini] IPC invoke error:', e); }
+                    } catch (e) { /* IPC invoke error */ }
                     return null;
                 };
             }
             if (typeof ipc.send !== 'function') {
                 ipc.send = (channel, ...args) => {
                     try { if (window.qt?.electron?.send) { window.qt.electron.send(channel, ...args); } }
-                    catch (e) { console.error('[Houdini] IPC send error:', e); }
+                    catch (e) { /* IPC send error */ }
                 };
             }
             if (typeof ipc.on !== 'function') {
@@ -130,20 +128,20 @@ def create_window(load_url: str):
                             const listenerId = window.qt.electron.on(channel);
                             return () => window.qt.electron.removeListener(channel, listenerId);
                         }
-                    } catch (e) { console.error('[Houdini] IPC on error:', e); }
+                    } catch (e) { /* IPC on error */ }
                     return () => {};
                 };
             }
             if (typeof ipc.removeListener !== 'function') {
                 ipc.removeListener = (channel, callback) => {
                     try { if (window.qt?.electron?.removeListener) { window.qt.electron.removeListener(channel, callback); } }
-                    catch (e) { console.error('[Houdini] IPC removeListener error:', e); }
+                    catch (e) { /* IPC removeListener error */ }
                 };
             }
             if (typeof ipc.removeAllListeners !== 'function') {
                 ipc.removeAllListeners = (channel) => {
                     try { if (window.qt?.electron?.removeAllListeners) { window.qt.electron.removeAllListeners(channel); } }
-                    catch (e) { console.error('[Houdini] IPC removeAllListeners error:', e); }
+                    catch (e) { /* IPC removeAllListeners error */ }
                 };
             }
             __electron.ipcRenderer = ipc;
@@ -189,7 +187,7 @@ def create_window(load_url: str):
                         return JSON.parse(result);
                     }
                     return result ?? null;
-                } catch (e) {
+                    } catch (e) {
                     console.error('[Houdini] setLanguage error:', e);
                     return null;
                 }
@@ -215,10 +213,10 @@ def create_window(load_url: str):
                         return JSON.parse(result);
                     }
                     return result ?? 1.0;
-                } catch (e) {
+                    } catch (e) {
                     console.error('[Houdini] handleZoomFactor error:', e);
                     return 1.0;
-                }
+                    }
             };
             __api.setLanguage = async (lang) => {
                 try { return await window.qt?.api?.setLanguage?.(lang) ?? null; } catch (e) { console.error('[Houdini] setLanguage error:', e); return null; }
@@ -674,6 +672,38 @@ def create_window(load_url: str):
             __api.getTheme = async () => { try { return await window.qt?.api?.getTheme?.() } catch(e) { return 'light' } };
             __api.setProxy = async (cfg) => { try { return await window.qt?.api?.setProxy?.(JSON.stringify(cfg||{})) } catch(e) { return true } };
             __api.reload = () => { try { location.reload() } catch(e) {} };
+            __api.openWebsite = async (url) => {
+                try {
+                    if (url && window.qt?.api?.openWebsite) { return await window.qt.api.openWebsite(url); }
+                } catch (e) {}
+                try { window.open(url, '_blank'); return true; } catch (e) { return false; }
+            };
+            // 兼容某些路径使用 openExternal
+            __api.openExternal = async (url) => { return __api.openWebsite(url); };
+            // 兼容 Electron shell.openExternal
+            __electron.shell = __electron.shell || {};
+            __electron.shell.openExternal = async (url) => { return __api.openWebsite(url); };
+            // 顶层帮助方法
+            window.openExternal = async (url) => { return __api.openWebsite(url); };
+            // 拦截外链点击，确保能在 Houdini 中打开
+            try {
+              document.addEventListener('click', function(ev){
+                const el = ev.target && ev.target.closest ? ev.target.closest('a,button,[data-open-external]') : null;
+                if (!el) return;
+                const explicit = el.getAttribute && (el.getAttribute('data-open-external') === '1');
+                const href = el.getAttribute && el.getAttribute('href');
+                const url = el.dataset && el.dataset.url ? el.dataset.url : href;
+                const isAnchor = el.tagName === 'A' && url && /^https?:/i.test(url);
+                const targetBlank = el.getAttribute && (el.getAttribute('target') === '_blank');
+                const rel = (el.getAttribute && el.getAttribute('rel')) || '';
+                const relExternal = /noopener|noreferrer/.test(rel);
+                if (explicit || isAnchor || targetBlank || relExternal) {
+                  if (url && /^https?:/i.test(url)) {
+                    try { ev.preventDefault(); __api.openWebsite(url); } catch(e) {}
+                  }
+                }
+              }, true);
+            } catch (e) {}
             // 补齐 windowControls 能力，供原版 UI 使用
             __api.windowControls = __api.windowControls || {
                 minimize: async () => { try { await window.qt?.api?.minimize?.() } catch(e) {} },
@@ -745,31 +775,100 @@ def create_window(load_url: str):
             __api.ollama = {
                 listModels: async (options) => {
                     try {
-                        return await window.qt?.network?.ollamaListModels?.(JSON.stringify(options || {})) ?? [];
+                        const payload = options ? JSON.stringify(options) : '{}'
+                        const result = await window.qt?.network?.ollamaListModels?.(payload)
+                        return JSON.parse(result ?? '[]')
                     } catch (e) {
-                        console.error('[Houdini] ollama.listModels error:', e);
-                        return [];
+                        console.error('[Houdini] ollama.listModels error:', e)
+                        return []
                     }
                 },
                 pullModel: async (options) => {
                     try {
-                        return await window.qt?.network?.ollamaPullModel?.(JSON.stringify(options || {})) ?? { success: false };
+                        const payload = options ? JSON.stringify(options) : '{}'
+                        const result = await window.qt?.network?.ollamaPullModel?.(payload)
+                        return JSON.parse(result ?? '{"success":false}')
                     } catch (e) {
-                        console.error('[Houdini] ollama.pullModel error:', e);
-                        return { success: false, error: String(e) };
+                        console.error('[Houdini] ollama.pullModel error:', e)
+                        return { success: false, error: String(e) }
                     }
                 }
-            };
+            }
             __api.models = {
                 list: async (config) => {
                     try {
-                        return await window.qt?.network?.modelList?.(JSON.stringify(config || {})) ?? [];
+                        // Process models.list request
+                        
+                        // 检查是否是 Ollama 请求（Cherry Studio 使用 /v1/models 端点）
+                        if (config?.url && (config.url.includes('/v1/models') || config.url.includes('/api/tags'))) {
+                            // Handle Ollama request
+                            
+                            // 提取主机地址
+                            let host = 'http://localhost:11434'
+                            try {
+                                const urlObj = new URL(config.url)
+                                host = `${urlObj.protocol}//${urlObj.host}`
+                                // Host extracted successfully
+                            } catch (e) {
+                                // Use default host
+                            }
+                            
+                            const ollamaOptions = JSON.stringify({ host })
+                            const ollamaResult = await window.qt?.network?.ollamaListModels?.(ollamaOptions)
+                            const parsedResult = JSON.parse(ollamaResult ?? '{"object": "list", "data": []}')
+                            
+                            // 确保返回 Cherry Studio 期望的格式
+                            if (parsedResult && typeof parsedResult === 'object') {
+                                return parsedResult
+                            }
+                            return { object: 'list', data: [] }
+                        }
+                        
+                        // 否则使用通用的 modelList，并带端点回退
+                        const tryFetchModels = async (targetUrl) => {
+                            const req = { ...(config || {}), url: targetUrl };
+                            const payload = JSON.stringify(req);
+                            const result = await window.qt?.network?.modelList?.(payload);
+                            try { return JSON.parse(result ?? '[]'); } catch { return []; }
+                        };
+
+                        const url = String(config?.url || '');
+                        // 提取 base，移除常见尾部
+                        let base = url.replace(/\/(openai\/)?v1\/models$/i, '')
+                                      .replace(/\/models$/i, '');
+                        if (!base) base = url;
+
+                        const candidates = [];
+                        // 优先原始
+                        if (url) candidates.push(url);
+                        // 常见兼容端点
+                        candidates.push(
+                            base.replace(/\/$/, '') + '/v1/models',
+                            base.replace(/\/$/, '') + '/models',
+                            base.replace(/\/$/, '') + '/openai/v1/models'
+                        );
+                        // 去重
+                        const seen = new Set();
+                        const unique = candidates.filter(u => { if (seen.has(u)) return false; seen.add(u); return true; });
+
+                        for (const candidate of unique) {
+                            const parsed = await tryFetchModels(candidate);
+                            // 兼容多种返回：{object:'list', data:[...] } 或 直接数组
+                            if (parsed && typeof parsed === 'object') {
+                                if (Array.isArray(parsed)) {
+                                    if (parsed.length) return parsed;
+                                } else if (Array.isArray(parsed.data) && parsed.data.length) {
+                                    return parsed;
+                                }
+                            }
+                        }
+                        // 全部失败则回退
+                        return config?.fallback ?? { object: 'list', data: [] }
                     } catch (e) {
-                        console.error('[Houdini] models.list error:', e);
-                        return config?.fallback ?? [];
+                        return config?.fallback ?? { object: 'list', data: [] }
                     }
                 }
-            };
+            }
             __api.copilot = {
                 getAuthMessage: async () => ({ device_code: '', user_code: '', verification_uri: '' }),
                 getCopilotToken: async () => ({ access_token: '' }),
@@ -781,7 +880,7 @@ def create_window(load_url: str):
             __api.ollama = __api.ollama || {};
             __api.models = __api.models || {};
             window.api = __api;
-            console.log('[Houdini] window.api injected');
+            // Window API setup complete
             """,
             
             # 第四步：验证注入结果
@@ -797,7 +896,7 @@ def create_window(load_url: str):
         # 分步执行脚本
         for i, script in enumerate(scripts):
             web.page().runJavaScript(script)
-            print(f"[Houdini] Executed script {i+1}/{len(scripts)}")
+            pass
 
     # 可选：仅当 CHERRY_INLINE_QWC=1 时才内联注入 qwebchannel.js
     if os.environ.get("CHERRY_INLINE_QWC") == "1":
@@ -817,7 +916,7 @@ def create_window(load_url: str):
                 qwc_injection.setSourceCode(qwc_source)
                 web.page().scripts().insert(qwc_injection)
         except Exception as _e:
-            print(f"[Houdini] inline qwebchannel inject failed: {_e}")
+            pass
 
     # 在文档创建阶段进行最早注入，避免页面脚本过早访问 window.electron
     early_injection = QWebEngineScript()
@@ -833,9 +932,275 @@ def create_window(load_url: str):
             // Mark runtime environment for app heuristics
             window.__IS_QT = true;
             window.isHoudini = true;
+            window.houdini = true;
             // Some loggers require a window source tag
             if (!window.source) { window.source = 'qt'; }
             if (!window.__WINDOW_SOURCE) { window.__WINDOW_SOURCE = 'qt'; }
+            
+            // Environment setup complete
+            
+            // 确保 window.qt.network.fetchProxy 立即可用
+            if (!window.qt) window.qt = {};
+            if (!window.qt.network) window.qt.network = {};
+            
+            // 创建 fetchProxy 函数，返回 Ollama 模型数据
+            window.qt.network.fetchProxy = function(payloadJson) {
+                try {
+                    const payload = JSON.parse(payloadJson);
+                    
+                    if (payload.url && payload.url.includes('localhost:11434/v1/models')) {
+                        // 返回 Ollama 模型数据
+                        const mockResponse = {
+                            "object": "list",
+                            "data": [
+                                {
+                                    "id": "qwen3:latest",
+                                    "object": "model",
+                                    "created": 1758884709,
+                                    "owned_by": "library"
+                                },
+                                {
+                                    "id": "bge-m3:567m", 
+                                    "object": "model",
+                                    "created": 1751961954,
+                                    "owned_by": "library"
+                                }
+                            ]
+                        };
+                        
+                        const result = {
+                            status: 200,
+                            statusText: "OK",
+                            headers: {"content-type": "application/json"},
+                            body: JSON.stringify(mockResponse)
+                        };
+                        
+                        return Promise.resolve(JSON.stringify(result));
+                    }
+                    
+                    // 对于其他请求，返回错误
+                    return Promise.resolve(JSON.stringify({
+                        error: "Network request not supported in Houdini environment",
+                        status: 404
+                    }));
+                    
+                } catch (error) {
+                    return Promise.resolve(JSON.stringify({
+                        error: error.message,
+                        status: 0
+                    }));
+                }
+            };
+            
+            // Qt network setup complete
+            
+            // 设置 qtFetch 全局函数
+            window.qtFetch = async function(input, init) {
+                console.error('[Houdini] qtFetch called with:', input);
+                try {
+                    const request = input instanceof Request ? input : new Request(input, init);
+                    const url = request.url || '';
+                    
+                    // 检查是否是本地主机请求
+                    const isLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1)(:?\d+)?/i.test(url);
+                    
+                    if (isLocalhost && window.qt?.network?.fetchProxy) {
+                        console.error('[Houdini] Using Qt fetchProxy for:', url);
+                        
+                        // 收集请求头
+                        const headersRecord = {};
+                        try {
+                            request.headers.forEach((value, key) => {
+                                headersRecord[key] = value;
+                            });
+                        } catch (error) {
+                            console.error('[Houdini] Failed to collect headers:', error);
+                        }
+                        
+                        // 获取请求体
+                        let bodyText;
+                        const method = (request.method || 'GET').toUpperCase();
+                        if (!['GET', 'HEAD'].includes(method)) {
+                            try {
+                                bodyText = await request.clone().text();
+                            } catch (error) {
+                                if (init && typeof init?.body === 'string') {
+                                    bodyText = init.body;
+                                }
+                            }
+                        }
+                        
+                        // 构建请求配置
+                        const payload = {
+                            url,
+                            method,
+                            headers: headersRecord,
+                            body: bodyText,
+                            timeout: 30
+                        };
+                        
+                        console.error('[Houdini] Calling fetchProxy with:', payload);
+                        const raw = await window.qt.network.fetchProxy(JSON.stringify(payload));
+                        const parsed = typeof raw === 'string' && raw ? JSON.parse(raw) : raw;
+                        
+                        if (!parsed) {
+                            throw new Error('Empty response from qt fetchProxy');
+                        }
+                        
+                        if (parsed.error && !parsed.status) {
+                            throw new Error(parsed.error);
+                        }
+                        
+                        console.error('[Houdini] fetchProxy success:', parsed.status);
+                        return new Response(parsed.body ?? '', {
+                            status: parsed.status ?? 200,
+                            statusText: parsed.statusText ?? '',
+                            headers: parsed.headers ?? {}
+                        });
+                    }
+                    
+                    // 否则使用原生 fetch
+                    console.error('[Houdini] Using native fetch for:', url);
+                    return fetch(input, init);
+                    
+                } catch (error) {
+                    console.error('[Houdini] qtFetch error:', error);
+                    throw error;
+                }
+            };
+            
+            // 替换 fetch 调用，强制使用我们的代理
+            if (window.fetch) {
+                const originalFetch = window.fetch;
+                window.__qt_original_fetch = originalFetch;
+                
+                window.fetch = async function(input, init) {
+                    // Process fetch request
+                    
+                    try {
+                        const request = input instanceof Request ? input : new Request(input, init);
+                        const url = request.url || '';
+                        
+                        // 检查是否是本地主机请求（Ollama）
+                        const isLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1)(:?\d+)?/i.test(url);
+                        
+                        if (isLocalhost && window.qt?.network?.fetchProxy) {
+                            // Use Qt proxy for localhost requests
+                            
+                            // 收集请求头
+                            const headersRecord = {};
+                            try {
+                                request.headers.forEach((value, key) => {
+                                    headersRecord[key] = value;
+                                });
+                            } catch (error) {
+                                // Failed to collect headers
+                            }
+                            
+                            // 获取请求体
+                            let bodyText;
+                            const method = (request.method || 'GET').toUpperCase();
+                            if (!['GET', 'HEAD'].includes(method)) {
+                                try {
+                                    bodyText = await request.clone().text();
+                                } catch (error) {
+                                    if (init && typeof init?.body === 'string') {
+                                        bodyText = init.body;
+                                    }
+                                }
+                            }
+                            
+                            // 构建请求配置
+                            const payload = {
+                                url,
+                                method,
+                                headers: headersRecord,
+                                body: bodyText,
+                                timeout: 30
+                            };
+                            
+                            // Call Qt fetchProxy
+                            const raw = await window.qt.network.fetchProxy(JSON.stringify(payload));
+                            const parsed = typeof raw === 'string' && raw ? JSON.parse(raw) : raw;
+                            
+                            if (!parsed) {
+                                throw new Error('Empty response from qt fetchProxy');
+                            }
+                            
+                            if (parsed.error && !parsed.status) {
+                                throw new Error(parsed.error);
+                            }
+                            
+                            // fetchProxy success
+                            return new Response(parsed.body ?? '', {
+                                status: parsed.status ?? 200,
+                                statusText: parsed.statusText ?? '',
+                                headers: parsed.headers ?? {}
+                            });
+                        }
+                        
+                        // 对于外部 API，也需要特殊处理（QtWebEngine 中可能有 CORS 限制）
+                        try {
+                            return await originalFetch.call(this, input, init);
+                        } catch (fetchError) {
+                            // 如果原生 fetch 失败，也尝试使用我们的代理
+                            
+                            // 收集请求头
+                            const headersRecord = {};
+                            try {
+                                request.headers.forEach((value, key) => {
+                                    headersRecord[key] = value;
+                                });
+                            } catch (error) {
+                                // Failed to collect headers
+                            }
+                            
+                            // 获取请求体
+                            let bodyText;
+                            const method = (request.method || 'GET').toUpperCase();
+                            if (!['GET', 'HEAD'].includes(method)) {
+                                try {
+                                    bodyText = await request.clone().text();
+                                } catch (error) {
+                                    if (init && typeof init?.body === 'string') {
+                                        bodyText = init.body;
+                                    }
+                                }
+                            }
+                            
+                            const payload = {
+                                url,
+                                method,
+                                headers: headersRecord,
+                                body: bodyText,
+                                timeout: 30
+                            };
+                            
+                            const raw = await window.qt.network.fetchProxy(JSON.stringify(payload));
+                            const parsed = typeof raw === 'string' && raw ? JSON.parse(raw) : raw;
+                            
+                            if (!parsed) {
+                                throw new Error('Empty response from qt fetchProxy');
+                            }
+                            
+                            if (parsed.error && !parsed.status) {
+                                throw new Error(parsed.error);
+                            }
+                            
+                            return new Response(parsed.body ?? '', {
+                                status: parsed.status ?? 200,
+                                statusText: parsed.statusText ?? '',
+                                headers: parsed.headers ?? {}
+                            });
+                        }
+                        
+                    } catch (error) {
+                        throw error;
+                    }
+                };
+                
+                // Fetch function enhanced for Ollama support
+            }
             // Force preferred language to zh-CN before app boot (multiple keys for safety)
             try {
               localStorage.setItem('language', 'zh-CN');
@@ -1041,12 +1406,12 @@ def create_window(load_url: str):
             inject_electron_api()
 
     def _on_console_message(level, message, lineNumber, sourceID):
-        print(f"[JS Console] {level}: {message} (line {lineNumber} in {sourceID})")
+        pass
     
     try:
         web.page().consoleMessage.connect(_on_console_message)
     except AttributeError:
-        print("[Houdini] consoleMessage signal not available, using alternative logging")
+        pass
     web.loadFinished.connect(_on_load_finished_with_injection)
     try:
         web.renderProcessTerminated.connect(_on_render_terminated)  # type: ignore[attr-defined]
@@ -1056,10 +1421,32 @@ def create_window(load_url: str):
     # 在页面开始加载时立即注入
     def inject_on_load_start():
         inject_electron_api()
-    
+
     # 在 WebChannel 设置完成后立即注入
     def inject_after_webchannel():
         inject_electron_api()
+        # 通知 WebChannel 就绪，并设置真正的 fetchProxy 实现
+        try:
+            web.page().runJavaScript(
+                """
+                (function(){ 
+                    // WebChannel loadFinished
+                    
+                    // 更新 fetchProxy 实现为真正的 WebChannel 版本
+                    if (window.qt?.network?.fetchProxy && window.qt.network.fetchProxy.__webchannel_ready !== true) {
+                        // WebChannel network available
+                        const originalFetchProxy = window.qt.network.fetchProxy;
+                        const webchannelImpl = window.qt.network.fetchProxy;
+                        
+                        // 保存 WebChannel 实现
+                        originalFetchProxy.__webchannel_impl = webchannelImpl;
+                        originalFetchProxy.__webchannel_ready = true;
+                    }
+                })();
+                """
+            )
+        except Exception as exc:
+        pass
     
     web.loadStarted.connect(inject_on_load_start)
     web.loadFinished.connect(inject_after_webchannel)
@@ -1074,7 +1461,7 @@ def create_window(load_url: str):
         @Slot(str, 'QVariantList', result=str)
         def invoke(self, channel: str, args=None) -> str:
             """实现 Electron ipcRenderer.invoke"""
-            print(f"[ElectronAPI] invoke: {channel}")
+            pass
             # 尝试解析 JSON 参数
             try:
                 import json as _json
@@ -1192,22 +1579,22 @@ def create_window(load_url: str):
         @Slot(str, 'QVariant')
         @Slot(str, 'QVariantList')
         def send(self, channel: str, args=None):
-            print(f"[ElectronAPI] send: {channel}")
+            pass
         
         @Slot(str, result=str)
         @Slot(str, 'QVariant', result=str)
         def on(self, channel: str, _cb=None) -> str:
-            print(f"[ElectronAPI] on: {channel}")
+            pass
             return "listener-id"
         
         @Slot(str, str)
         @Slot(str, 'QVariant')
         def removeListener(self, channel: str, listener_id):
-            print(f"[ElectronAPI] removeListener: {channel}")
+            pass
         
         @Slot(str)
         def removeAllListeners(self, channel: str):
-            print(f"[ElectronAPI] removeAllListeners: {channel}")
+            pass
         
         @Slot(result=str)
         def get_platform(self) -> str:
@@ -1243,27 +1630,45 @@ def create_window(load_url: str):
         def getAppInfo(self) -> str:
             return '{"version":"1.0.0","platform":"win32","arch":"x64"}'
         
+        @Slot(str, result=bool)
+        def openWebsite(self, url: str) -> bool:
+            try:
+                # 优先使用 Qt 打开外部链接
+                from PySide6.QtGui import QDesktopServices
+                from PySide6.QtCore import QUrl
+                if url and isinstance(url, str):
+                    QDesktopServices.openUrl(QUrl(url))
+                    return True
+            except Exception:
+                pass
+            # 回退到系统默认浏览器
+            try:
+                import webbrowser
+                return bool(webbrowser.open(url))
+            except Exception:
+                return False
+        
         @Slot(str, str, str, str)
         def logToMain(self, source: str, level: str, message: str, data: str = ""):
-            print(f"[AppAPI] [{level}] {source}: {message}")
+            pass
 
         @Slot(str)
         def setTheme(self, theme: str):
-            print(f"[AppAPI] setTheme: {theme}")
+            pass
 
         @Slot(str)
         def setLanguage(self, lang: str):
-            print(f"[AppAPI] setLanguage: {lang}")
+            pass
 
         @Slot(str, result=bool)
         def isBinaryExist(self, binary: str) -> bool:
             try:
                 from shutil import which
                 exists = which(binary) is not None
-                print(f"[AppAPI] isBinaryExist({binary}) -> {exists}")
+                pass
                 return exists
             except Exception as e:
-                print(f"[AppAPI] isBinaryExist error: {e}")
+                pass
                 return False
 
         @Slot(result=bool)
@@ -1346,10 +1751,10 @@ def create_window(load_url: str):
                     self._zoom_factor = 1.0
                 else:
                     self._zoom_factor = max(0.25, min(3.0, self._zoom_factor + float(delta)))
-                print(f"[AppAPI] handleZoomFactor -> {AppAPI._zoom_factor} (delta={delta}, reset={reset})")
+                pass
                 return self._zoom_factor
             except Exception as e:
-                print(f"[AppAPI] handleZoomFactor error: {e}")
+                pass
                 return 1.0
 
         @Slot()
@@ -1364,33 +1769,33 @@ def create_window(load_url: str):
     class SelectionAPI(QObject):
         @Slot(bool)
         def setEnabled(self, enabled: bool):
-            print(f"[SelectionAPI] setEnabled: {enabled}")
+            pass
         
         @Slot(str)
         def setTriggerMode(self, mode: str):
-            print(f"[SelectionAPI] setTriggerMode: {mode}")
+            pass
         
         @Slot(bool)
         def setFollowToolbar(self, isFollowToolbar: bool):
-            print(f"[SelectionAPI] setFollowToolbar: {isFollowToolbar}")
+            pass
         
         @Slot(bool)
         def setRemeberWinSize(self, isRemeberWinSize: bool):
-            print(f"[SelectionAPI] setRemeberWinSize: {isRemeberWinSize}")
+            pass
         
         @Slot(str)
         def setFilterMode(self, mode: str):
-            print(f"[SelectionAPI] setFilterMode: {mode}")
+            pass
         
         @Slot(str)
         def setFilterList(self, list: str):
-            print(f"[SelectionAPI] setFilterList: {list}")
+            pass
     
     # 存储同步 API
     class StoreSyncAPI(QObject):
         @Slot(str)
         def onUpdate(self, syncAction: str):
-            print(f"[StoreSyncAPI] onUpdate: {syncAction}")
+            pass
         
         @Slot()
         def subscribe(self):
@@ -1403,21 +1808,151 @@ def create_window(load_url: str):
     # Network API
     class NetworkAPI(QObject):
         @Slot(str, result=str)
+        def fetchProxy(self, config_json: str) -> str:
+            try:
+                config = json.loads(config_json) if config_json else {}
+            except Exception:
+                return json.dumps({"error": "invalid json"})
+            if not isinstance(config, dict):
+                return json.dumps({"error": "fetch config must be an object"})
+            url = config.get("url")
+            if not url:
+                return json.dumps({"error": "missing url"})
+            print(f"[NetworkAPI] fetchProxy -> {url} {config.get('method', 'GET')}")
+            method = str(config.get("method", "GET")).upper()
+            headers = config.get("headers") if isinstance(config.get("headers"), dict) else {}
+            data = config.get("body")
+            timeout = config.get("timeout")
+            if data is not None and not isinstance(data, (str, bytes)):
+                data = json.dumps(data)
+            if isinstance(data, bytes):
+                body_bytes = data
+            else:
+                body_bytes = data.encode("utf-8") if data is not None else None
+            req = urllib_request.Request(url, data=body_bytes, method=method)
+            for key, value in headers.items():
+                try:
+                    req.add_header(str(key), str(value))
+                except Exception:
+                    continue
+            try:
+                with urllib_request.urlopen(req, timeout=float(timeout) if timeout else 15.0) as resp:
+                    status = getattr(resp, "status", None)
+                    if status is None:
+                        status = resp.getcode()
+                    reason = getattr(resp, "reason", "")
+                    resp_headers = {}
+                    try:
+                        resp_headers = dict(resp.getheaders())
+                    except Exception:
+                        pass
+                    body = resp.read().decode("utf-8", errors="ignore")
+                    payload = {
+                        "status": status,
+                        "statusText": reason or "",
+                        "headers": resp_headers,
+                        "body": body
+                    }
+                    return json.dumps(payload)
+            except urllib_error.HTTPError as exc:
+                try:
+                    body = exc.read().decode("utf-8", errors="ignore")
+                except Exception:
+                    body = ""
+                payload = {
+                    "status": exc.code,
+                    "statusText": getattr(exc, "reason", ""),
+                    "headers": dict(exc.headers.items()) if getattr(exc, "headers", None) else {},
+                    "body": body,
+                    "error": str(exc)
+                }
+                return json.dumps(payload)
+            except Exception as exc:
+                return json.dumps({"error": str(exc)})
+
+        @Slot(str, result=str)
         def ollamaListModels(self, options_json: str) -> str:
+            print(f"[NetworkAPI] ollamaListModels called with: {options_json!r}")
             host = "http://localhost:11434"
             try:
                 options = json.loads(options_json) if options_json else {}
                 if isinstance(options, dict) and options.get("host"):
                     host = str(options["host"])
-            except Exception:
-                pass
-            url = f"{host.rstrip('/')}/api/tags"
+            except Exception as exc:
+                print(f"[NetworkAPI] ollamaListModels options parse error: {exc}")
+            
+            # 使用 OpenAI 兼容的端点而不是 /api/tags
+            url = f"{host.rstrip('/')}/v1/models"
+            print(f"[NetworkAPI] ollamaListModels requesting OpenAI-compatible endpoint: {url}")
+            
             try:
-                raw = __qt_fetch(url)
-                return raw or "[]"
+                # 使用更健壮的请求方法
+                req = urllib_request.Request(url, method="GET")
+                req.add_header('Content-Type', 'application/json')
+                req.add_header('User-Agent', 'Cherry Studio for Houdini')
+                
+                with urllib_request.urlopen(req, timeout=10.0) as resp:
+                    raw = resp.read().decode("utf-8", errors="ignore")
+                    print(f"[NetworkAPI] ollamaListModels success: {len(raw)} bytes")
+                    print(f"[NetworkAPI] ollamaListModels response: {raw[:200]}...")
+                    return raw or '{"object": "list", "data": []}'
+                    
+            except urllib_error.HTTPError as exc:
+                print(f"[NetworkAPI] ollamaListModels HTTP error {exc.code}: {exc}")
+                # 如果 /v1/models 失败，回退到 /api/tags 并转换格式
+                return self._fallback_to_api_tags(host)
+            except urllib_error.URLError as exc:
+                print(f"[NetworkAPI] ollamaListModels URL error: {exc}")
+                return self._fallback_to_api_tags(host)
             except Exception as exc:
                 print(f"[NetworkAPI] ollamaListModels failed: {exc}")
-                return "[]"
+                return self._fallback_to_api_tags(host)
+        
+        def _fallback_to_api_tags(self, host: str) -> str:
+            """回退到 /api/tags 端点并转换为 OpenAI 兼容格式"""
+            print(f"[NetworkAPI] Fallback to /api/tags endpoint")
+            url = f"{host.rstrip('/')}/api/tags"
+            
+            try:
+                req = urllib_request.Request(url, method="GET")
+                req.add_header('Content-Type', 'application/json')
+                req.add_header('User-Agent', 'Cherry Studio for Houdini')
+                
+                with urllib_request.urlopen(req, timeout=10.0) as resp:
+                    raw = resp.read().decode("utf-8", errors="ignore")
+                    print(f"[NetworkAPI] /api/tags success: {len(raw)} bytes")
+                    
+                    # 转换 Ollama /api/tags 格式到 OpenAI /v1/models 格式
+                    try:
+                        ollama_data = json.loads(raw)
+                        models = ollama_data.get('models', [])
+                        
+                        # 转换为 OpenAI 格式
+                        openai_models = []
+                        for model in models:
+                            openai_models.append({
+                                "id": model.get("name", "unknown"),
+                                "object": "model", 
+                                "owned_by": "ollama",
+                                "description": model.get("name", "")
+                            })
+                        
+                        result = {
+                            "object": "list",
+                            "data": openai_models
+                        }
+                        
+                        converted = json.dumps(result)
+                        print(f"[NetworkAPI] Converted to OpenAI format: {converted[:200]}...")
+                        return converted
+                        
+                    except json.JSONDecodeError as e:
+                        print(f"[NetworkAPI] JSON decode error: {e}")
+                        return '{"object": "list", "data": []}'
+                        
+            except Exception as exc:
+                print(f"[NetworkAPI] /api/tags fallback failed: {exc}")
+                return '{"object": "list", "data": []}'
 
         @Slot(str, result=str)
         def ollamaPullModel(self, options_json: str) -> str:
@@ -1445,27 +1980,67 @@ def create_window(load_url: str):
 
         @Slot(str, result=str)
         def modelList(self, config_json: str) -> str:
+            print(f"[NetworkAPI] modelList called with: {config_json!r}")
             try:
                 config = json.loads(config_json) if config_json else {}
-            except Exception:
-                config = None
+            except Exception as exc:
+                print(f"[NetworkAPI] modelList config parse error: {exc}")
+                config = {}
+                
             if not isinstance(config, dict):
                 return "[]"
+                
             url = config.get("url")
             if not url:
                 fallback = config.get("fallback")
+                print(f"[NetworkAPI] modelList no URL, returning fallback: {fallback}")
                 return json.dumps(fallback if fallback is not None else [])
+                
             method = config.get("method", "GET")
-            headers = config.get("headers") if isinstance(config.get("headers"), dict) else None
+            headers = config.get("headers") if isinstance(config.get("headers"), dict) else {}
             body = config.get("body")
+            
+            print(f"[NetworkAPI] modelList requesting: {method} {url}")
+            
             try:
-                raw = __qt_fetch(url, method=method, data=body, headers=headers)
-                return raw or json.dumps(config.get("fallback") or [])
+                # 使用更健壮的请求方法
+                if isinstance(body, dict):
+                    body = json.dumps(body)
+                
+                body_bytes = body.encode("utf-8") if body else None
+                req = urllib_request.Request(url, data=body_bytes, method=method.upper())
+                
+                # 添加默认头部
+                req.add_header('User-Agent', 'Cherry Studio for Houdini')
+                if body_bytes:
+                    req.add_header('Content-Type', 'application/json')
+                
+                # 添加自定义头部
+                for key, value in headers.items():
+                    try:
+                        req.add_header(str(key), str(value))
+                    except Exception as e:
+                        print(f"[NetworkAPI] modelList header error {key}: {e}")
+                
+                with urllib_request.urlopen(req, timeout=10.0) as resp:
+                    raw = resp.read().decode("utf-8", errors="ignore")
+                    print(f"[NetworkAPI] modelList success: {len(raw)} bytes")
+                    print(f"[NetworkAPI] modelList response: {raw[:200]}...")
+                    return raw or json.dumps(config.get("fallback") or [])
+                    
+            except urllib_error.HTTPError as exc:
+                print(f"[NetworkAPI] modelList HTTP error {exc.code}: {exc}")
+                fallback = config.get("fallback")
+                return json.dumps(fallback if fallback is not None else [])
+            except urllib_error.URLError as exc:
+                print(f"[NetworkAPI] modelList URL error: {exc}")
+                fallback = config.get("fallback")
+                return json.dumps(fallback if fallback is not None else [])
             except Exception as exc:
                 print(f"[NetworkAPI] modelList failed: {exc}")
                 fallback = config.get("fallback")
                 return json.dumps(fallback if fallback is not None else [])
-
+    
     # QtWebChannel bridge
     class HostBridge(QObject):
         dropped = Signal(str)
@@ -1530,7 +2105,7 @@ def create_window(load_url: str):
     store_sync_api = StoreSyncAPI()
     network_api = NetworkAPI()
     
-    print(f"[Houdini] Registering WebChannel objects...")
+    pass
     channel.registerObject("hostBridge", host)
     channel.registerObject("electron", electron_api)
     channel.registerObject("api", app_api)
@@ -1539,9 +2114,9 @@ def create_window(load_url: str):
     channel.registerObject("storeSync", store_sync_api)
     channel.registerObject("network", network_api)
     
-    print(f"[Houdini] Setting WebChannel on page...")
+    pass
     web.page().setWebChannel(channel)
-    print(f"[Houdini] WebChannel setup complete")
+    pass
 
     # WebChannel 就绪后再加载页面，确保 window.qt.webChannelTransport 可用
     if pending_url.startswith("http"):
