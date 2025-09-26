@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>API Test</title>
+</head>
+<body>
+    <h1>Electron API Test</h1>
+    <div id="status">Loading...</div>
+    <div id="results"></div>
+    
+    <script>
+    function log(message) {
+        document.getElementById('results').innerHTML += '<div>' + message + '</div>';
+        console.log(message);
+    }
+    
+    function testAPI() {
+        log('Testing API injection...');
+        
+        // 检查 Qt 对象
+        if (window.qt) {
+            log('✓ window.qt found');
+            log('window.qt keys: ' + Object.keys(window.qt).join(', '));
+            
+            if (window.qt.electron) {
+                log('✓ window.qt.electron found');
+            } else {
+                log('✗ window.qt.electron not found');
+            }
+            
+            if (window.qt.api) {
+                log('✓ window.qt.api found');
+            } else {
+                log('✗ window.qt.api not found');
+            }
+            
+        } else {
+            log('✗ window.qt not found');
+        }
+        
+        // 检查注入的 API
+        if (window.electron) {
+            log('✓ window.electron found');
+            
+            if (window.electron.ipcRenderer) {
+                log('✓ window.electron.ipcRenderer found');
+                
+                // 测试 invoke
+                window.electron.ipcRenderer.invoke('test-channel', 'test-arg').then(result => {
+                    log('✓ IPC invoke test result: ' + result);
+                }).catch(err => {
+                    log('✗ IPC invoke test error: ' + err);
+                });
+            } else {
+                log('✗ window.electron.ipcRenderer not found');
+            }
+        } else {
+            log('✗ window.electron not found');
+        }
+        
+        if (window.api) {
+            log('✓ window.api found');
+        } else {
+            log('✗ window.api not found');
+        }
+    }
+    
+    // 等待页面加载完成后测试
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', testAPI);
+    } else {
+        testAPI();
+    }
+    
+    // 定期检查
+    setTimeout(testAPI, 2000);
+    setTimeout(testAPI, 5000);
+    </script>
+</body>
+</html>

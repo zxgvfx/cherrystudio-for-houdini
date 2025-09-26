@@ -1,0 +1,23 @@
+import "./react-Cs7_W7Sm.js";
+import { b as createLucideIcon } from "./createLucideIcon-jMI35CFY.js";
+const __iconNode = [
+	["path", {
+		d: "m7 11 2-2-2-2",
+		key: "1lz0vl"
+	}],
+	["path", {
+		d: "M11 13h4",
+		key: "1p7l4v"
+	}],
+	["rect", {
+		width: "18",
+		height: "18",
+		x: "3",
+		y: "3",
+		rx: "2",
+		ry: "2",
+		key: "1m3agn"
+	}]
+];
+const SquareTerminal = createLucideIcon("square-terminal", __iconNode);
+export { __iconNode, SquareTerminal as default };

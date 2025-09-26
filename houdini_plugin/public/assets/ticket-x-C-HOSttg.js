@@ -1,0 +1,18 @@
+import "./react-Cs7_W7Sm.js";
+import { b as createLucideIcon } from "./createLucideIcon-jMI35CFY.js";
+const __iconNode = [
+	["path", {
+		d: "M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z",
+		key: "qn84l0"
+	}],
+	["path", {
+		d: "m9.5 14.5 5-5",
+		key: "qviqfa"
+	}],
+	["path", {
+		d: "m9.5 9.5 5 5",
+		key: "18nt4w"
+	}]
+];
+const TicketX = createLucideIcon("ticket-x", __iconNode);
+export { __iconNode, TicketX as default };

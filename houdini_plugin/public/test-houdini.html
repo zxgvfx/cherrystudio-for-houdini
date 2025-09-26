@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Houdini 环境测试</title>
+</head>
+<body>
+    <h1>Houdini 环境测试</h1>
+    <div id="output"></div>
+    
+    <script>
+        function log(message) {
+            const output = document.getElementById('output');
+            output.innerHTML += '<p>' + message + '</p>';
+            console.log(message);
+        }
+        
+        log('开始测试 Houdini 环境检测...');
+        
+        // 测试环境检测
+        log('window.hostBridge: ' + (window.hostBridge ? '存在' : '不存在'));
+        log('window.qt: ' + (window.qt ? '存在' : '不存在'));
+        log('window.QWebChannel: ' + (window.QWebChannel ? '存在' : '不存在'));
+        log('window.electron: ' + (window.electron ? '存在' : '不存在'));
+        log('window.api: ' + (window.api ? '存在' : '不存在'));
+        
+        // 测试我们的环境检测函数
+        try {
+            // 模拟我们的环境检测函数
+            const isHoudini = () => {
+                return !!(window.hostBridge || window.houdini || 
+                         navigator.userAgent.includes('Houdini') ||
+                         window.qt || window.QWebChannel);
+            };
+            
+            log('isHoudini(): ' + isHoudini());
+            
+            if (isHoudini()) {
+                log('✅ 检测到 Houdini 环境');
+            } else {
+                log('❌ 未检测到 Houdini 环境');
+            }
+            
+        } catch (error) {
+            log('❌ 环境检测出错: ' + error.message);
+        }
+        
+        // 测试加载 Cherry Studio 模块
+        log('尝试加载 Cherry Studio 模块...');
+        
+        // 尝试导入我们的 houdini 工具
+        import('./assets/es-C7gg5F5w.js').then(() => {
+            log('✅ Cherry Studio 模块加载成功');
+        }).catch(error => {
+            log('❌ Cherry Studio 模块加载失败: ' + error.message);
+        });
+        
+    </script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+import "./react-Cs7_W7Sm.js";
+import { b as createLucideIcon } from "./createLucideIcon-jMI35CFY.js";
+const __iconNode = [
+	["rect", {
+		width: "6",
+		height: "16",
+		x: "4",
+		y: "2",
+		rx: "2",
+		key: "z5wdxg"
+	}],
+	["rect", {
+		width: "6",
+		height: "9",
+		x: "14",
+		y: "9",
+		rx: "2",
+		key: "um7a8w"
+	}],
+	["path", {
+		d: "M22 22H2",
+		key: "19qnx5"
+	}]
+];
+const AlignEndHorizontal = createLucideIcon("align-end-horizontal", __iconNode);
+export { __iconNode, AlignEndHorizontal as default };

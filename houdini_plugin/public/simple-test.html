@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Simple Test</title>
+</head>
+<body>
+    <h1>Simple WebChannel Test</h1>
+    <div id="output"></div>
+    
+    <script>
+    function log(msg) {
+        document.getElementById('output').innerHTML += '<div>' + msg + '</div>';
+        console.log(msg);
+    }
+    
+    log('Script starting...');
+    
+    // 等待 Qt 对象
+    function waitForQt() {
+        if (window.qt) {
+            log('✓ window.qt found');
+            log('Qt objects: ' + Object.keys(window.qt).join(', '));
+            
+            // 测试 hostBridge
+            if (window.qt.hostBridge) {
+                log('✓ hostBridge found');
+                window.qt.hostBridge.echo('test').then(result => {
+                    log('✓ hostBridge.echo result: ' + result);
+                }).catch(err => {
+                    log('✗ hostBridge.echo error: ' + err);
+                });
+            } else {
+                log('✗ hostBridge not found');
+            }
+            
+            // 测试 electron API
+            if (window.qt.electron) {
+                log('✓ electron API found');
+                log('Electron methods: ' + Object.getOwnPropertyNames(window.qt.electron).join(', '));
+                
+                // 测试 invoke
+                window.qt.electron.invoke('test-channel', '[]').then(result => {
+                    log('✓ electron.invoke result: ' + result);
+                }).catch(err => {
+                    log('✗ electron.invoke error: ' + err);
+                });
+            } else {
+                log('✗ electron API not found');
+            }
+            
+        } else {
+            log('✗ window.qt not found, retrying...');
+            setTimeout(waitForQt, 500);
+        }
+    }
+    
+    // 开始测试
+    waitForQt();
+    </script>
+</body>
+</html>
