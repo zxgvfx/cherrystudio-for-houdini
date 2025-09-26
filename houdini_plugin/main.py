@@ -1446,7 +1446,7 @@ def create_window(load_url: str):
                 """
             )
         except Exception as exc:
-        pass
+            pass
     
     web.loadStarted.connect(inject_on_load_start)
     web.loadFinished.connect(inject_after_webchannel)
@@ -1995,51 +1995,104 @@ def create_window(load_url: str):
                 fallback = config.get("fallback")
                 print(f"[NetworkAPI] modelList no URL, returning fallback: {fallback}")
                 return json.dumps(fallback if fallback is not None else [])
-                
-            method = config.get("method", "GET")
+
+            method = str(config.get("method", "GET")).upper()
             headers = config.get("headers") if isinstance(config.get("headers"), dict) else {}
             body = config.get("body")
-            
-            print(f"[NetworkAPI] modelList requesting: {method} {url}")
-            
-            try:
-                # 使用更健壮的请求方法
-                if isinstance(body, dict):
+
+            # 规范化 body
+            if isinstance(body, dict):
+                try:
                     body = json.dumps(body)
-                
-                body_bytes = body.encode("utf-8") if body else None
-                req = urllib_request.Request(url, data=body_bytes, method=method.upper())
-                
-                # 添加默认头部
-                req.add_header('User-Agent', 'Cherry Studio for Houdini')
-                if body_bytes:
-                    req.add_header('Content-Type', 'application/json')
-                
-                # 添加自定义头部
-                for key, value in headers.items():
-                    try:
-                        req.add_header(str(key), str(value))
-                    except Exception as e:
-                        print(f"[NetworkAPI] modelList header error {key}: {e}")
-                
-                with urllib_request.urlopen(req, timeout=10.0) as resp:
-                    raw = resp.read().decode("utf-8", errors="ignore")
-                    print(f"[NetworkAPI] modelList success: {len(raw)} bytes")
-                    print(f"[NetworkAPI] modelList response: {raw[:200]}...")
-                    return raw or json.dumps(config.get("fallback") or [])
-                    
-            except urllib_error.HTTPError as exc:
-                print(f"[NetworkAPI] modelList HTTP error {exc.code}: {exc}")
-                fallback = config.get("fallback")
-                return json.dumps(fallback if fallback is not None else [])
-            except urllib_error.URLError as exc:
-                print(f"[NetworkAPI] modelList URL error: {exc}")
-                fallback = config.get("fallback")
-                return json.dumps(fallback if fallback is not None else [])
-            except Exception as exc:
-                print(f"[NetworkAPI] modelList failed: {exc}")
-                fallback = config.get("fallback")
-                return json.dumps(fallback if fallback is not None else [])
+                except Exception:
+                    body = None
+            body_bytes = body.encode("utf-8") if isinstance(body, str) and body else None
+
+            # 生成候选 URL 列表，自动多路径回退
+            def _make_candidates(original_url: str) -> list:
+                u = original_url.strip()
+                if not u:
+                    return []
+                lowered = u.lower()
+                bases = []
+                if lowered.endswith("/v1/models"):
+                    bases.append(u[:-len("/v1/models")])
+                elif lowered.endswith("/models"):
+                    bases.append(u[:-len("/models")])
+                elif lowered.endswith("/openai/v1/models"):
+                    bases.append(u[:-len("/openai/v1/models")])
+                else:
+                    # 不是标准结尾，则直接把整段当作 base
+                    bases.append(u.rstrip('/'))
+                candidates = []
+                for base in bases:
+                    base = base.rstrip('/')
+                    candidates.append(base + "/v1/models")
+                    candidates.append(base + "/models")
+                    candidates.append(base + "/openai/v1/models")
+                # 去重保持顺序
+                seen = set()
+                uniq = []
+                for c in candidates:
+                    if c not in seen:
+                        uniq.append(c)
+                        seen.add(c)
+                return uniq
+
+            candidates = _make_candidates(url)
+            print(f"[NetworkAPI] modelList candidates: {candidates}")
+
+            def _try_request(target_url: str):
+                try:
+                    req = urllib_request.Request(target_url, data=body_bytes, method=method)
+                    # 默认头
+                    req.add_header('User-Agent', 'Cherry Studio for Houdini')
+                    if body_bytes:
+                        req.add_header('Content-Type', 'application/json')
+                    # 自定义头
+                    for key, value in headers.items():
+                        try:
+                            req.add_header(str(key), str(value))
+                        except Exception as e:
+                            print(f"[NetworkAPI] modelList header error {key}: {e}")
+                    with urllib_request.urlopen(req, timeout=10.0) as resp:
+                        raw = resp.read().decode('utf-8', errors='ignore')
+                        print(f"[NetworkAPI] modelList success {resp.getcode()} -> {target_url}")
+                        return {"ok": True, "body": raw}
+                except urllib_error.HTTPError as exc:
+                    # 401/403 直接返回，提示鉴权问题
+                    if exc.code in (401, 403):
+                        try:
+                            body_txt = exc.read().decode('utf-8', errors='ignore')
+                        except Exception:
+                            body_txt = ''
+                        print(f"[NetworkAPI] modelList auth error {exc.code} -> {target_url}")
+                        return {"ok": True, "body": body_txt or json.dumps(config.get("fallback") or [])}
+                    # 404 继续尝试下一个候选
+                    if exc.code == 404:
+                        print(f"[NetworkAPI] modelList 404 -> {target_url}")
+                        return {"ok": False}
+                    # 其它 HTTP 错误，作为失败但不终止候选流程
+                    print(f"[NetworkAPI] modelList HTTP {exc.code} -> {target_url}")
+                    return {"ok": False}
+                except urllib_error.URLError as exc:
+                    print(f"[NetworkAPI] modelList URL error {exc} -> {target_url}")
+                    return {"ok": False}
+                except Exception as exc:
+                    print(f"[NetworkAPI] modelList exception {exc} -> {target_url}")
+                    return {"ok": False}
+
+            for candidate in candidates:
+                res = _try_request(candidate)
+                if res and res.get("ok"):
+                    body_txt = res.get("body") or ""
+                    if body_txt:
+                        return body_txt
+                    break
+
+            # 全部候选失败，返回 fallback
+            fallback = config.get("fallback")
+            return json.dumps(fallback if fallback is not None else [])
     
     # QtWebChannel bridge
     class HostBridge(QObject):
