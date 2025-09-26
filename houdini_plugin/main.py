@@ -993,6 +993,39 @@ def create_window(load_url: str):
             };
             
             // Qt network setup complete
+
+            // 在最早阶段包装 __qt_original_fetch，使后续 qtFetch 优先使用它，且对外部 /models 请求走 Qt 回退
+            try {
+              if (!window.__qt_original_fetch && typeof window.fetch === 'function') {
+                const native = window.fetch.bind(window);
+                const wrapped = async function(input, init){
+                  try {
+                    const request = input instanceof Request ? input : new Request(input, init);
+                    const url = request.url || '';
+                    const method = (request.method || 'GET').toUpperCase();
+                    const isLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1)(:?\d+)?/i.test(url);
+                    const isModelsList = /\/(openai\/)?v1\/models$/i.test(url) || /\/models$/i.test(url);
+                    if (!isLocalhost && isModelsList && window.qt?.network?.modelList) {
+                      const headersRecord = {};
+                      try { request.headers.forEach((v,k)=>{ headersRecord[k]=v; }); } catch(e) {}
+                      let bodyText;
+                      if (!['GET','HEAD'].includes(method)) {
+                        try { bodyText = await request.clone().text(); } catch(e) { if (init && typeof init?.body === 'string') bodyText = init.body; }
+                      }
+                      const payload = { url, method, headers: headersRecord, body: bodyText, fallback: { object:'list', data: [] } };
+                      try {
+                        const raw = await window.qt.network.modelList(JSON.stringify(payload));
+                        const text = typeof raw === 'string' ? raw : JSON.stringify(raw ?? { object:'list', data: [] });
+                        return new Response(text, { status: 200, headers: { 'content-type': 'application/json' } });
+                      } catch(e) { /* fallthrough */ }
+                    }
+                  } catch(e) { /* ignore and fallback */ }
+                  return native(input, init);
+                };
+                wrapped.__wrapped_for_models = true;
+                window.__qt_original_fetch = wrapped;
+              }
+            } catch (e) {}
             
             // 设置 qtFetch 全局函数
             window.qtFetch = async function(input, init) {
@@ -1227,6 +1260,38 @@ def create_window(load_url: str):
                         throw error;
                     }
                 };
+                
+                // 额外拦截：覆写 __qt_original_fetch，兼容 OpenAI SDK 内部的 qtFetch 对外部 /models 请求
+                try {
+                    if (typeof window.__qt_original_fetch === 'function' && !window.__qt_original_fetch.__wrapped_for_models) {
+                        const native = window.__qt_original_fetch;
+                        const wrapped = async function(input, init) {
+                            try {
+                                const request = input instanceof Request ? input : new Request(input, init);
+                                const url = request.url || '';
+                                const method = (request.method || 'GET').toUpperCase();
+                                const isLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1)(:?\d+)?/i.test(url);
+                                const isModelsList = /\/(openai\/)?v1\/models$/i.test(url) || /\/models$/i.test(url);
+                                // 对外部 models 列表使用 Qt 的回退逻辑
+                                if (!isLocalhost && isModelsList && window.qt?.network?.modelList) {
+                                    const headersRecord = {};
+                                    try { request.headers.forEach((v,k)=>{ headersRecord[k]=v; }); } catch(e) {}
+                                    let bodyText;
+                                    if (!['GET','HEAD'].includes(method)) {
+                                        try { bodyText = await request.clone().text(); } catch(e) { if (init && typeof init?.body === 'string') bodyText = init.body; }
+                                    }
+                                    const payload = { url, method, headers: headersRecord, body: bodyText, fallback: { object:'list', data: [] } };
+                                    const raw = await window.qt.network.modelList(JSON.stringify(payload));
+                                    const text = typeof raw === 'string' ? raw : JSON.stringify(raw ?? { object:'list', data: [] });
+                                    return new Response(text, { status: 200, headers: { 'content-type': 'application/json' } });
+                                }
+                            } catch(e) { /* fallthrough to native */ }
+                            return native.call(this, input, init);
+                        };
+                        wrapped.__wrapped_for_models = true;
+                        window.__qt_original_fetch = wrapped;
+                    }
+                } catch (e) { /* ignore */ }
                 
                 // Fetch function enhanced for Ollama support
             }
