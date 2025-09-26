@@ -1080,6 +1080,35 @@ def create_window(load_url: str):
                     try {
                         const request = input instanceof Request ? input : new Request(input, init);
                         const url = request.url || '';
+                        const method = (request.method || 'GET').toUpperCase();
+                        
+                        // 若是外部提供商的 models 列表请求，则走 Qt 的 modelList（内含多路径回退）
+                        try {
+                            const isLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1)(:?\d+)?/i.test(url);
+                            const isModelsList = /\/(openai\/)?v1\/models$/i.test(url) || /\/models$/i.test(url);
+                            if (!isLocalhost && isModelsList && window.qt?.network?.modelList) {
+                                const headersRecord = {};
+                                try {
+                                    request.headers.forEach((value, key) => { headersRecord[key] = value; });
+                                } catch (e) {}
+                                let bodyText;
+                                if (!['GET','HEAD'].includes(method)) {
+                                    try { bodyText = await request.clone().text(); } catch(e) { if (init && typeof init?.body === 'string') bodyText = init.body; }
+                                }
+                                const payload = {
+                                    url,
+                                    method,
+                                    headers: headersRecord,
+                                    body: bodyText,
+                                    fallback: { object: 'list', data: [] }
+                                };
+                                const raw = await window.qt.network.modelList(JSON.stringify(payload));
+                                const text = typeof raw === 'string' ? raw : JSON.stringify(raw ?? { object:'list', data: [] });
+                                return new Response(text, { status: 200, headers: { 'content-type': 'application/json' } });
+                            }
+                        } catch (e) {
+                            // ignore and continue
+                        }
                         
                         // 检查是否是本地主机请求（Ollama）
                         const isLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1)(:?\d+)?/i.test(url);
