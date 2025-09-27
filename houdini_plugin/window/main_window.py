@@ -21,15 +21,27 @@ _windows_keepalive = []
 def get_default_index_path() -> str:
     """获取默认的index.html路径"""
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    web_dir = os.path.join(os.path.dirname(os.path.dirname(current_dir)), "web")
+    # current_dir 是 houdini_plugin/window/ 目录，向上两级到项目根目录
+    project_root = os.path.dirname(os.path.dirname(current_dir))
+    web_dir = os.path.join(project_root, "web", "out", "renderer")
     index_path = os.path.join(web_dir, "index.html")
     return index_path
 
 
 def create_window() -> QWebEngineView:
     """创建主窗口"""
-    web = QWebEngineView()
-    _windows_keepalive.append(web)
+    try:
+        print("🔧 Creating QWebEngineView...")
+        web = QWebEngineView()
+        _windows_keepalive.append(web)
+        
+        # 设置窗口大小
+        web.resize(1200, 800)
+        web.setWindowTitle("Cherry Studio for Houdini")
+        print("✅ QWebEngineView created and configured")
+    except Exception as e:
+        print(f"❌ Error creating QWebEngineView: {e}")
+        raise
     
     # 设置页面
     page = QWebEnginePage()
@@ -73,15 +85,29 @@ def create_window() -> QWebEngineView:
     
     # 加载页面
     index_path = get_default_index_path()
+    print(f"🔍 Index path: {index_path}")
+    print(f"🔍 Path exists: {os.path.exists(index_path)}")
+    
     if os.path.exists(index_path):
-        web.load(QUrl.fromLocalFile(os.path.abspath(index_path)))
+        full_path = os.path.abspath(index_path)
+        print(f"🔍 Loading from: {full_path}")
+        web.load(QUrl.fromLocalFile(full_path))
     else:
+        print(f"❌ Index file not found, using fallback HTML")
         web.setHtml("""
         <html>
-        <head><title>Cherry Studio for Houdini</title></head>
+        <head>
+            <title>Cherry Studio for Houdini</title>
+            <style>
+                body { font-family: Arial, sans-serif; margin: 50px; }
+                h1 { color: #333; }
+                p { color: #666; }
+            </style>
+        </head>
         <body>
             <h1>Cherry Studio for Houdini</h1>
             <p>Web files not found. Please ensure the web directory exists.</p>
+            <p>Expected path: """ + index_path + """</p>
         </body>
         </html>
         """)
