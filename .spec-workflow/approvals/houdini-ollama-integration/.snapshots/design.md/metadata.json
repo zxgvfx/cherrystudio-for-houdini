@@ -1,0 +1,22 @@
+{
+  "filePath": ".spec-workflow/specs/houdini-ollama-integration/design.md",
+  "currentVersion": 2,
+  "snapshots": [
+    {
+      "version": 1,
+      "filename": "snapshot-001.json",
+      "timestamp": "2025-09-26T13:57:30.438Z",
+      "trigger": "initial",
+      "approvalId": "approval_1758895050429_38ikq6ua5",
+      "approvalTitle": "Approve design for Houdini Ollama integration"
+    },
+    {
+      "version": 2,
+      "filename": "snapshot-002.json",
+      "timestamp": "2025-09-26T14:02:40.370Z",
+      "trigger": "approved",
+      "approvalId": "approval_1758895050429_38ikq6ua5",
+      "approvalTitle": "Approve design for Houdini Ollama integration"
+    }
+  ]
+}

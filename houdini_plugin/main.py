@@ -149,12 +149,10 @@ def create_window(load_url: str):
             __electron.process = __electron.process || { platform: 'win32', versions: { node: '18.0.0' } };
             // 注意：不再在此注入 remote/getCurrentWindow，避免 Electron 分支被触发
             window.electron = __electron;
-            console.log('[Houdini] Electron API injected');
             """,
             
             # 第三步：注入 window.api
             """
-            console.log('[Houdini] Injecting window.api...');
             if (!window.__cherry_api_injected) { window.__cherry_api_injected = true; }
             var __api = window.api || {};
             __api.getDiskInfo = async (path) => {
@@ -794,81 +792,6 @@ def create_window(load_url: str):
                     }
                 }
             }
-            __api.models = {
-                list: async (config) => {
-                    try {
-                        // Process models.list request
-                        
-                        // 检查是否是 Ollama 请求（Cherry Studio 使用 /v1/models 端点）
-                        if (config?.url && (config.url.includes('/v1/models') || config.url.includes('/api/tags'))) {
-                            // Handle Ollama request
-                            
-                            // 提取主机地址
-                            let host = 'http://localhost:11434'
-                            try {
-                                const urlObj = new URL(config.url)
-                                host = `${urlObj.protocol}//${urlObj.host}`
-                                // Host extracted successfully
-                            } catch (e) {
-                                // Use default host
-                            }
-                            
-                            const ollamaOptions = JSON.stringify({ host })
-                            const ollamaResult = await window.qt?.network?.ollamaListModels?.(ollamaOptions)
-                            const parsedResult = JSON.parse(ollamaResult ?? '{"object": "list", "data": []}')
-                            
-                            // 确保返回 Cherry Studio 期望的格式
-                            if (parsedResult && typeof parsedResult === 'object') {
-                                return parsedResult
-                            }
-                            return { object: 'list', data: [] }
-                        }
-                        
-                        // 否则使用通用的 modelList，并带端点回退
-                        const tryFetchModels = async (targetUrl) => {
-                            const req = { ...(config || {}), url: targetUrl };
-                            const payload = JSON.stringify(req);
-                            const result = await window.qt?.network?.modelList?.(payload);
-                            try { return JSON.parse(result ?? '[]'); } catch { return []; }
-                        };
-
-                        const url = String(config?.url || '');
-                        // 提取 base，移除常见尾部
-                        let base = url.replace(/\/(openai\/)?v1\/models$/i, '')
-                                      .replace(/\/models$/i, '');
-                        if (!base) base = url;
-
-                        const candidates = [];
-                        // 优先原始
-                        if (url) candidates.push(url);
-                        // 常见兼容端点
-                        candidates.push(
-                            base.replace(/\/$/, '') + '/v1/models',
-                            base.replace(/\/$/, '') + '/models',
-                            base.replace(/\/$/, '') + '/openai/v1/models'
-                        );
-                        // 去重
-                        const seen = new Set();
-                        const unique = candidates.filter(u => { if (seen.has(u)) return false; seen.add(u); return true; });
-
-                        for (const candidate of unique) {
-                            const parsed = await tryFetchModels(candidate);
-                            // 兼容多种返回：{object:'list', data:[...] } 或 直接数组
-                            if (parsed && typeof parsed === 'object') {
-                                if (Array.isArray(parsed)) {
-                                    if (parsed.length) return parsed;
-                                } else if (Array.isArray(parsed.data) && parsed.data.length) {
-                                    return parsed;
-                                }
-                            }
-                        }
-                        // 全部失败则回退
-                        return config?.fallback ?? { object: 'list', data: [] }
-                    } catch (e) {
-                        return config?.fallback ?? { object: 'list', data: [] }
-                    }
-                }
-            }
             __api.copilot = {
                 getAuthMessage: async () => ({ device_code: '', user_code: '', verification_uri: '' }),
                 getCopilotToken: async () => ({ access_token: '' }),
@@ -879,27 +802,124 @@ def create_window(load_url: str):
             };
             __api.ollama = __api.ollama || {};
             __api.models = __api.models || {};
+            
+            // 定义 models.list 函数
+            __api.models.list = async (config) => {
+                console.error('[Houdini] 🔍 __api.models.list called:', config?.url || 'no URL');
+                
+                // 检查是否是 Ollama 请求（仅限 localhost）
+                if (config?.url && (config.url.includes('localhost:11434') || config.url.includes('127.0.0.1:11434'))) {
+                    console.error('[Houdini] Ollama request detected');
+                    let host = 'http://localhost:11434';
+                    try {
+                        const urlObj = new URL(config.url);
+                        host = `${urlObj.protocol}//${urlObj.host}`;
+                    } catch (e) {}
+                    
+                    const ollamaOptions = JSON.stringify({ host });
+                    const ollamaResult = await window.qt?.network?.ollamaListModels?.(ollamaOptions);
+                    const parsedResult = JSON.parse(ollamaResult ?? '{"object": "list", "data": []}');
+                    return parsedResult;
+                }
+                
+                // 检查是否是外部 OpenAI 兼容服务请求（非 localhost）
+                if (config?.url && !config.url.includes('localhost') && !config.url.includes('127.0.0.1')) {
+                    console.error('[Houdini] External OpenAI service detected:', config.url);
+                    const modelListConfig = {
+                        url: config.url,
+                        method: config.method || 'GET',
+                        headers: config.headers || {},
+                        body: config.body,
+                        fallback: { object: 'list', data: [] }
+                    };
+                    
+                    const modelListResult = await window.qt?.network?.modelList?.(JSON.stringify(modelListConfig));
+                    const parsedResult = JSON.parse(modelListResult ?? '{"object": "list", "data": []}');
+                    return parsedResult;
+                }
+                
+                // 默认返回空列表
+                return { object: 'list', data: [] };
+            };
+            
             window.api = __api;
             // Window API setup complete
             """,
             
             # 第四步：验证注入结果
             """
-            console.log('[Houdini] Verifying injection...');
-            console.log('[Houdini] window.electron:', !!window.electron);
-            console.log('[Houdini] window.api:', !!window.api);
-            console.log('[Houdini] window.electron.ipcRenderer:', !!window.electron?.ipcRenderer);
-            console.log('[Houdini] Injection completed successfully!');
+            
+            // 拦截关键函数调用，添加debug信息
+            if (window.api?.models?.list) {
+                const originalList = window.api.models.list;
+                window.api.models.list = async function(config) {
+                    console.error('[Houdini] 🔍 Models API called:', config?.url || 'no URL');
+                    try {
+                        const result = await originalList.call(this, config);
+                        console.error('[Houdini] ✅ Models API success:', result?.data?.length || 0, 'models');
+                        return result;
+                    } catch (error) {
+                        console.error('[Houdini] ❌ Models API error:', error.message || error);
+                        throw error;
+                    }
+                };
+                // Models API interception active
+                } else {
+                console.error('[Houdini] ERROR: window.api.models.list is not available for wrapping!');
+            }
+            
+            // 设置延迟拦截fetchModels函数调用
+            if (!window.__houdini_fetchmodels_setup) {
+                window.__houdini_fetchmodels_setup = true;
+                const setupFetchModelsInterception = () => {
+                    if (window.fetchModels) {
+                        const originalFetchModels = window.fetchModels;
+                        window.fetchModels = async function(provider) {
+                            console.error('[Houdini] 🎯 fetchModels called:', provider?.id || 'unknown provider');
+                            try {
+                                const result = await originalFetchModels.call(this, provider);
+                                console.error('[Houdini] ✅ fetchModels success:', result?.length || 0, 'models');
+                                return result;
+                            } catch (error) {
+                                console.error('[Houdini] ❌ fetchModels error:', error.message || error);
+                                throw error;
+                            }
+                        };
+                        // fetchModels interception active
+                        return true;
+                    }
+                    return false;
+                };
+                
+                // 立即尝试拦截
+                if (!setupFetchModelsInterception()) {
+                    // 延迟拦截，等待Cherry Studio代码加载
+                    setTimeout(() => {
+                        setupFetchModelsInterception();
+                    }, 1000);
+                    
+                    // 监听DOM变化，当Cherry Studio加载时再次尝试
+                    const observer = new MutationObserver(() => {
+                        if (setupFetchModelsInterception()) {
+                            observer.disconnect();
+                        }
+                    });
+                    observer.observe(document.body || document.documentElement, { childList: true, subtree: true });
+                }
+            }
             """
         ]
         
         # 分步执行脚本
-        for i, script in enumerate(scripts):
-            web.page().runJavaScript(script)
-            pass
+        for script in scripts:
+            try:
+                web.page().runJavaScript(script)
+            except Exception as e:
+                print(f"[Python] Script execution failed: {e}")
 
     # 可选：仅当 CHERRY_INLINE_QWC=1 时才内联注入 qwebchannel.js
-    if os.environ.get("CHERRY_INLINE_QWC") == "1":
+    # 强制启用 qwebchannel.js 注入来修复 WebChannel 初始化问题
+    if True:  # os.environ.get("CHERRY_INLINE_QWC") == "1":
         try:
             from PySide6.QtCore import QFile
             qwc_file = QFile(":/qtwebchannel/qwebchannel.js")
@@ -943,12 +963,28 @@ def create_window(load_url: str):
             if (!window.qt) window.qt = {};
             if (!window.qt.network) window.qt.network = {};
             
+                    // 确保 window.qt.network.modelList 立即可用
+            if (!window.qt.network.modelList) {
+                window.qt.network.modelList = function(configJson) {
+                    // 这是一个临时的实现，真正的实现会在WebChannel设置后覆盖
+                    return Promise.resolve('{"object": "list", "data": []}');
+                };
+            }
+            
+            // 检查 WebChannel 状态
+            console.error('[Houdini] 🔍 Checking WebChannel status...');
+            if (typeof qt !== 'undefined' && qt.webChannelTransport) {
+                console.error('[Houdini] ✅ qt.webChannelTransport available');
+            } else {
+                console.error('[Houdini] ⚠️ qt.webChannelTransport not available yet');
+            }
+            
             // 创建 fetchProxy 函数，返回 Ollama 模型数据
             window.qt.network.fetchProxy = function(payloadJson) {
                 try {
                     const payload = JSON.parse(payloadJson);
                     
-                    if (payload.url && payload.url.includes('localhost:11434/v1/models')) {
+                    if (payload.url && (payload.url.includes('localhost:11434') || payload.url.includes('127.0.0.1:11434'))) {
                         // 返回 Ollama 模型数据
                         const mockResponse = {
                             "object": "list",
@@ -978,6 +1014,62 @@ def create_window(load_url: str):
                         return Promise.resolve(JSON.stringify(result));
                     }
                     
+                    // 对于外部 OpenAI 兼容服务的模型列表请求，尝试调用Python后端
+                    if (payload.url && !payload.url.includes('localhost') && !payload.url.includes('127.0.0.1') && 
+                        (payload.url.includes('/v1/models') || payload.url.includes('/models') || payload.url.includes('/api/models'))) {
+                        console.error('[Houdini] 🔍 External models request:', payload.url);
+                        
+                        // 尝试调用Python后端的modelList方法
+                        if (window.qt?.network?.modelList) {
+                            const modelListConfig = {
+                                url: payload.url,
+                                method: payload.method || 'GET',
+                                headers: payload.headers || {},
+                                body: payload.body,
+                                fallback: { object: 'list', data: [] }
+                            };
+                            
+                            return window.qt.network.modelList(JSON.stringify(modelListConfig)).then(modelListResult => {
+                                const parsedResult = JSON.parse(modelListResult || '{"object": "list", "data": []}');
+                                
+                                const result = {
+                                    status: 200,
+                                    statusText: "OK",
+                                    headers: {"content-type": "application/json"},
+                                    body: JSON.stringify(parsedResult)
+                                };
+                                
+                                console.error('[Houdini] ✅ External models success:', parsedResult?.data?.length || 0, 'models');
+                                return JSON.stringify(result);
+                            }).catch(error => {
+                                console.error('[Houdini] ❌ External models error:', error.message || error);
+                                
+                                // 出错时返回空列表
+                                const emptyResponse = { "object": "list", "data": [] };
+                                const result = {
+                                    status: 200,
+                                    statusText: "OK",
+                                    headers: {"content-type": "application/json"},
+                                    body: JSON.stringify(emptyResponse)
+                                };
+                                
+                                return JSON.stringify(result);
+                            });
+                        }
+                        
+                        // 如果Python后端不可用，返回空列表
+                        const emptyResponse = { "object": "list", "data": [] };
+                        const result = {
+                            status: 200,
+                            statusText: "OK",
+                            headers: {"content-type": "application/json"},
+                            body: JSON.stringify(emptyResponse)
+                        };
+                        
+                        console.error('[Houdini] ⚠️ External models fallback: empty list');
+                        return Promise.resolve(JSON.stringify(result));
+                    }
+                    
                     // 对于其他请求，返回错误
                     return Promise.resolve(JSON.stringify({
                         error: "Network request not supported in Houdini environment",
@@ -1004,7 +1096,7 @@ def create_window(load_url: str):
                     const url = request.url || '';
                     const method = (request.method || 'GET').toUpperCase();
                     const isLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1)(:?\d+)?/i.test(url);
-                    const isModelsList = /\/(openai\/)?v1\/models$/i.test(url) || /\/models$/i.test(url);
+                    const isModelsList = /(\/(openai\/)?v1\/models)([\/?#]|$)/i.test(url) || /(\/)models([\/?#]|$)/i.test(url) || /\/api\/models([\/?#]|$)/i.test(url);
                     if (!isLocalhost && isModelsList && window.qt?.network?.modelList) {
                       const headersRecord = {};
                       try { request.headers.forEach((v,k)=>{ headersRecord[k]=v; }); } catch(e) {}
@@ -1029,16 +1121,30 @@ def create_window(load_url: str):
             
             // 设置 qtFetch 全局函数
             window.qtFetch = async function(input, init) {
-                console.error('[Houdini] qtFetch called with:', input);
                 try {
                     const request = input instanceof Request ? input : new Request(input, init);
                     const url = request.url || '';
                     
                     // 检查是否是本地主机请求
                     const isLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1)(:?\d+)?/i.test(url);
+                    const method = (request.method || 'GET').toUpperCase();
+                    const isModelsList = /(\/(openai\/)?v1\/models)([\/?#]|$)/i.test(url) || /(\/)models([\/?#]|$)/i.test(url) || /\/api\/models([\/?#]|$)/i.test(url);
+                    
+                    // 外部 models 列表请求：直接走 Qt 的多路径回退
+                    if (!isLocalhost && isModelsList && window.qt?.network?.modelList) {
+                        const headersRecord = {};
+                        try { request.headers.forEach((value, key) => { headersRecord[key] = value; }); } catch (e) {}
+                        let bodyText;
+                        if (!['GET','HEAD'].includes(method)) {
+                            try { bodyText = await request.clone().text(); } catch(e) { if (init && typeof init?.body === 'string') bodyText = init.body; }
+                        }
+                        const payload = { url, method, headers: headersRecord, body: bodyText, fallback: { object: 'list', data: [] } };
+                        const raw = await window.qt.network.modelList(JSON.stringify(payload));
+                        const text = typeof raw === 'string' ? raw : JSON.stringify(raw ?? { object:'list', data: [] });
+                        return new Response(text, { status: 200, headers: { 'content-type': 'application/json' } });
+                    }
                     
                     if (isLocalhost && window.qt?.network?.fetchProxy) {
-                        console.error('[Houdini] Using Qt fetchProxy for:', url);
                         
                         // 收集请求头
                         const headersRecord = {};
@@ -1047,12 +1153,11 @@ def create_window(load_url: str):
                                 headersRecord[key] = value;
                             });
                         } catch (error) {
-                            console.error('[Houdini] Failed to collect headers:', error);
+                            
                         }
                         
                         // 获取请求体
                         let bodyText;
-                        const method = (request.method || 'GET').toUpperCase();
                         if (!['GET', 'HEAD'].includes(method)) {
                             try {
                                 bodyText = await request.clone().text();
@@ -1072,7 +1177,6 @@ def create_window(load_url: str):
                             timeout: 30
                         };
                         
-                        console.error('[Houdini] Calling fetchProxy with:', payload);
                         const raw = await window.qt.network.fetchProxy(JSON.stringify(payload));
                         const parsed = typeof raw === 'string' && raw ? JSON.parse(raw) : raw;
                         
@@ -1084,7 +1188,6 @@ def create_window(load_url: str):
                             throw new Error(parsed.error);
                         }
                         
-                        console.error('[Houdini] fetchProxy success:', parsed.status);
                         return new Response(parsed.body ?? '', {
                             status: parsed.status ?? 200,
                             statusText: parsed.statusText ?? '',
@@ -1093,11 +1196,9 @@ def create_window(load_url: str):
                     }
                     
                     // 否则使用原生 fetch
-                    console.error('[Houdini] Using native fetch for:', url);
                     return fetch(input, init);
                     
                 } catch (error) {
-                    console.error('[Houdini] qtFetch error:', error);
                     throw error;
                 }
             };
@@ -1105,7 +1206,10 @@ def create_window(load_url: str):
             // 替换 fetch 调用，强制使用我们的代理
             if (window.fetch) {
                 const originalFetch = window.fetch;
-                window.__qt_original_fetch = originalFetch;
+                // 仅在未设置或未包裹时赋值，避免覆盖早期包装
+                if (!window.__qt_original_fetch || !window.__qt_original_fetch.__wrapped_for_models) {
+                    window.__qt_original_fetch = originalFetch;
+                }
                 
                 window.fetch = async function(input, init) {
                     // Process fetch request
@@ -1118,8 +1222,9 @@ def create_window(load_url: str):
                         // 若是外部提供商的 models 列表请求，则走 Qt 的 modelList（内含多路径回退）
                         try {
                             const isLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1)(:?\d+)?/i.test(url);
-                            const isModelsList = /\/(openai\/)?v1\/models$/i.test(url) || /\/models$/i.test(url);
+                            const isModelsList = /(\/(openai\/)?v1\/models)([\/?#]|$)/i.test(url) || /(\/)models([\/?#]|$)/i.test(url) || /\/api\/models([\/?#]|$)/i.test(url);
                             if (!isLocalhost && isModelsList && window.qt?.network?.modelList) {
+                                console.error('[Houdini] 🔍 Fetch intercepted external models request:', url);
                                 const headersRecord = {};
                                 try {
                                     request.headers.forEach((value, key) => { headersRecord[key] = value; });
@@ -1135,11 +1240,88 @@ def create_window(load_url: str):
                                     body: bodyText,
                                     fallback: { object: 'list', data: [] }
                                 };
-                                const raw = await window.qt.network.modelList(JSON.stringify(payload));
+                                console.error('[Houdini] 📞 Calling window.qt.network.modelList...');
+                                
+                                // 直接调用 Python 后端，跳过 WebChannel 等待
+                                console.error('[Houdini] 🔄 Bypassing WebChannel, directly calling Python backend...');
+                                
+                                let raw;
+                                // 等待WebChannel准备好，然后使用真正的Python后端方法
+                                console.error('[Houdini] ⏳ Waiting for WebChannel to be ready...');
+                                
+                                // 等待最多10秒，每100ms检查一次
+                                let attempts = 0;
+                                const maxAttempts = 100; // 10秒
+                                
+                                while (attempts < maxAttempts) {
+                                    const isWebChannelReady = window.qt?.network?.externalModelList && 
+                                        !window.qt.network.modelList.toString().includes('临时的实现');
+                                    
+                                    if (isWebChannelReady) {
+                                        console.error('[Houdini] ✅ WebChannel ready after', attempts * 100, 'ms');
+                                        break;
+                                    }
+                                    
+                                    attempts++;
+                                    await new Promise(resolve => setTimeout(resolve, 100));
+                                }
+                                
+                                if (attempts >= maxAttempts) {
+                                    console.error('[Houdini] ⚠️ WebChannel not ready after 10 seconds, using fallback');
+                                    raw = JSON.stringify({ "object": "list", "data": [] });
+                                } else {
+                                    console.error('[Houdini] 🐍 WebChannel ready, using externalModelList...');
+                                    try {
+                                        const externalResult = await window.qt.network.externalModelList(JSON.stringify(payload));
+                                        console.error('[Houdini] 🐍 externalModelList result:', externalResult);
+                                        const externalData = JSON.parse(externalResult);
+                                        console.error('[Houdini] 🐍 externalModelList models count:', externalData?.data?.length || 0);
+                                        
+                                        if (externalData?.data?.length > 0) {
+                                            console.error('[Houdini] ✅ externalModelList success, using result');
+                                            raw = externalResult;
+                                        } else {
+                                            console.error('[Houdini] ⚠️ externalModelList returned empty, using fallback');
+                                            raw = JSON.stringify({ "object": "list", "data": [] });
+                                        }
+                                    } catch (e) {
+                                        console.error('[Houdini] ⚠️ externalModelList failed:', e.message || e);
+                                        raw = JSON.stringify({ "object": "list", "data": [] });
+                                    }
+                                }
+                                
+                                // 额外测试：尝试使用Python后端的网络请求
+                                console.error('[Houdini] 🔬 Additional test: trying Python backend network request...');
+                                try {
+                                    console.error('[Houdini] 🔬 Calling window.qt.network.modelList with payload:', JSON.stringify(payload));
+                                    const pythonResult = await window.qt.network.modelList(JSON.stringify(payload));
+                                    console.error('[Houdini] 🐍 Python backend result:', pythonResult);
+                                    const pythonData = JSON.parse(pythonResult);
+                                    console.error('[Houdini] 🐍 Python backend models count:', pythonData?.data?.length || 0);
+                                } catch (e) {
+                                    console.error('[Houdini] 🐍 Python backend error:', e.message || e);
+                                }
+                                
+                                // 测试externalModelList方法
+                                console.error('[Houdini] 🔬 Testing externalModelList method...');
+                                try {
+                                    if (window.qt?.network?.externalModelList) {
+                                        console.error('[Houdini] 🔬 externalModelList method exists, calling it...');
+                                        const externalResult = await window.qt.network.externalModelList(JSON.stringify(payload));
+                                        console.error('[Houdini] 🔬 externalModelList result:', externalResult);
+                                    } else {
+                                        console.error('[Houdini] 🔬 externalModelList method does not exist');
+                                    }
+                                } catch (e) {
+                                    console.error('[Houdini] 🔬 externalModelList error:', e.message || e);
+                                }
                                 const text = typeof raw === 'string' ? raw : JSON.stringify(raw ?? { object:'list', data: [] });
+                                const parsed = JSON.parse(text);
+                                console.error('[Houdini] ✅ Fetch external models success:', parsed?.data?.length || 0, 'models');
                                 return new Response(text, { status: 200, headers: { 'content-type': 'application/json' } });
                             }
                         } catch (e) {
+                            console.error('[Houdini] ❌ Fetch external models error:', e.message || e);
                             // ignore and continue
                         }
                         
@@ -1271,7 +1453,7 @@ def create_window(load_url: str):
                                 const url = request.url || '';
                                 const method = (request.method || 'GET').toUpperCase();
                                 const isLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1)(:?\d+)?/i.test(url);
-                                const isModelsList = /\/(openai\/)?v1\/models$/i.test(url) || /\/models$/i.test(url);
+                                const isModelsList = /(\/(openai\/)?v1\/models)([\/?#]|$)/i.test(url) || /(\/)models([\/?#]|$)/i.test(url) || /\/api\/models([\/?#]|$)/i.test(url);
                                 // 对外部 models 列表使用 Qt 的回退逻辑
                                 if (!isLocalhost && isModelsList && window.qt?.network?.modelList) {
                                     const headersRecord = {};
@@ -1496,11 +1678,14 @@ def create_window(load_url: str):
     def _on_load_finished_with_injection(ok: bool):
         _on_load_finished(ok)
         if ok:
-            # 立即注入，不延迟
-            inject_electron_api()
+            # 延迟注入，确保页面完全加载
+            from PySide6.QtCore import QTimer
+            def delayed_injection():
+                inject_electron_api()
+            QTimer.singleShot(1000, delayed_injection)
 
     def _on_console_message(level, message, lineNumber, sourceID):
-        pass
+        print(f"js: {message}")
     
     try:
         web.page().consoleMessage.connect(_on_console_message)
@@ -1535,6 +1720,19 @@ def create_window(load_url: str):
                         // 保存 WebChannel 实现
                         originalFetchProxy.__webchannel_impl = webchannelImpl;
                         originalFetchProxy.__webchannel_ready = true;
+                    }
+                    
+                    // 确保 modelList 使用真正的 WebChannel 实现
+                    if (window.qt?.network?.modelList) {
+                        // 检查是否是临时实现
+                        const isTemporary = window.qt.network.modelList.toString().includes('临时的实现');
+                        if (isTemporary) {
+                            console.error('[Houdini] ⚠️ modelList is still temporary, WebChannel not ready yet');
+                        } else {
+                            console.error('[Houdini] ✅ WebChannel modelList available and ready');
+                        }
+                    } else {
+                        console.error('[Houdini] ❌ WebChannel modelList not available');
                     }
                 })();
                 """
@@ -1912,7 +2110,7 @@ def create_window(load_url: str):
             url = config.get("url")
             if not url:
                 return json.dumps({"error": "missing url"})
-            print(f"[NetworkAPI] fetchProxy -> {url} {config.get('method', 'GET')}")
+            print(f"[NetworkAPI] 🌐 Request: {config.get('method', 'GET')} {url}")
             method = str(config.get("method", "GET")).upper()
             headers = config.get("headers") if isinstance(config.get("headers"), dict) else {}
             data = config.get("body")
@@ -1941,6 +2139,7 @@ def create_window(load_url: str):
                     except Exception:
                         pass
                     body = resp.read().decode("utf-8", errors="ignore")
+                    print(f"[NetworkAPI] ✅ Success {status}: {len(body)} bytes from {url}")
                     payload = {
                         "status": status,
                         "statusText": reason or "",
@@ -1953,6 +2152,7 @@ def create_window(load_url: str):
                     body = exc.read().decode("utf-8", errors="ignore")
                 except Exception:
                     body = ""
+                print(f"[NetworkAPI] ❌ HTTP {exc.code} from {url}")
                 payload = {
                     "status": exc.code,
                     "statusText": getattr(exc, "reason", ""),
@@ -1962,7 +2162,86 @@ def create_window(load_url: str):
                 }
                 return json.dumps(payload)
             except Exception as exc:
+                print(f"[NetworkAPI] ❌ Error from {url}: {exc}")
                 return json.dumps({"error": str(exc)})
+
+        @Slot(str, result=str)
+        def externalModelList(self, config_json: str) -> str:
+            """专门用于外部模型列表请求的方法，绕过QtWebEngine限制"""
+            print(f"[NetworkAPI] 🌐 externalModelList called with: {config_json!r}")
+            try:
+                config = json.loads(config_json) if config_json else {}
+            except Exception as exc:
+                print(f"[NetworkAPI] externalModelList config parse error: {exc}")
+                config = {}
+                
+            if not isinstance(config, dict):
+                return '{"object": "list", "data": []}'
+                
+            url = config.get("url")
+            if not url:
+                fallback = config.get("fallback", {"object": "list", "data": []})
+                print(f"[NetworkAPI] externalModelList no URL, returning fallback: {fallback}")
+                return json.dumps(fallback)
+
+            method = str(config.get("method", "GET")).upper()
+            headers = config.get("headers") if isinstance(config.get("headers"), dict) else {}
+            body = config.get("body")
+
+            # 规范化 body
+            if isinstance(body, dict):
+                try:
+                    body = json.dumps(body)
+                except Exception:
+                    body = None
+            body_bytes = body.encode("utf-8") if isinstance(body, str) and body else None
+
+            try:
+                print(f"[NetworkAPI] externalModelList making request to: {url}")
+                print(f"[NetworkAPI] externalModelList headers: {headers}")
+                
+                req = urllib_request.Request(url, data=body_bytes, method=method)
+                # 默认头
+                req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
+                if body_bytes:
+                    req.add_header('Content-Type', 'application/json')
+                # 自定义头
+                for key, value in headers.items():
+                    try:
+                        req.add_header(str(key), str(value))
+                    except Exception as e:
+                        print(f"[NetworkAPI] externalModelList header error {key}: {e}")
+                
+                with urllib_request.urlopen(req, timeout=15.0) as resp:
+                    raw = resp.read().decode('utf-8', errors='ignore')
+                    print(f"[NetworkAPI] externalModelList success {resp.getcode()} -> {url}")
+                    print(f"[NetworkAPI] externalModelList response length: {len(raw)} bytes")
+                    print(f"[NetworkAPI] externalModelList response preview: {raw[:200]}...")
+                    
+                    # 尝试解析JSON以验证格式
+                    try:
+                        data = json.loads(raw)
+                        if isinstance(data, dict) and 'data' in data:
+                            print(f"[NetworkAPI] externalModelList parsed {len(data.get('data', []))} models")
+                        return raw
+                    except json.JSONDecodeError as e:
+                        print(f"[NetworkAPI] externalModelList JSON parse error: {e}")
+                        return raw  # 返回原始响应
+                        
+            except urllib_error.HTTPError as exc:
+                try:
+                    body_txt = exc.read().decode('utf-8', errors='ignore')
+                except Exception:
+                    body_txt = ''
+                print(f"[NetworkAPI] externalModelList HTTP error {exc.code} -> {url}")
+                print(f"[NetworkAPI] externalModelList error body: {body_txt}")
+                return json.dumps(config.get("fallback", {"object": "list", "data": []}))
+            except urllib_error.URLError as exc:
+                print(f"[NetworkAPI] externalModelList URL error: {exc}")
+                return json.dumps(config.get("fallback", {"object": "list", "data": []}))
+            except Exception as exc:
+                print(f"[NetworkAPI] externalModelList failed: {exc}")
+                return json.dumps(config.get("fallback", {"object": "list", "data": []}))
 
         @Slot(str, result=str)
         def ollamaListModels(self, options_json: str) -> str:
@@ -2074,7 +2353,7 @@ def create_window(load_url: str):
 
         @Slot(str, result=str)
         def modelList(self, config_json: str) -> str:
-            print(f"[NetworkAPI] modelList called with: {config_json!r}")
+            print(f"[NetworkAPI] 🎯 modelList called with: {config_json!r}")
             try:
                 config = json.loads(config_json) if config_json else {}
             except Exception as exc:
@@ -2124,6 +2403,9 @@ def create_window(load_url: str):
                     candidates.append(base + "/v1/models")
                     candidates.append(base + "/models")
                     candidates.append(base + "/openai/v1/models")
+                    candidates.append(base + "/api/models")
+                    candidates.append(base + "/api/v1/models")
+                    candidates.append(base + "/api/openai/v1/models")
                 # 去重保持顺序
                 seen = set()
                 uniq = []
@@ -2134,6 +2416,7 @@ def create_window(load_url: str):
                 return uniq
 
             candidates = _make_candidates(url)
+            print(f"[NetworkAPI] modelList original URL: {url}")
             print(f"[NetworkAPI] modelList candidates: {candidates}")
 
             def _try_request(target_url: str):
@@ -2172,9 +2455,6 @@ def create_window(load_url: str):
                 except urllib_error.URLError as exc:
                     print(f"[NetworkAPI] modelList URL error {exc} -> {target_url}")
                     return {"ok": False}
-                except Exception as exc:
-                    print(f"[NetworkAPI] modelList exception {exc} -> {target_url}")
-                    return {"ok": False}
 
             for candidate in candidates:
                 res = _try_request(candidate)
@@ -2185,8 +2465,8 @@ def create_window(load_url: str):
                     break
 
             # 全部候选失败，返回 fallback
-            fallback = config.get("fallback")
-            return json.dumps(fallback if fallback is not None else [])
+                fallback = config.get("fallback")
+                return json.dumps(fallback if fallback is not None else [])
     
     # QtWebChannel bridge
     class HostBridge(QObject):

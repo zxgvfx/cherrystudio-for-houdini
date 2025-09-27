@@ -1,0 +1,22 @@
+{
+  "filePath": ".spec-workflow/specs/manage-button-models-fix/tasks.md",
+  "currentVersion": 2,
+  "snapshots": [
+    {
+      "version": 1,
+      "filename": "snapshot-001.json",
+      "timestamp": "2025-09-27T00:41:55.768Z",
+      "trigger": "initial",
+      "approvalId": "approval_1758933715749_8408n010c",
+      "approvalTitle": "Manage Button Models Fix - 任务文档"
+    },
+    {
+      "version": 2,
+      "filename": "snapshot-002.json",
+      "timestamp": "2025-09-27T00:42:31.009Z",
+      "trigger": "approved",
+      "approvalId": "approval_1758933715749_8408n010c",
+      "approvalTitle": "Manage Button Models Fix - 任务文档"
+    }
+  ]
+}

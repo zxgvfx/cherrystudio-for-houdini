@@ -1,0 +1,27 @@
+{
+  "id": "approval_1758933232593_ivw3lv5m1",
+  "title": "Manage Button Models Fix - Requirements",
+  "filePath": ".spec-workflow/specs/manage-button-models-fix/requirements.md",
+  "type": "document",
+  "status": "needs-revision",
+  "createdAt": "2025-09-27T00:33:52.593Z",
+  "category": "spec",
+  "categoryName": "manage-button-models-fix",
+  "response": "Feedback Summary (1 comments):\n\nSpecific Text Comments:\n1. \"3. WHEN external OpenAI service returns 404 THEN t...\": 这两个暂时不用管，等第一个和第二个解决完了之后再继续调整这两个\n",
+  "annotations": "{\n  \"decision\": \"needs-revision\",\n  \"comments\": [\n    {\n      \"type\": \"selection\",\n      \"comment\": \"这两个暂时不用管，等第一个和第二个解决完了之后再继续调整这两个\",\n      \"timestamp\": \"2025-09-27T00:36:55.044Z\",\n      \"selectedText\": \"3. WHEN external OpenAI service returns 404 THEN the system SHALL try alternative API endpoints (/v1/models, /models, /api/models, etc.)\\n4. WHEN all endpoints fail THEN the system SHALL return an empty model list instead of throwing an error\",\n      \"highlightColor\": {\n        \"bg\": \"rgba(255, 235, 59, 0.3)\",\n        \"border\": \"#FFEB3B\",\n        \"name\": \"#ffeb3b\"\n      },\n      \"id\": \"comment_1758933415044_4qo1adfhe\"\n    }\n  ],\n  \"summary\": \"Feedback Summary (1 comments):\\n\\nSpecific Text Comments:\\n1. \\\"3. WHEN external OpenAI service returns 404 THEN t...\\\": 这两个暂时不用管，等第一个和第二个解决完了之后再继续调整这两个\\n\",\n  \"timestamp\": \"2025-09-27T00:38:05.204Z\"\n}",
+  "respondedAt": "2025-09-27T00:38:05.521Z",
+  "comments": [
+    {
+      "type": "selection",
+      "comment": "这两个暂时不用管，等第一个和第二个解决完了之后再继续调整这两个",
+      "timestamp": "2025-09-27T00:36:55.044Z",
+      "selectedText": "3. WHEN external OpenAI service returns 404 THEN the system SHALL try alternative API endpoints (/v1/models, /models, /api/models, etc.)\n4. WHEN all endpoints fail THEN the system SHALL return an empty model list instead of throwing an error",
+      "highlightColor": {
+        "bg": "rgba(255, 235, 59, 0.3)",
+        "border": "#FFEB3B",
+        "name": "#ffeb3b"
+      },
+      "id": "comment_1758933415044_4qo1adfhe"
+    }
+  ]
+}
