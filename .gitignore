@@ -34,6 +34,15 @@ yarn-error.log*
 # Logs
 *.log
 logs/
+houdini_network.log
+
+# Cherry Studio runtime backups (created at runtime; should not be committed)
+localStorage.json
+indexedDB.json
+
+# Spec-Workflow (project planning docs) - do not commit
+.spec-workflow/
+spec-workflow/
 
 # Builds
 build/
@@ -43,5 +52,24 @@ dist/
 # Temporary files
 *.tmp
 *.temp
+
+# Python testing/caches
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+**/tests/**
+**/__tests__/**
+**/__mocks__/**
+**/*.test.*
+**/*.spec.*
+
+# Node tooling caches
+web/.vite/
+web/.cache/
+web/.turbo/
+
+# OS
+Thumbs.db
 
 

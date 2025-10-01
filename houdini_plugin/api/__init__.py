@@ -1,19 +1,9 @@
-"""API模块 - 包含所有WebChannel API类"""
+"""
+API 层模块
+提供 JavaScript 桥接和业务逻辑
+"""
 
-from .base import BaseAPI
-from .electron import ElectronAPI
-from .file import FileAPI
-from .app import AppAPI
-from .selection import SelectionAPI
-from .store import StoreSyncAPI
-from .network import NetworkAPI
+from .cherry_studio_api import CherryStudioAPI
 
-__all__ = [
-    'BaseAPI',
-    'ElectronAPI', 
-    'FileAPI',
-    'AppAPI',
-    'SelectionAPI',
-    'StoreSyncAPI',
-    'NetworkAPI'
-]
+__all__ = ['CherryStudioAPI']
+

@@ -1,1071 +1,300 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="initial-scale=1, width=device-width" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; connect-src blob: *; script-src 'self' 'unsafe-eval' 'unsafe-inline' *; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' *; font-src 'self' data: *; img-src 'self' data: file: * blob:; media-src 'self' file:; frame-src * file:" />
     <title>Cherry Studio for Houdini</title>
-    
-    <!-- Cherry Studio 样式 -->
+
     <style>
-        :root {
-            --color-white: #ffffff;
-            --color-white-soft: rgba(255, 255, 255, 0.8);
-            --color-white-mute: rgba(255, 255, 255, 0.94);
-
-            --color-black: #181818;
-            --color-black-soft: #222222;
-            --color-black-mute: #333333;
-
-            --color-gray-1: #515c67;
-            --color-gray-2: #414853;
-            --color-gray-3: #32363f;
-
-            --color-text-1: rgba(255, 255, 245, 0.9);
-            --color-text-2: rgba(235, 235, 245, 0.6);
-            --color-text-3: rgba(235, 235, 245, 0.38);
-
-            --color-background: var(--color-black);
-            --color-background-soft: var(--color-black-soft);
-            --color-background-mute: var(--color-black-mute);
-            --color-background-opacity: rgba(34, 34, 34, 0.7);
-
-            --color-primary: #00b96b;
-            --color-primary-soft: #00b96b99;
-            --color-primary-mute: #00b96b33;
-
-            --color-text: var(--color-text-1);
-            --color-text-secondary: rgba(235, 235, 245, 0.7);
-            --color-icon: #ffffff99;
-            --color-icon-white: #ffffff;
-            --color-border: #ffffff19;
-            --color-border-soft: #ffffff10;
-            --color-border-mute: #ffffff05;
-            --color-error: #ff4d50;
-            --color-link: #338cff;
-            --color-code-background: #323232;
-            --color-inline-code-background: #323232;
-            --color-inline-code-text: rgb(218, 97, 92);
-            --color-hover: rgba(40, 40, 40, 1);
-            --color-active: rgba(55, 55, 55, 1);
-            --color-frame-border: #333;
-            --color-group-background: var(--color-background-soft);
-
-            --color-reference: #404040;
-            --color-reference-text: #ffffff;
-            --color-reference-background: #0b0e12;
-
-            --color-list-item: rgba(255, 255, 255, 0.1);
-            --color-list-item-hover: rgba(255, 255, 255, 0.05);
-
-            --modal-background: #111111;
-
-            --color-highlight: rgba(0, 0, 0, 1);
-            --color-background-highlight: rgba(255, 255, 0, 0.9);
-            --color-background-highlight-accent: rgba(255, 150, 50, 0.9);
-
-            --navbar-background-mac: rgba(20, 20, 20, 0.55);
-            --navbar-background: #1f1f1f;
-
-            --chat-background: transparent;
-            --chat-background-user: rgba(255, 255, 255, 0.08);
-            --chat-background-assistant: transparent;
-            --chat-text-user: var(--color-black);
-
-            --list-item-border-radius: 10px;
-
-            --color-status-success: green;
-            --color-status-error: var(--color-error);
-            --color-status-warning: #faad14;
-
-            --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-        }
-
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
-
-        *:focus {
-            outline: none;
-        }
-
-        html, body, #app {
-            height: 100%;
-            width: 100%;
-            margin: 0;
-        }
-
-        body {
-            display: flex;
-            min-height: 100vh;
-            color: var(--color-text);
-            font-size: 14px;
-            line-height: 1.6;
-            overflow: hidden;
-            font-family: var(--font-family);
-            text-rendering: optimizeLegibility;
-            transition: background-color 0.3s linear;
-            background-color: var(--color-background);
-            -webkit-font-smoothing: antialiased;
-            -moz-osx-font-smoothing: grayscale;
-            -webkit-user-select: none;
-            -moz-user-select: none;
-            -ms-user-select: none;
-            user-select: none;
-        }
-
-        input, textarea, [contenteditable='true'], .markdown, #messages, .selectable, pre, code {
-            -webkit-user-select: text !important;
-            -moz-user-select: text !important;
-            -ms-user-select: text !important;
-            user-select: text !important;
-        }
-
-        /* 主容器 */
-        .app-container {
-            display: flex;
-            flex: 1;
-            flex-direction: column;
-            max-width: 100vw;
-        }
-
-        /* 侧边栏 */
-        .sidebar {
-            position: fixed;
-            left: 0;
-            top: 0;
-            width: 240px;
-            height: 100vh;
-            background-color: var(--color-background-soft);
-            border-right: 0.5px solid var(--color-border);
-            z-index: 1000;
-            display: flex;
-            flex-direction: column;
-        }
-
-        .sidebar-header {
-            padding: 16px;
-            border-bottom: 0.5px solid var(--color-border);
-        }
-
-        .sidebar-title {
-            font-size: 18px;
-            font-weight: 600;
-            color: var(--color-text);
-            margin-bottom: 8px;
-        }
-
-        .sidebar-subtitle {
-            font-size: 12px;
-            color: var(--color-text-secondary);
-        }
-
-        .sidebar-content {
-            flex: 1;
-            overflow-y: auto;
-            padding: 16px;
-        }
-
-        .sidebar-section {
-            margin-bottom: 24px;
-        }
-
-        .sidebar-section-title {
-            font-size: 12px;
-            font-weight: 600;
-            color: var(--color-text-secondary);
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-bottom: 8px;
-        }
-
-        .sidebar-item {
-            display: flex;
-            align-items: center;
-            padding: 8px 12px;
-            margin-bottom: 4px;
-            border-radius: var(--list-item-border-radius);
-            color: var(--color-text);
-            text-decoration: none;
-            transition: background-color 0.2s;
-            cursor: pointer;
-        }
-
-        .sidebar-item:hover {
-            background-color: var(--color-list-item-hover);
-        }
-
-        .sidebar-item.active {
-            background-color: var(--color-primary-mute);
-            color: var(--color-primary);
-        }
-
-        .sidebar-item-icon {
-            width: 16px;
-            height: 16px;
-            margin-right: 8px;
-            opacity: 0.8;
-        }
-
-        /* 主内容区域 */
-        .main-content {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            margin-left: 240px;
-            background-color: var(--color-background);
-        }
-
-        /* 顶部导航栏 */
-        .top-navbar {
-            height: 48px;
-            background-color: var(--navbar-background);
-            border-bottom: 0.5px solid var(--color-border);
-            display: flex;
-            align-items: center;
-            padding: 0 16px;
-            z-index: 100;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-        }
-
-        .navbar-left {
-            display: flex;
-            align-items: center;
-            flex: 1;
-        }
-
-        .navbar-title {
-            font-size: 16px;
-            font-weight: 600;
-            color: var(--color-text);
-            margin-right: 16px;
-        }
-
-        .navbar-actions {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .navbar-button {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            width: 28px;
-            height: 28px;
-            border-radius: 6px;
-            background-color: transparent;
-            border: none;
-            color: var(--color-icon);
-            cursor: pointer;
-            transition: background-color 0.2s;
-        }
-
-        .navbar-button:hover {
-            background-color: var(--color-hover);
-        }
-
-        /* 聊天区域 */
-        .chat-container {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-        }
-
-        .chat-messages {
-            flex: 1;
-            overflow-y: auto;
-            padding: 16px;
-            display: flex;
-            flex-direction: column;
-            gap: 16px;
-        }
-
-        .message {
-            display: flex;
-            gap: 12px;
-            max-width: 100%;
-        }
-
-        .message-avatar {
-            width: 32px;
-            height: 32px;
-            border-radius: 50%;
-            background-color: var(--color-primary);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-size: 14px;
-            font-weight: 600;
-            flex-shrink: 0;
-        }
-
-        .message-content {
-            flex: 1;
-            min-width: 0;
-        }
-
-        .message-header {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            margin-bottom: 4px;
-        }
-
-        .message-author {
-            font-size: 14px;
-            font-weight: 600;
-            color: var(--color-text);
-        }
-
-        .message-time {
-            font-size: 12px;
-            color: var(--color-text-secondary);
-        }
-
-        .message-text {
-            font-size: 14px;
-            line-height: 1.6;
-            color: var(--color-text);
-            word-wrap: break-word;
-        }
-
-        .message-user {
-            flex-direction: row-reverse;
-        }
-
-        .message-user .message-content {
-            text-align: right;
-        }
-
-        .message-user .message-avatar {
-            background-color: var(--color-primary);
-        }
-
-        .message-user .message-text {
-            background-color: var(--chat-background-user);
-            padding: 10px 16px;
-            border-radius: 10px;
-            display: inline-block;
-        }
-
-        /* 输入区域 */
-        .input-container {
-            padding: 16px;
-            border-top: 0.5px solid var(--color-border);
-            background-color: var(--color-background);
-        }
-
-        .input-wrapper {
-            position: relative;
-            max-width: 800px;
-            margin: 0 auto;
-        }
-
-        .input-textarea {
-            width: 100%;
-            min-height: 44px;
-            max-height: 200px;
-            padding: 12px 48px 12px 16px;
-            border: 0.5px solid var(--color-border);
-            border-radius: 12px;
-            background-color: var(--color-background-soft);
-            color: var(--color-text);
-            font-size: 14px;
-            line-height: 1.5;
-            resize: none;
-            font-family: inherit;
-            transition: border-color 0.2s;
-        }
-
-        .input-textarea:focus {
-            border-color: var(--color-primary);
-        }
-
-        .input-textarea::placeholder {
-            color: var(--color-text-secondary);
-        }
-
-        .input-actions {
-            position: absolute;
-            right: 8px;
-            top: 50%;
-            transform: translateY(-50%);
-            display: flex;
-            align-items: center;
-            gap: 4px;
-        }
-
-        .input-button {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            width: 28px;
-            height: 28px;
-            border-radius: 6px;
-            background-color: transparent;
-            border: none;
-            color: var(--color-icon);
-            cursor: pointer;
-            transition: background-color 0.2s;
-        }
-
-        .input-button:hover {
-            background-color: var(--color-hover);
-        }
-
-        .input-button.send {
-            background-color: var(--color-primary);
-            color: white;
-        }
-
-        .input-button.send:hover {
-            background-color: var(--color-primary-soft);
-        }
-
-        .input-button:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-
-        /* 模型选择器 */
-        .model-selector {
-            position: relative;
-            display: inline-block;
-        }
-
-        .model-selector-button {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 8px 12px;
-            background-color: var(--color-background-soft);
-            border: 0.5px solid var(--color-border);
-            border-radius: 8px;
-            color: var(--color-text);
-            cursor: pointer;
-            transition: background-color 0.2s;
-        }
-
-        .model-selector-button:hover {
-            background-color: var(--color-hover);
-        }
-
-        .model-selector-dropdown {
-            position: absolute;
-            top: 100%;
-            left: 0;
-            right: 0;
-            background-color: var(--color-background-soft);
-            border: 0.5px solid var(--color-border);
-            border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-            z-index: 1000;
-            max-height: 200px;
-            overflow-y: auto;
-            display: none;
-        }
-
-        .model-selector-dropdown.show {
-            display: block;
-        }
-
-        .model-option {
-            padding: 8px 12px;
-            color: var(--color-text);
-            cursor: pointer;
-            transition: background-color 0.2s;
-        }
-
-        .model-option:hover {
-            background-color: var(--color-hover);
-        }
-
-        .model-option.selected {
-            background-color: var(--color-primary-mute);
-            color: var(--color-primary);
-        }
-
-        /* 配置按钮 */
-        .config-button {
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            width: 48px;
-            height: 48px;
-            border-radius: 50%;
-            background-color: var(--color-primary);
-            border: none;
-            color: white;
-            font-size: 20px;
-            cursor: pointer;
-            box-shadow: 0 4px 12px rgba(0, 185, 107, 0.3);
-            transition: all 0.2s;
-            z-index: 1000;
-        }
-
-        .config-button:hover {
-            background-color: var(--color-primary-soft);
-            transform: scale(1.05);
-        }
-
-        /* 滚动条样式 */
-        ::-webkit-scrollbar {
-            width: 6px;
-        }
-
-        ::-webkit-scrollbar-track {
-            background: transparent;
-        }
-
-        ::-webkit-scrollbar-thumb {
-            background: var(--color-border);
-            border-radius: 3px;
-        }
-
-        ::-webkit-scrollbar-thumb:hover {
-            background: var(--color-border-soft);
-        }
-
-        /* 响应式设计 */
-        @media (max-width: 768px) {
-            .sidebar {
-                transform: translateX(-100%);
-                transition: transform 0.3s;
-            }
-
-            .sidebar.open {
-                transform: translateX(0);
-            }
-
-            .main-content {
-                margin-left: 0;
-            }
-        }
-
-        /* 加载动画 */
-        .loading {
-            display: inline-block;
-            width: 16px;
-            height: 16px;
-            border: 2px solid var(--color-border);
-            border-radius: 50%;
-            border-top-color: var(--color-primary);
-            animation: spin 1s ease-in-out infinite;
-        }
-
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-
-        /* 空状态 */
-        .empty-state {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100%;
-            color: var(--color-text-secondary);
-            text-align: center;
-        }
-
-        .empty-state-icon {
-            font-size: 48px;
-            margin-bottom: 16px;
-            opacity: 0.5;
-        }
-
-        .empty-state-text {
-            font-size: 16px;
-            margin-bottom: 8px;
-        }
-
-        .empty-state-subtext {
-            font-size: 14px;
-            opacity: 0.7;
-        }
+      html,
+      body {
+        margin: 0;
+      }
+
+      #spinner {
+        position: fixed;
+        width: 100vw;
+        height: 100vh;
+        flex-direction: row;
+        justify-content: center;
+        align-items: center;
+        display: flex;
+      }
+
+      #spinner img {
+        width: 100px;
+        border-radius: 50px;
+      }
     </style>
-</head>
-<body>
-    <div id="app" class="app-container">
-        <!-- 侧边栏 -->
-        <div class="sidebar" id="sidebar">
-            <div class="sidebar-header">
-                <div class="sidebar-title">Cherry Studio</div>
-                <div class="sidebar-subtitle">for Houdini</div>
-            </div>
-            <div class="sidebar-content">
-                <div class="sidebar-section">
-                    <div class="sidebar-section-title">对话</div>
-                    <div class="sidebar-item active" data-page="chat">
-                        <span class="sidebar-item-icon">💬</span>
-                        新对话
-                    </div>
-                </div>
-                <div class="sidebar-section">
-                    <div class="sidebar-section-title">工具</div>
-                    <div class="sidebar-item" data-page="settings">
-                        <span class="sidebar-item-icon">⚙️</span>
-                        设置
-                    </div>
-                    <div class="sidebar-item" data-page="models">
-                        <span class="sidebar-item-icon">🤖</span>
-                        模型管理
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- 主内容区域 -->
-        <div class="main-content">
-            <!-- 顶部导航栏 -->
-            <div class="top-navbar">
-                <div class="navbar-left">
-                    <div class="navbar-title">Chat</div>
-                    <div class="model-selector">
-                        <div class="model-selector-button" id="modelSelector">
-                            <span id="currentModel">GPT-4</span>
-                            <span>▼</span>
-                        </div>
-                        <div class="model-selector-dropdown" id="modelDropdown">
-                            <div class="model-option selected" data-model="gpt-4">GPT-4</div>
-                            <div class="model-option" data-model="gpt-3.5-turbo">GPT-3.5 Turbo</div>
-                            <div class="model-option" data-model="claude-3">Claude 3</div>
-                            <div class="model-option" data-model="gemini-pro">Gemini Pro</div>
-                            <div class="model-option" data-model="local">本地模型</div>
-                        </div>
-                    </div>
-                </div>
-                <div class="navbar-actions">
-                    <button class="navbar-button" title="新建对话">➕</button>
-                    <button class="navbar-button" title="设置">⚙️</button>
-                </div>
-            </div>
-
-            <!-- 聊天区域 -->
-            <div class="chat-container">
-                <div class="chat-messages" id="chatMessages">
-                    <div class="empty-state">
-                        <div class="empty-state-icon">🤖</div>
-                        <div class="empty-state-text">开始新的对话</div>
-                        <div class="empty-state-subtext">选择一个模型，然后开始聊天</div>
-                    </div>
-                </div>
-
-                <!-- 输入区域 -->
-                <div class="input-container">
-                    <div class="input-wrapper">
-                        <textarea 
-                            class="input-textarea" 
-                            id="messageInput" 
-                            placeholder="输入消息..."
-                            rows="1"
-                        ></textarea>
-                        <div class="input-actions">
-                            <button class="input-button" title="附加文件">📎</button>
-                            <button class="input-button send" id="sendButton" title="发送">➤</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- 配置按钮 -->
-        <button class="config-button" id="configButton" title="配置">⚙️</button>
-    </div>
-
+    
+    <!-- 标记 Houdini 环境 -->
     <script>
-        // 全局状态
-        let currentModel = 'gpt-4';
-        let providersCache = null;
-        let messages = [];
-        let isLoading = false;
-
-        // DOM 元素
-        const chatMessages = document.getElementById('chatMessages');
-        const messageInput = document.getElementById('messageInput');
-        const sendButton = document.getElementById('sendButton');
-        const modelSelector = document.getElementById('modelSelector');
-        const modelDropdown = document.getElementById('modelDropdown');
-        const currentModelSpan = document.getElementById('currentModel');
-        const configButton = document.getElementById('configButton');
-
-        // 初始化
-        document.addEventListener('DOMContentLoaded', function() {
-            initializeEventListeners();
-            loadConfiguration();
-            buildModelsFromProviders();
-            updateUI();
-        });
-
-        // 事件监听器
-        function initializeEventListeners() {
-            // 发送消息
-            sendButton.addEventListener('click', sendMessage);
-            messageInput.addEventListener('keydown', function(e) {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    sendMessage();
-                }
-            });
-
-            // 模型选择
-            modelSelector.addEventListener('click', function(e) {
-                e.stopPropagation();
-                modelDropdown.classList.toggle('show');
-            });
-
-            modelDropdown.addEventListener('click', function(e) {
-                if (e.target.classList.contains('model-option')) {
-                    selectModel(e.target.dataset.model);
-                    modelDropdown.classList.remove('show');
-                }
-            });
-
-            // 点击外部关闭下拉菜单
-            document.addEventListener('click', function() {
-                modelDropdown.classList.remove('show');
-            });
-
-            // 配置按钮
-            configButton.addEventListener('click', function() {
-                window.location.href = 'cherry-studio-settings.html';
-            });
-
-            // 顶部导航栏设置按钮
-            document.querySelector('.navbar-button[title="设置"]').addEventListener('click', function() {
-                window.location.href = 'cherry-studio-settings.html';
-            });
-
-            // 侧边栏导航
-            document.querySelectorAll('.sidebar-item').forEach(item => {
-                item.addEventListener('click', function() {
-                    const page = this.dataset.page;
-                    if (page === 'settings') {
-                        window.location.href = 'cherry-studio-settings.html#provider';
-                    } else if (page === 'models') {
-                        // 与 Cherry Studio 行为一致：进入设置页的“模型服务”分组
-                        window.location.href = 'cherry-studio-settings.html#provider';
-                    }
-                });
-            });
-
-            // 自动调整输入框高度
-            messageInput.addEventListener('input', function() {
-                this.style.height = 'auto';
-                this.style.height = Math.min(this.scrollHeight, 200) + 'px';
-            });
-        }
-
-        // 选择模型
-        function selectModel(model) {
-            currentModel = model;
-            currentModelSpan.textContent = getModelDisplayName(model);
-            
-            // 更新选中状态
-            document.querySelectorAll('.model-option').forEach(option => {
-                option.classList.remove('selected');
-            });
-            document.querySelector(`[data-model="${model}"]`).classList.add('selected');
-        }
-
-        // 从 providers 构建模型下拉
-        function buildModelsFromProviders() {
-            const cfg = getConfiguration();
-            providersCache = (cfg && cfg.providers) ? cfg.providers : null;
-            const dropdown = document.getElementById('modelDropdown');
-            if (!dropdown) return;
-            dropdown.innerHTML = '';
-            const models = [];
-            if (providersCache) {
-                providersCache.filter(p => p.on).forEach(p => {
-                    (p.models||[]).forEach(m => models.push({ id: m, provider: p.id }));
-                });
-            }
-            // 回退到默认
-            if (models.length === 0) {
-                ['gpt-4','gpt-3.5-turbo','claude-3','gemini-pro','local'].forEach(m => models.push({ id: m, provider: 'default' }));
-            }
-            models.forEach((m, idx) => {
-                const opt = document.createElement('div');
-                opt.className = 'model-option' + (idx===0 ? ' selected' : '');
-                opt.dataset.model = m.id;
-                opt.textContent = m.id;
-                dropdown.appendChild(opt);
-                if (idx===0) selectModel(m.id);
-            });
-        }
-
-        // 获取模型显示名称
-        function getModelDisplayName(model) {
-            const names = {
-                'gpt-4': 'GPT-4',
-                'gpt-3.5-turbo': 'GPT-3.5 Turbo',
-                'claude-3': 'Claude 3',
-                'gemini-pro': 'Gemini Pro',
-                'local': '本地模型'
-            };
-            return names[model] || model;
-        }
-
-        // 发送消息
-        async function sendMessage() {
-            const message = messageInput.value.trim();
-            if (!message || isLoading) return;
-
-            // 添加用户消息
-            addMessage('user', message);
-            messageInput.value = '';
-            messageInput.style.height = 'auto';
-
-            // 设置加载状态
-            setLoading(true);
-
-            try {
-                // 调用 AI API
-                const response = await callAIAPI(message, currentModel);
-                addMessage('assistant', response);
-            } catch (error) {
-                console.error('AI API 调用失败:', error);
-                addMessage('assistant', '抱歉，我遇到了一些问题。请稍后再试。');
-            } finally {
-                setLoading(false);
-            }
-        }
-
-        // 添加消息到聊天
-        function addMessage(role, content) {
-            const message = {
-                role: role,
-                content: content,
-                timestamp: new Date()
-            };
-            messages.push(message);
-
-            // 清除空状态
-            const emptyState = chatMessages.querySelector('.empty-state');
-            if (emptyState) {
-                emptyState.remove();
-            }
-
-            // 创建消息元素
-            const messageElement = createMessageElement(message);
-            chatMessages.appendChild(messageElement);
-
-            // 滚动到底部
-            chatMessages.scrollTop = chatMessages.scrollHeight;
-        }
-
-        // 创建消息元素
-        function createMessageElement(message) {
-            const messageDiv = document.createElement('div');
-            messageDiv.className = `message message-${message.role}`;
-
-            const avatar = document.createElement('div');
-            avatar.className = 'message-avatar';
-            avatar.textContent = message.role === 'user' ? 'U' : 'AI';
-
-            const content = document.createElement('div');
-            content.className = 'message-content';
-
-            const header = document.createElement('div');
-            header.className = 'message-header';
-
-            const author = document.createElement('div');
-            author.className = 'message-author';
-            author.textContent = message.role === 'user' ? 'You' : getModelDisplayName(currentModel);
-
-            const time = document.createElement('div');
-            time.className = 'message-time';
-            time.textContent = message.timestamp.toLocaleTimeString();
-
-            const text = document.createElement('div');
-            text.className = 'message-text';
-            text.textContent = message.content;
-
-            header.appendChild(author);
-            header.appendChild(time);
-            content.appendChild(header);
-            content.appendChild(text);
-            messageDiv.appendChild(avatar);
-            messageDiv.appendChild(content);
-
-            return messageDiv;
-        }
-
-        // 设置加载状态
-        function setLoading(loading) {
-            isLoading = loading;
-            sendButton.disabled = loading;
-            
-            if (loading) {
-                sendButton.innerHTML = '<div class="loading"></div>';
-            } else {
-                sendButton.innerHTML = '➤';
-            }
-        }
-
-        // 调用 AI API
-        async function callAIAPI(message, model) {
-            // 获取配置
-            const config = getConfiguration();
-            
-            if (!config || !config.apiKey) {
-                return '请先配置 API 密钥。点击右下角的配置按钮进行设置。';
-            }
-
-            // 根据模型选择 API
-            // 若 providers 中匹配到模型 -> 根据提供商调用
-            if (providersCache) {
-                const provider = providersCache.find(p => (p.models||[]).includes(model));
-                if (provider && provider.on) {
-                    if (provider.id === 'openai') return await callOpenAI(message, model, config, provider);
-                    if (provider.id === 'anthropic') return await callClaude(message, config, provider);
-                    if (provider.id === 'google') return await callGemini(message, config, provider);
-                    if (provider.id === 'local') return await callLocalLLM(message, config, provider);
-                }
-            }
-            // 回退旧逻辑
-            if (model.startsWith('gpt')) return await callOpenAI(message, model, config);
-            if (model.startsWith('claude')) return await callClaude(message, config);
-            if (model.startsWith('gemini')) return await callGemini(message, config);
-            return await callLocalLLM(message, config);
-        }
-
-        // OpenAI API 调用
-        async function callOpenAI(message, model, config, provider) {
-            const base = provider?.baseUrl || 'https://api.openai.com';
-            const key = provider?.apiKey || config.openaiApiKey;
-            const response = await fetch(`${base.replace(/\/$/,'')}/v1/chat/completions`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${key}`
-                },
-                body: JSON.stringify({
-                    model: model,
-                    messages: [
-                        { role: 'system', content: config.systemPrompt || '你是一个有用的AI助手。' },
-                        { role: 'user', content: message }
-                    ],
-                    max_tokens: config.maxTokens || 1000,
-                    temperature: config.temperature || 0.7
-                })
-            });
-
-            if (!response.ok) {
-                throw new Error(`OpenAI API 错误: ${response.status}`);
-            }
-
-            const data = await response.json();
-            return data.choices[0].message.content;
-        }
-
-        // Claude API 调用
-        async function callClaude(message, config, provider) {
-            const base = provider?.baseUrl || 'https://api.anthropic.com';
-            const key = provider?.apiKey || config.claudeApiKey;
-            const response = await fetch(`${base.replace(/\/$/,'')}/v1/messages`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'x-api-key': key,
-                    'anthropic-version': '2023-06-01'
-                },
-                body: JSON.stringify({
-                    model: 'claude-3-sonnet-20240229',
-                    max_tokens: config.maxTokens || 1000,
-                    messages: [
-                        { role: 'user', content: message }
-                    ]
-                })
-            });
-
-            if (!response.ok) {
-                throw new Error(`Claude API 错误: ${response.status}`);
-            }
-
-            const data = await response.json();
-            return data.content[0].text;
-        }
-
-        // Gemini API 调用
-        async function callGemini(message, config, provider) {
-            const base = provider?.baseUrl || 'https://generativelanguage.googleapis.com';
-            const key = provider?.apiKey || config.geminiApiKey;
-            const response = await fetch(`${base.replace(/\/$/,'')}/v1beta/models/gemini-pro:generateContent?key=${key}`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    contents: [{
-                        parts: [{
-                            text: message
-                        }]
-                    }]
-                })
-            });
-
-            if (!response.ok) {
-                throw new Error(`Gemini API 错误: ${response.status}`);
-            }
-
-            const data = await response.json();
-            return data.candidates[0].content.parts[0].text;
-        }
-
-        // 本地 LLM 调用
-        async function callLocalLLM(message, config, provider) {
-            const host = (provider?.baseUrl || config.localLLMHost || 'http://localhost:11434').replace(/\/$/,'');
-            const response = await fetch(`${host}/api/generate`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    model: config.localLLMModel || (provider?.models?.[0] || 'llama2'),
-                    prompt: message,
-                    stream: false
-                })
-            });
-
-            if (!response.ok) {
-                throw new Error(`本地 LLM API 错误: ${response.status}`);
-            }
-
-            const data = await response.json();
-            return data.response;
-        }
-
-        // 获取配置
-        function getConfiguration() {
-            const config = localStorage.getItem('cherryStudioConfig');
-            return config ? JSON.parse(config) : null;
-        }
-
-        // 加载配置
-        function loadConfiguration() {
-            const config = getConfiguration();
-            if (config && config.defaultModel) {
-                selectModel(config.defaultModel);
-            }
-        }
-
-        // 更新 UI
-        function updateUI() {
-            // 这里可以添加其他 UI 更新逻辑
-        }
-
-        // 导出到全局，供其他页面使用
-        window.cherryStudioClone = {
-            addMessage,
-            selectModel,
-            getConfiguration
-        };
+      // 强制标记 Houdini 环境，避免 Cherry 误判为 Electron
+      window.houdini = true;
     </script>
-</body>
+    
+    <script type="module" crossorigin src="./assets/index-DXlk-y9x.js"></script>
+    <link rel="modulepreload" crossorigin href="./assets/preload-helper-BMYLnTBu.js">
+    <link rel="modulepreload" crossorigin href="./assets/chunk-st2fFX3F.js">
+    <link rel="modulepreload" crossorigin href="./assets/v4-_VdBfIuS.js">
+    <link rel="modulepreload" crossorigin href="./assets/dist-DljPbAPG.js">
+    <link rel="modulepreload" crossorigin href="./assets/internal-Dhi1dCTx.js">
+    <link rel="modulepreload" crossorigin href="./assets/edge-3nQCkgcX.js">
+    <link rel="modulepreload" crossorigin href="./assets/edge-DdVIh9LQ.js">
+    <link rel="modulepreload" crossorigin href="./assets/react-Cs7_W7Sm.js">
+    <link rel="modulepreload" crossorigin href="./assets/stylis-BjTM3uyy.js">
+    <link rel="modulepreload" crossorigin href="./assets/es-C7gg5F5w.js">
+    <link rel="modulepreload" crossorigin href="./assets/module-B3cvBXXU.js">
+    <link rel="modulepreload" crossorigin href="./assets/jsx-runtime-VX_aOJrC.js">
+    <link rel="modulepreload" crossorigin href="./assets/Component-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/dist-fgFHyV9x.js">
+    <link rel="modulepreload" crossorigin href="./assets/dist-Cn5RiyRu.js">
+    <link rel="modulepreload" crossorigin href="./assets/dist-DdcLErxA.js">
+    <link rel="modulepreload" crossorigin href="./assets/dist-DzKOcZda.js">
+    <link rel="modulepreload" crossorigin href="./assets/emotion-is-prop-valid.esm-B2kLQv7X.js">
+    <link rel="modulepreload" crossorigin href="./assets/createLucideIcon-jMI35CFY.js">
+    <link rel="modulepreload" crossorigin href="./assets/chevron-right-CXYX9XBh.js">
+    <link rel="modulepreload" crossorigin href="./assets/copy-D3xZcu-G.js">
+    <link rel="modulepreload" crossorigin href="./assets/download-4RY1w6yh.js">
+    <link rel="modulepreload" crossorigin href="./assets/image-BjZ1swck.js">
+    <link rel="modulepreload" crossorigin href="./assets/pencil-D1umxxOY.js">
+    <link rel="modulepreload" crossorigin href="./assets/refresh-cw-BCGKhaPu.js">
+    <link rel="modulepreload" crossorigin href="./assets/rotate-ccw-DLP537cR.js">
+    <link rel="modulepreload" crossorigin href="./assets/trash-DOR5BdsB.js">
+    <link rel="modulepreload" crossorigin href="./assets/ImageViewer-DJ7yIMNp.js">
+    <link rel="modulepreload" crossorigin href="./assets/dayjs.min-U3mmM7gw.js">
+    <link rel="modulepreload" crossorigin href="./assets/purify.es-C6MO4CcO.js">
+    <link rel="modulepreload" crossorigin href="./assets/decode-Bp4nUNek.js">
+    <link rel="modulepreload" crossorigin href="./assets/es-BokE909h.js">
+    <link rel="modulepreload" crossorigin href="./assets/katex-7bqOEKAb.js">
+    <link rel="modulepreload" crossorigin href="./assets/arrow-up-right-CNsBHbnt.js">
+    <link rel="modulepreload" crossorigin href="./assets/at-sign-xTGnPodW.js">
+    <link rel="modulepreload" crossorigin href="./assets/camera-dkUy5-ny.js">
+    <link rel="modulepreload" crossorigin href="./assets/check-B83soOyU.js">
+    <link rel="modulepreload" crossorigin href="./assets/chevron-down-DQTDa4tv.js">
+    <link rel="modulepreload" crossorigin href="./assets/chevron-left-D7JKNHox.js">
+    <link rel="modulepreload" crossorigin href="./assets/chevron-up-DemTCl1S.js">
+    <link rel="modulepreload" crossorigin href="./assets/chevrons-down-up-6nkpCTPE.js">
+    <link rel="modulepreload" crossorigin href="./assets/chevrons-up-down-t2QV6Dcz.js">
+    <link rel="modulepreload" crossorigin href="./assets/circle-pause-DeGD0I61.js">
+    <link rel="modulepreload" crossorigin href="./assets/circle-play-CX64iSSB.js">
+    <link rel="modulepreload" crossorigin href="./assets/circle-question-mark-CRXB0Y0T.js">
+    <link rel="modulepreload" crossorigin href="./assets/circle-x-Btc5rhit.js">
+    <link rel="modulepreload" crossorigin href="./assets/code-xml-D7OXxlxe.js">
+    <link rel="modulepreload" crossorigin href="./assets/code-O1iQ3_Yk.js">
+    <link rel="modulepreload" crossorigin href="./assets/corner-down-left-sxETZo9-.js">
+    <link rel="modulepreload" crossorigin href="./assets/ellipsis-vertical-hwLOuxg7.js">
+    <link rel="modulepreload" crossorigin href="./assets/eye-B9JlB5mS.js">
+    <link rel="modulepreload" crossorigin href="./assets/file-code-D0YW9bV4.js">
+    <link rel="modulepreload" crossorigin href="./assets/file-pen-line-VUtn3cTm.js">
+    <link rel="modulepreload" crossorigin href="./assets/file-search-Cpw-cIfE.js">
+    <link rel="modulepreload" crossorigin href="./assets/file-text-CLQ4i-wx.js">
+    <link rel="modulepreload" crossorigin href="./assets/forward-CcRJZZO_.js">
+    <link rel="modulepreload" crossorigin href="./assets/globe-C5z0RFaE.js">
+    <link rel="modulepreload" crossorigin href="./assets/languages-DQ--Dzel.js">
+    <link rel="modulepreload" crossorigin href="./assets/lightbulb-B033avh-.js">
+    <link rel="modulepreload" crossorigin href="./assets/link-DgxnF9dV.js">
+    <link rel="modulepreload" crossorigin href="./assets/list-checks-DvoHetOg.js">
+    <link rel="modulepreload" crossorigin href="./assets/maximize-2-CkwXCJJC.js">
+    <link rel="modulepreload" crossorigin href="./assets/maximize-Bbadv7b-.js">
+    <link rel="modulepreload" crossorigin href="./assets/menu-v-no0s_j.js">
+    <link rel="modulepreload" crossorigin href="./assets/minimize-2-BGhR8ngr.js">
+    <link rel="modulepreload" crossorigin href="./assets/minus-W7iJaaEq.js">
+    <link rel="modulepreload" crossorigin href="./assets/notebook-pen-BEC2d7wp.js">
+    <link rel="modulepreload" crossorigin href="./assets/paperclip-pb5PAWtA.js">
+    <link rel="modulepreload" crossorigin href="./assets/play-CX64iSSB.js">
+    <link rel="modulepreload" crossorigin href="./assets/plus-B83soOyU.js">
+    <link rel="modulepreload" crossorigin href="./assets/redo-DLP537cR.js">
+    <link rel="modulepreload" crossorigin href="./assets/rotate-ccw-DLP537cR.js">
+    <link rel="modulepreload" crossorigin href="./assets/save-DOR5BdsB.js">
+    <link rel="modulepreload" crossorigin href="./assets/search-Cpw-cIfE.js">
+    <link rel="modulepreload" crossorigin href="./assets/send-CcRJZZO_.js">
+    <link rel="modulepreload" crossorigin href="./assets/settings-DQ--Dzel.js">
+    <link rel="modulepreload" crossorigin href="./assets/share-DgxnF9dV.js">
+    <link rel="modulepreload" crossorigin href="./assets/sidebar-open-D7JKNHox.js">
+    <link rel="modulepreload" crossorigin href="./assets/sidebar-close-D7JKNHox.js">
+    <link rel="modulepreload" crossorigin href="./assets/sidebar-D7JKNHox.js">
+    <link rel="modulepreload" crossorigin href="./assets/skip-back-CX64iSSB.js">
+    <link rel="modulepreload" crossorigin href="./assets/skip-forward-CcRJZZO_.js">
+    <link rel="modulepreload" crossorigin href="./assets/square-B83soOyU.js">
+    <link rel="modulepreload" crossorigin href="./assets/star-B83soOyU.js">
+    <link rel="modulepreload" crossorigin href="./assets/stop-CX64iSSB.js">
+    <link rel="modulepreload" crossorigin href="./assets/sun-B83soOyU.js">
+    <link rel="modulepreload" crossorigin href="./assets/thumbs-up-B83soOyU.js">
+    <link rel="modulepreload" crossorigin href="./assets/thumbs-down-B83soOyU.js">
+    <link rel="modulepreload" crossorigin href="./assets/toggle-left-B83soOyU.js">
+    <link rel="modulepreload" crossorigin href="./assets/toggle-right-B83soOyU.js">
+    <link rel="modulepreload" crossorigin href="./assets/undo-DLP537cR.js">
+    <link rel="modulepreload" crossorigin href="./assets/upload-DOR5BdsB.js">
+    <link rel="modulepreload" crossorigin href="./assets/user-B83soOyU.js">
+    <link rel="modulepreload" crossorigin href="./assets/users-B83soOyU.js">
+    <link rel="modulepreload" crossorigin href="./assets/volume-2-B83soOyU.js">
+    <link rel="modulepreload" crossorigin href="./assets/volume-x-B83soOyU.js">
+    <link rel="modulepreload" crossorigin href="./assets/wifi-B83soOyU.js">
+    <link rel="modulepreload" crossorigin href="./assets/wifi-off-B83soOyU.js">
+    <link rel="modulepreload" crossorigin href="./assets/x-Btc5rhit.js">
+    <link rel="modulepreload" crossorigin href="./assets/zoom-in-B83soOyU.js">
+    <link rel="modulepreload" crossorigin href="./assets/zoom-out-B83soOyU.js">
+    <link rel="modulepreload" crossorigin href="./assets/zoom-B83soOyU.js">
+    <link rel="modulepreload" crossorigin href="./assets/Activity-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/AlertCircle-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/AlertTriangle-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Archive-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/ArrowDown-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/ArrowLeft-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/ArrowRight-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/ArrowUp-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/ArrowUpRight-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/AtSign-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/BarChart-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Bell-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Bookmark-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Box-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Calendar-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Camera-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Check-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/CheckCircle-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/ChevronDown-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/ChevronLeft-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/ChevronRight-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/ChevronUp-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Clock-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Code-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Command-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Compass-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Copy-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/CreditCard-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Crop-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Crosshair-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Database-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Delete-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Download-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Edit-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Edit2-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Edit3-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/ExternalLink-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Eye-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/EyeOff-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/File-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/FileText-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Filter-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Flag-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Folder-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/FolderOpen-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Globe-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Grid-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Heart-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/HelpCircle-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Home-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Image-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Inbox-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Info-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Key-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Layers-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Layout-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Link-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Link2-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Lock-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/LogIn-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/LogOut-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Mail-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Map-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/MapPin-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Maximize-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Maximize2-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Minimize-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Minimize2-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Minus-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Monitor-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Moon-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/MousePointer-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Move-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Music-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Navigation-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Octagon-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Package-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Paperclip-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Pause-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/PauseCircle-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Phone-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Play-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/PlayCircle-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Plus-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/PlusCircle-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Power-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Printer-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Radio-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/RefreshCw-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Repeat-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/RotateCcw-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/RotateCw-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Save-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Scissors-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Search-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Send-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Settings-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Share-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Share2-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Shield-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/ShieldOff-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/ShoppingBag-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/ShoppingCart-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Shuffle-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Sidebar-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/SkipBack-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/SkipForward-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Sliders-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Smartphone-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Smile-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Speaker-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Square-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Star-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/StopCircle-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Sun-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Tablet-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Tag-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Target-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/ThumbsUp-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/ThumbsDown-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/ToggleLeft-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/ToggleRight-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Trash-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Trash2-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/TrendingUp-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Triangle-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Truck-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Tv-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Type-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Umbrella-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Unlock-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Upload-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/User-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/UserCheck-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/UserMinus-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/UserPlus-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Users-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Volume-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Volume1-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Volume2-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/VolumeX-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Watch-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Wifi-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/WifiOff-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Wind-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/X-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/XCircle-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/Zap-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/ZoomIn-DSlWG0rr.js">
+    <link rel="modulepreload" crossorigin href="./assets/ZoomOut-DSlWG0rr.js">
+    <link rel="stylesheet" crossorigin href="./assets/index-Cs7_W7Sm.css">
+  </head>
+  <body>
+    <div id="spinner">
+      <img src="./assets/logo.png" alt="Cherry Studio" />
+    </div>
+    <div id="root"></div>
+  </body>
 </html>

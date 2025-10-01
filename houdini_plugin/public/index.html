@@ -8,6 +8,19 @@
       content="default-src 'self'; connect-src blob: *; script-src 'self' 'unsafe-eval' 'unsafe-inline' *; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' *; font-src 'self' data: *; img-src 'self' data: file: * blob:; media-src 'self' file:; frame-src * file:" />
     <title>Cherry Studio</title>
 
+    <!-- LoggerService修复 - 必须在所有脚本之前 -->
+    <script>
+      // 立即修复LoggerService
+      window.source = 'qt';
+      window.__WINDOW_SOURCE = 'qt';
+      window.__LOGGER_SOURCE = 'qt';
+      window.__WINDOW_SOURCE_INITIALIZED = true;
+      window.houdini = true;
+      window.isHoudini = true;
+      window.__IS_QT = true;
+      console.log('[Houdini] HTML中LoggerService修复完成');
+    </script>
+
     <style>
       html,
       body {
