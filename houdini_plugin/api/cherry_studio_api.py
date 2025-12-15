@@ -583,7 +583,15 @@ class CherryStudioAPI(QObject):
                 return json.dumps(fallback)
             _log(f"modelList requesting: {url}")
             method = str(config.get("method", "GET")).upper()
-            headers = config.get("headers", {})
+            headers = dict(config.get("headers", {}) or {})
+            api_key = config.get("apiKey") or config.get("api_key")
+            header_name = config.get("apiHeader") or config.get("api_header") or "Authorization"
+            scheme = config.get("apiScheme") or config.get("api_scheme") or "Bearer"
+            if api_key and header_name and header_name not in headers:
+                if header_name.lower() == "authorization":
+                    headers["Authorization"] = f"{scheme} {api_key}".strip()
+                else:
+                    headers[header_name] = api_key
             body = config.get("body")
             body_bytes = None
             if body:
@@ -724,8 +732,259 @@ class CherryStudioAPI(QObject):
         return 'false'
     
     @Slot(str, result=str)
+    def mcpStartServer(self, server: str) -> str:
+        return 'false'
+    
+    @Slot(str, result=str)
+    def mcpServerStatus(self, server: str) -> str:
+        return '{"running": false, "pid": null}'
+    
+    @Slot(str, result=str)
     def mcpListTools(self, server: str) -> str:
-        return '[]'
+        try:
+            import json
+            import asyncio
+            import re
+            from fastmcp import Client
+            
+            _log(f"[MCP] mcpListTools called with server: {str(server)[:200]}")
+            server_config = json.loads(server) if isinstance(server, str) else server
+            base_url = server_config.get('baseUrl', server_config.get('url', ''))
+            
+            _log(f"[MCP] Server baseUrl: {base_url}")
+            if not base_url:
+                _log(f"[MCP] No baseUrl found, returning empty list")
+                return '[]'
+            
+            # 异步获取工具列表
+            async def get_tools():
+                try:
+                    _log(f"[MCP] Creating FastMCP client for {base_url}")
+                    # 使用 FastMCP 客户端
+                    client = Client(base_url)
+                    
+                    async with client:
+                        _log(f"[MCP] Calling client.list_tools()")
+                        tools = await client.list_tools()
+                        _log(f"[MCP] Got {len(tools) if tools else 0} tools from server")
+                        if tools:
+                            for i, tool in enumerate(tools[:3]):  # 只记录前3个工具
+                                tool_name = getattr(tool, 'name', str(tool))
+                                _log(f"[MCP] Tool {i+1}: {tool_name}")
+                        return tools
+                        
+                except Exception as e:
+                    import traceback
+                    _log(f"[MCP] Error in get_tools: {str(e)}\n{traceback.format_exc()}")
+                    return []
+            
+            # 运行异步函数 - 在已有事件循环中运行
+            try:
+                # 尝试获取当前事件循环
+                loop = asyncio.get_running_loop()
+                # 如果事件循环正在运行，使用线程池
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(asyncio.run, get_tools())
+                    tools = future.result()
+            except RuntimeError:
+                # 如果没有运行的事件循环，创建新的
+                tools = asyncio.run(get_tools())
+            
+            if tools:
+                # 转换为可序列化的格式
+                # Cherry Studio 期望的工具格式需要包含 id, serverId, serverName, type 等字段
+                server_id = server_config.get('id', '')
+                server_name = server_config.get('name', server_config.get('baseUrl', 'unknown'))
+                
+                tools_data = []
+                for tool in tools:
+                    # 生成工具 ID（Cherry Studio 格式：serverName-toolName_serverIdSuffix）
+                    tool_name = tool.name if hasattr(tool, 'name') else str(tool)
+                    sanitized_server = server_name.strip().replace('-', '_')[:7]
+                    sanitized_tool = tool_name.strip().replace('-', '_')
+                    
+                    # 生成 serverId 后缀（取最后6个字符）
+                    server_id_suffix = ''
+                    if server_id:
+                        # 取最后6个字符，只保留字母数字
+                        server_id_suffix = re.sub(r'[^a-zA-Z0-9]', '', server_id[-6:])
+                        if not server_id_suffix:
+                            # 如果都是非字母数字，使用简单哈希
+                            hash_val = sum(ord(c) for c in server_id)
+                            server_id_suffix = format(hash_val, 'x')[-6:] or 'x'
+                    
+                    # 组合工具 ID
+                    if sanitized_server and not sanitized_tool.startswith(sanitized_server[:7]):
+                        base_name = f"{sanitized_server[:7]}-{sanitized_tool}"
+                    else:
+                        base_name = sanitized_tool
+                    
+                    # 清理无效字符
+                    base_name = ''.join(c if c.isalnum() or c in '_-' else '_' for c in base_name)
+                    
+                    # 确保以字母或下划线开头
+                    if base_name and not base_name[0].isalpha():
+                        base_name = f"tool_{base_name}"
+                    
+                    # 截断到合适长度（保留后缀空间）
+                    max_base_len = 63 - (len(server_id_suffix) + 1 if server_id_suffix else 0)
+                    if len(base_name) > max_base_len:
+                        base_name = base_name[:max_base_len]
+                    
+                    # 添加后缀
+                    if server_id_suffix:
+                        tool_id = f"{base_name}_{server_id_suffix}"
+                    else:
+                        tool_id = base_name
+                    
+                    tools_data.append({
+                        "id": tool_id,
+                        "name": tool_name,
+                        "description": getattr(tool, 'description', '') if hasattr(tool, 'description') else '',
+                        "inputSchema": tool.inputSchema if hasattr(tool, 'inputSchema') else {},
+                        "serverId": server_id,
+                        "serverName": server_name,
+                        "type": "mcp"
+                    })
+                _log(f"[MCP] Returning {len(tools_data)} tools with IDs: {[t['id'] for t in tools_data[:3]]}")
+                return json.dumps(tools_data)
+            else:
+                _log(f"[MCP] No tools returned from server, returning empty list")
+                return '[]'
+            
+        except ImportError:
+            return '[]'
+        except Exception:
+            return '[]'
+    
+    @Slot(str, result=str)
+    def mcpCallTool(self, payload: str) -> str:
+        """调用 MCP 工具
+        
+        Args:
+            payload: JSON 字符串，包含 {server, name, args, callId}
+            
+        Returns:
+            JSON 字符串，包含工具调用结果
+        """
+        _log(f"[MCP] mcpCallTool called with payload: {str(payload)[:300]}")
+        try:
+            import json
+            import asyncio
+            from fastmcp import Client
+            
+            payload_obj = json.loads(payload) if isinstance(payload, str) else payload
+            server_config = payload_obj.get('server', {})
+            tool_name = payload_obj.get('name', '')
+            tool_args = payload_obj.get('args', {})
+            call_id = payload_obj.get('callId', '')
+            
+            _log(f"[MCP] Parsed - tool_name: {tool_name}, server: {server_config.get('name', 'unknown')}, args: {str(tool_args)[:200]}")
+            
+            if not tool_name:
+                return json.dumps({
+                    'isError': True,
+                    'content': [{'type': 'text', 'text': 'Tool name is required'}]
+                })
+            
+            base_url = server_config.get('baseUrl', server_config.get('url', ''))
+            if not base_url:
+                return json.dumps({
+                    'isError': True,
+                    'content': [{'type': 'text', 'text': 'Server baseUrl is required'}]
+                })
+            
+            # 异步调用工具
+            async def call_tool():
+                try:
+                    _log(f"[MCP] Calling tool: {tool_name} on {base_url} with args: {json.dumps(tool_args)}")
+                    client = Client(base_url)
+                    async with client:
+                        result = await client.call_tool(tool_name, tool_args)
+                        _log(f"[MCP] Tool call result type: {type(result)}, content: {str(result)[:200]}")
+                        return result
+                except Exception as e:
+                    import traceback
+                    error_detail = f"{str(e)}\n{traceback.format_exc()}"
+                    _log(f"[MCP] Error calling tool {tool_name}: {error_detail}")
+                    return {
+                        'isError': True,
+                        'content': [{'type': 'text', 'text': f'Error calling tool: {str(e)}'}]
+                    }
+            
+            # 运行异步函数
+            try:
+                loop = asyncio.get_running_loop()
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(asyncio.run, call_tool())
+                    result = future.result()
+            except RuntimeError:
+                result = asyncio.run(call_tool())
+            
+            # 转换结果为标准格式
+            if isinstance(result, dict) and 'isError' in result:
+                _log(f"[MCP] Returning error result: {json.dumps(result)}")
+                return json.dumps(result)
+            
+            # fastmcp 返回的结果格式可能是 content 数组或其他格式
+            # 转换为 Cherry Studio 期望的格式
+            if isinstance(result, dict):
+                # 如果已经有 content 字段，直接返回
+                if 'content' in result:
+                    response = {
+                        'isError': False,
+                        'content': result.get('content', [])
+                    }
+                    _log(f"[MCP] Returning content dict result: {json.dumps(response)[:500]}")
+                    return json.dumps(response)
+                # 检查是否是 fastmcp 的标准响应格式
+                # fastmcp 可能返回 {content: [...]} 格式
+                if hasattr(result, 'content') or 'content' in result:
+                    content = getattr(result, 'content', result.get('content', []))
+                    response = {
+                        'isError': False,
+                        'content': content if isinstance(content, list) else [{'type': 'text', 'text': str(content)}]
+                    }
+                    _log(f"[MCP] Returning fastmcp content result: {json.dumps(response)[:500]}")
+                    return json.dumps(response)
+                # 否则尝试转换整个字典
+                response = {
+                    'isError': False,
+                    'content': [{'type': 'text', 'text': json.dumps(result, ensure_ascii=False)}]
+                }
+                _log(f"[MCP] Returning converted dict result: {json.dumps(response)[:500]}")
+                return json.dumps(response)
+            elif isinstance(result, list):
+                # 如果直接返回列表，假设是 content 数组
+                response = {
+                    'isError': False,
+                    'content': result
+                }
+                _log(f"[MCP] Returning list result: {json.dumps(response)[:500]}")
+                return json.dumps(response)
+            else:
+                # 其他类型，转换为文本
+                response = {
+                    'isError': False,
+                    'content': [{'type': 'text', 'text': str(result)}]
+                }
+                _log(f"[MCP] Returning string result: {json.dumps(response)[:500]}")
+                return json.dumps(response)
+            
+        except ImportError:
+            return json.dumps({
+                'isError': True,
+                'content': [{'type': 'text', 'text': 'fastmcp is not installed'}]
+            })
+        except Exception as e:
+            import traceback
+            error_msg = f'Error in mcpCallTool: {str(e)}\n{traceback.format_exc()}'
+            return json.dumps({
+                'isError': True,
+                'content': [{'type': 'text', 'text': error_msg}]
+            })
     
     @Slot(str, result=str)
     def mcpListPrompts(self, server: str) -> str:

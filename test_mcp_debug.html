@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>MCP Debug Test</title>
+</head>
+<body>
+    <h1>MCP Debug Test</h1>
+    <button onclick="testMCP()">Test MCP</button>
+    <div id="output"></div>
+    
+    <script>
+        // 模拟 window.api.mcp 对象
+        window.api = {
+            mcp: {
+                listTools: async (server) => {
+                    console.log('[Test] MCP listTools called with:', server);
+                    try {
+                        const base = (server?.baseUrl || server?.url || '').replace(/\/$/, '');
+                        console.log('[Test] MCP base URL:', base);
+                        if (!base) return [];
+                        
+                        // 先尝试初始化会话
+                        const initRpc = {
+                            jsonrpc: '2.0',
+                            id: 0,
+                            method: 'initialize',
+                            params: { protocolVersion: '2024-11-05', capabilities: {} }
+                        };
+                        
+                        const initResp = await fetch(base, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
+                            body: JSON.stringify(initRpc)
+                        });
+                        
+                        // 从响应头获取会话 ID
+                        const sessionId = initResp.headers.get('mcp-session-id') || 'houdini-session';
+                        console.log('[Test] Session ID:', sessionId);
+                        
+                        // 使用会话 ID 获取工具列表
+                        const jsonrpc = {
+                            jsonrpc: '2.0',
+                            id: 1,
+                            method: 'tools/list',
+                            params: {}
+                        };
+                        const resp = await fetch(base, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream', 'X-Session-ID': sessionId },
+                            body: JSON.stringify(jsonrpc)
+                        });
+                        
+                        const text = await resp.text();
+                        console.log('[Test] Response text:', text);
+                        
+                        // 解析 SSE 格式的响应
+                        const lines = text.split('\n');
+                        for (const line of lines) {
+                            if (line.startsWith('data: ')) {
+                                const data = JSON.parse(line.substring(6));
+                                console.log('[Test] Parsed data:', data);
+                                return Array.isArray(data?.result?.tools) ? data.result.tools : (Array.isArray(data?.result) ? data.result : []);
+                            }
+                        }
+                        return [];
+                    } catch(err) {
+                        console.error('[Test] MCP JSON-RPC error:', err);
+                        return [];
+                    }
+                }
+            }
+        };
+        
+        async function testMCP() {
+            const output = document.getElementById('output');
+            output.innerHTML = 'Testing MCP...';
+            
+            try {
+                const server = {
+                    url: "http://localhost:9000/mcp",
+                    timeout: 50,
+                    type: "streamableHttp",
+                    name: "houdini_mcp",
+                    baseUrl: "http://localhost:9000/mcp",
+                    isActive: true
+                };
+                
+                const tools = await window.api.mcp.listTools(server);
+                output.innerHTML = '<h2>MCP Tools:</h2><pre>' + JSON.stringify(tools, null, 2) + '</pre>';
+            } catch (error) {
+                output.innerHTML = '<h2>Error:</h2><pre>' + error.toString() + '</pre>';
+            }
+        }
+    </script>
+</body>
+</html>

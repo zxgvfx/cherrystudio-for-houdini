@@ -1,0 +1,19 @@
+import { b as createLucideIcon } from "./createLucideIcon-CjX3bse3.js";
+const __iconNode = [
+	["path", {
+		d: "M2 21a8 8 0 0 1 13.292-6",
+		key: "bjp14o"
+	}],
+	["circle", {
+		cx: "10",
+		cy: "8",
+		r: "5",
+		key: "o932ke"
+	}],
+	["path", {
+		d: "M22 19h-6",
+		key: "vcuq98"
+	}]
+];
+const UserRoundMinus = createLucideIcon("user-round-minus", __iconNode);
+export { UserRoundMinus as b, __iconNode as c };

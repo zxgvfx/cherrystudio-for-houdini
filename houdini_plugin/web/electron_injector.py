@@ -685,6 +685,547 @@ def get_electron_api_script(theme: str = 'light') -> str:
     console.log('[Houdini] Electron API 注入完成');
     """
     
+    polyfill_js = """
+    // Polyfill 现代 Array/TypedArray 新增方法，避免 Qt 老版本 JS 引擎报错
+    (function() {
+        try {
+            var arrProto = Array.prototype;
+            var typedArrayCtors = typeof ArrayBuffer !== 'undefined'
+                ? [Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array, Uint32Array, Float32Array, Float64Array]
+                : [];
+
+            function defineMethod(proto, name, fn) {
+                if (!proto[name]) {
+                    Object.defineProperty(proto, name, {
+                        value: fn,
+                        configurable: true,
+                        writable: true
+                    });
+                }
+            }
+
+            defineMethod(arrProto, 'toReversed', function() {
+                return this.slice().reverse();
+            });
+
+            defineMethod(arrProto, 'toSorted', function(compareFn) {
+                return this.slice().sort(compareFn);
+            });
+
+            defineMethod(arrProto, 'toSpliced', function(start, deleteCount) {
+                var copy = this.slice();
+                copy.splice.apply(copy, [start, deleteCount].concat([].slice.call(arguments, 2)));
+                return copy;
+            });
+
+            defineMethod(arrProto, 'with', function(index, value) {
+                var copy = this.slice();
+                var len = copy.length;
+                var idx = index < 0 ? len + index : index;
+                if (idx >= 0 && idx < len) {
+                    copy[idx] = value;
+                }
+                return copy;
+            });
+
+            for (var i = 0; i < typedArrayCtors.length; i++) {
+                var ctor = typedArrayCtors[i];
+                if (typeof ctor === 'function') {
+                    defineMethod(ctor.prototype, 'toReversed', function() {
+                        return new this.constructor(Array.prototype.slice.call(this).reverse());
+                    });
+                    defineMethod(ctor.prototype, 'toSorted', function(compareFn) {
+                        return new this.constructor(Array.prototype.slice.call(this).sort(compareFn));
+                    });
+                    defineMethod(ctor.prototype, 'toSpliced', function(start, deleteCount) {
+                        var arr = Array.prototype.slice.call(this);
+                        arr.splice.apply(arr, [start, deleteCount].concat([].slice.call(arguments, 2)));
+                        return new this.constructor(arr);
+                    });
+                    defineMethod(ctor.prototype, 'with', function(index, value) {
+                        var arr = Array.prototype.slice.call(this);
+                        var len = arr.length;
+                        var idx = index < 0 ? len + index : index;
+                        if (idx >= 0 && idx < len) {
+                            arr[idx] = value;
+                        }
+                        return new this.constructor(arr);
+                    });
+                }
+            }
+        } catch(e) {
+            console.error('[Houdini] Polyfill injection failed:', e);
+        }
+    })();
+    """.strip("\n")
+    
+    script = script.replace("    // 在 hython 环境中手动持久化 localStorage", polyfill_js + "\n\n    // 在 hython 环境中手动持久化 localStorage", 1)
+    
+    extra_runtime_patch = """
+(function () {
+    try {
+        if (window.__houdiniExtraApisInitialized) {
+            return;
+        }
+        window.__houdiniExtraApisInitialized = true;
+
+        var baseApi = window.api = window.api || {};
+        var memoryStore = window.__houdiniMemoryStore || { entries: [], config: {} };
+        window.__houdiniMemoryStore = memoryStore;
+        
+        function resolved(value) {
+            return Promise.resolve(value);
+        }
+        
+        function asyncTrue() { return resolved(true); }
+        function asyncFalse() { return resolved(false); }
+        
+        function asyncStub(path, defaultValue) {
+            var warned = false;
+            return function () {
+                if (!warned) {
+                    console.warn('[Houdini] window.api.' + path + ' is not available in Qt runtime, returning default value.');
+                    warned = true;
+                }
+                return resolved(defaultValue);
+            };
+        }
+        
+        function ensureNamespace(name) {
+            if (!baseApi[name] || typeof baseApi[name] !== 'object') {
+                baseApi[name] = {};
+            }
+            return baseApi[name];
+        }
+
+        function normalizePayload(payload) {
+            if (payload === undefined) {
+                return undefined;
+            }
+            if (typeof payload === 'string') {
+                return payload;
+            }
+            try {
+                return JSON.stringify(payload || {});
+            } catch (err) {
+                console.error('[Houdini] normalizePayload error:', err);
+                return '{}';
+            }
+        }
+
+        function qtInvokeJson(methodName, payload, fallback) {
+            try {
+                var fn = window.qt && window.qt.api && window.qt.api[methodName];
+                if (!fn) {
+                    return resolved(fallback);
+                }
+                var arg = normalizePayload(payload);
+                var result = arg === undefined ? fn() : fn(arg);
+                return Promise.resolve(result).then(function (value) {
+                    if (value === undefined || value === null || value === '') {
+                        return fallback;
+                    }
+                    if (typeof value === 'string') {
+                        if (value === 'true') {
+                            return true;
+                        }
+                        if (value === 'false') {
+                            return false;
+                        }
+                        try {
+                            var parsed = JSON.parse(value);
+                            if (parsed === undefined || parsed === null) {
+                                return fallback;
+                            }
+                            return parsed;
+                        } catch (e) {
+                            return value;
+                        }
+                    }
+                    return value;
+                }).catch(function (err) {
+                    console.error('[Houdini] ' + methodName + ' error:', err);
+                    return fallback;
+                });
+            } catch (err) {
+                console.error('[Houdini] ' + methodName + ' invoke failed:', err);
+                return resolved(fallback);
+            }
+        }
+        
+        baseApi.setEnableSpellCheck = baseApi.setEnableSpellCheck || asyncTrue;
+        baseApi.setSpellCheckLanguages = baseApi.setSpellCheckLanguages || asyncTrue;
+        baseApi.setLaunchOnBoot = baseApi.setLaunchOnBoot || asyncTrue;
+        baseApi.setLaunchToTray = baseApi.setLaunchToTray || asyncTrue;
+        baseApi.setTray = baseApi.setTray || asyncTrue;
+        baseApi.setTrayOnClose = baseApi.setTrayOnClose || asyncTrue;
+        baseApi.setTestPlan = baseApi.setTestPlan || asyncFalse;
+        baseApi.setTestChannel = baseApi.setTestChannel || function (channel) { return resolved(channel || 'stable'); };
+        baseApi.setAutoUpdate = baseApi.setAutoUpdate || asyncTrue;
+        baseApi.setStopQuitApp = baseApi.setStopQuitApp || asyncTrue;
+        baseApi.flushAppData = baseApi.flushAppData || asyncTrue;
+        baseApi.isNotEmptyDir = baseApi.isNotEmptyDir || asyncFalse;
+        baseApi.relaunchApp = baseApi.relaunchApp || asyncFalse;
+        baseApi.quit = baseApi.quit || function () {
+            console.warn('[Houdini] window.api.quit is ignored in Qt runtime.');
+        };
+        baseApi.quitAndInstall = baseApi.quitAndInstall || asyncFalse;
+        baseApi.select = baseApi.select || function (options) {
+            if (baseApi.file && typeof baseApi.file.select === 'function') {
+                return baseApi.file.select(options);
+            }
+            return resolved([]);
+        };
+        baseApi.hasWritePermission = baseApi.hasWritePermission || asyncTrue;
+        baseApi.resolvePath = baseApi.resolvePath || function (path) { return resolved(path || ''); };
+        baseApi.isPathInside = baseApi.isPathInside || asyncTrue;
+        baseApi.setAppDataPath = baseApi.setAppDataPath || asyncTrue;
+        baseApi.copy = baseApi.copy || asyncTrue;
+        
+        baseApi.mac = baseApi.mac || {};
+        baseApi.mac.isProcessTrusted = baseApi.mac.isProcessTrusted || asyncTrue;
+        baseApi.mac.requestProcessTrust = baseApi.mac.requestProcessTrust || asyncTrue;
+        
+        baseApi.notification = baseApi.notification || {};
+        baseApi.notification.send = baseApi.notification.send || asyncStub('notification.send', false);
+        
+        var systemApi = ensureNamespace('system');
+        systemApi.getDeviceType = systemApi.getDeviceType || function () {
+            var ua = (typeof navigator !== 'undefined' && navigator.userAgent) ? navigator.userAgent.toLowerCase() : '';
+            if (ua.indexOf('houdini') >= 0) {
+                return resolved('houdini');
+            }
+            return resolved('houdini-desktop');
+        };
+        systemApi.getHostname = systemApi.getHostname || function () {
+            try {
+                if (window.qt && window.qt.api && typeof window.qt.api.getHostname === 'function') {
+                    return resolved(window.qt.api.getHostname() || 'localhost');
+                }
+            } catch (e) {}
+            return resolved('localhost');
+        };
+        systemApi.getCpuName = systemApi.getCpuName || function () {
+            try {
+                if (window.qt && window.qt.api && typeof window.qt.api.getCpuName === 'function') {
+                    return resolved(window.qt.api.getCpuName() || 'QtWebEngine');
+                }
+            } catch (e) {}
+            return resolved('QtWebEngine');
+        };
+        systemApi.checkGitBash = systemApi.checkGitBash || asyncFalse;
+        
+        var devToolsApi = ensureNamespace('devTools');
+        devToolsApi.toggle = devToolsApi.toggle || function () {
+            try {
+                console.info('[Houdini] DevTools toggle requested from UI');
+                if (typeof alert === 'function') {
+                    alert('Houdini 版本当前嵌入的是 Qt WebEngine，暂不支持原版浏览器 DevTools（F12）窗口。\\n\\n请改用 Houdini Python 控制台 / 终端日志进行调试。');
+                } else {
+                    console.warn('[Houdini] DevTools not available in Qt runtime. Please use Houdini console logs instead.');
+                }
+            } catch (e) {
+                console.error('[Houdini] DevTools toggle handler error:', e);
+            }
+            return resolved(false);
+        };
+        
+        var zipApi = ensureNamespace('zip');
+        zipApi.compress = zipApi.compress || function (text) {
+            try {
+                return resolved(window.btoa(unescape(encodeURIComponent(String(text || '')))));
+            } catch (e) {
+                console.error('[Houdini] zip.compress fallback failed:', e);
+                return resolved(String(text || ''));
+            }
+        };
+        zipApi.decompress = zipApi.decompress || function (payload) {
+            try {
+                return resolved(decodeURIComponent(escape(window.atob(String(payload || '')))));
+            } catch (e) {
+                console.error('[Houdini] zip.decompress fallback failed:', e);
+                return resolved(String(payload || ''));
+            }
+        };
+        
+        var backupApi = ensureNamespace('backup');
+        var asyncNull = function () { return resolved(null); };
+        var asyncList = function () { return resolved([]); };
+        backupApi.backup = backupApi.backup || asyncTrue;
+        backupApi.restore = backupApi.restore || asyncNull;
+        backupApi.backupToWebdav = backupApi.backupToWebdav || asyncTrue;
+        backupApi.restoreFromWebdav = backupApi.restoreFromWebdav || asyncNull;
+        backupApi.listWebdavFiles = backupApi.listWebdavFiles || asyncList;
+        backupApi.checkConnection = backupApi.checkConnection || asyncTrue;
+        backupApi.createDirectory = backupApi.createDirectory || asyncTrue;
+        backupApi.deleteWebdavFile = backupApi.deleteWebdavFile || asyncTrue;
+        backupApi.backupToLocalDir = backupApi.backupToLocalDir || asyncTrue;
+        backupApi.restoreFromLocalBackup = backupApi.restoreFromLocalBackup || asyncNull;
+        backupApi.listLocalBackupFiles = backupApi.listLocalBackupFiles || asyncList;
+        backupApi.deleteLocalBackupFile = backupApi.deleteLocalBackupFile || asyncTrue;
+        backupApi.checkWebdavConnection = backupApi.checkWebdavConnection || asyncTrue;
+        backupApi.backupToS3 = backupApi.backupToS3 || asyncTrue;
+        backupApi.restoreFromS3 = backupApi.restoreFromS3 || asyncNull;
+        backupApi.listS3Files = backupApi.listS3Files || asyncList;
+        backupApi.deleteS3File = backupApi.deleteS3File || asyncTrue;
+        backupApi.checkS3Connection = backupApi.checkS3Connection || asyncTrue;
+        
+        var fsApi = ensureNamespace('fs');
+        fsApi.read = fsApi.read || function (pathOrUrl) {
+            try {
+                if (typeof pathOrUrl === 'string' && pathOrUrl.indexOf('http') === 0) {
+                    return fetch(pathOrUrl).then(function (resp) { return resp.text(); }).catch(function () { return ''; });
+                }
+            } catch (e) {
+                console.error('[Houdini] fs.read fallback error:', e);
+            }
+            return resolved('');
+        };
+        fsApi.readText = fsApi.readText || fsApi.read;
+        
+        ensureNamespace('export').toWord = ensureNamespace('export').toWord || asyncStub('export.toWord', true);
+        
+        var obsidianApi = ensureNamespace('obsidian');
+        obsidianApi.getVaults = obsidianApi.getVaults || asyncList;
+        obsidianApi.getFolders = obsidianApi.getFolders || asyncList;
+        obsidianApi.getFiles = obsidianApi.getFiles || asyncList;
+        
+        ensureNamespace('shortcuts').update = ensureNamespace('shortcuts').update || function (payload) {
+            try {
+                localStorage.setItem('houdini.shortcuts', JSON.stringify(payload || []));
+            } catch (e) {
+                console.error('[Houdini] shortcuts.update error:', e);
+            }
+            return resolved(true);
+        };
+        
+        var knowledgeApi = ensureNamespace('knowledgeBase');
+        knowledgeApi.create = knowledgeApi.create || asyncTrue;
+        knowledgeApi.reset = knowledgeApi.reset || asyncTrue;
+        knowledgeApi.delete = knowledgeApi.delete || asyncTrue;
+        knowledgeApi.add = knowledgeApi.add || asyncTrue;
+        knowledgeApi.remove = knowledgeApi.remove || asyncTrue;
+        knowledgeApi.search = knowledgeApi.search || asyncList;
+        knowledgeApi.rerank = knowledgeApi.rerank || asyncList;
+        knowledgeApi.checkQuota = knowledgeApi.checkQuota || asyncTrue;
+        
+        var memoryApi = ensureNamespace('memory');
+        memoryApi.add = memoryApi.add || function (messages) {
+            memoryStore.entries.push({ id: 'local-' + Date.now() + '-' + Math.random(), messages: messages, ts: Date.now() });
+            return resolved(true);
+        };
+        memoryApi.search = memoryApi.search || function () { return resolved(memoryStore.entries.slice()); };
+        memoryApi.list = memoryApi.list || function () { return resolved(memoryStore.entries.slice()); };
+        memoryApi.delete = memoryApi.delete || asyncTrue;
+        memoryApi.update = memoryApi.update || asyncTrue;
+        memoryApi.get = memoryApi.get || asyncNull;
+        memoryApi.setConfig = memoryApi.setConfig || function (config) {
+            memoryStore.config = config || memoryStore.config || {};
+            return resolved(true);
+        };
+        memoryApi.deleteUser = memoryApi.deleteUser || asyncTrue;
+        memoryApi.deleteAllMemoriesForUser = memoryApi.deleteAllMemoriesForUser || asyncTrue;
+        memoryApi.getUsersList = memoryApi.getUsersList || asyncList;
+        
+        var fileServiceApi = ensureNamespace('fileService');
+        fileServiceApi.upload = fileServiceApi.upload || asyncStub('fileService.upload', { success: false });
+        fileServiceApi.list = fileServiceApi.list || asyncList;
+        fileServiceApi.delete = fileServiceApi.delete || asyncTrue;
+        fileServiceApi.retrieve = fileServiceApi.retrieve || asyncNull;
+
+        var mcpApi = ensureNamespace('mcp');
+        mcpApi.removeServer = mcpApi.removeServer || function (server) {
+            return qtInvokeJson('mcpRemoveServer', server, true);
+        };
+        mcpApi.restartServer = mcpApi.restartServer || function (server) {
+            return qtInvokeJson('mcpRestartServer', server, true);
+        };
+        mcpApi.stopServer = mcpApi.stopServer || function (server) {
+            return qtInvokeJson('mcpStopServer', server, true);
+        };
+        mcpApi.startServer = mcpApi.startServer || function (server) {
+            return qtInvokeJson('mcpStartServer', server, true);
+        };
+        mcpApi.listTools = mcpApi.listTools || function (server) {
+            return qtInvokeJson('mcpListTools', server, []);
+        };
+        mcpApi.listPrompts = mcpApi.listPrompts || function (server) {
+            return qtInvokeJson('mcpListPrompts', server, []);
+        };
+        mcpApi.listResources = mcpApi.listResources || function (server) {
+            return qtInvokeJson('mcpListResources', server, []);
+        };
+        mcpApi.getServerVersion = mcpApi.getServerVersion || function (server) {
+            return qtInvokeJson('mcpGetServerVersion', server, null);
+        };
+        mcpApi.checkMcpConnectivity = mcpApi.checkMcpConnectivity || function (server) {
+            return qtInvokeJson('mcpCheckMcpConnectivity', server, false);
+        };
+        mcpApi.getInstallInfo = mcpApi.getInstallInfo || asyncStub('mcp.getInstallInfo', null);
+        mcpApi.getPrompt = mcpApi.getPrompt || asyncStub('mcp.getPrompt', null);
+        mcpApi.getResource = mcpApi.getResource || asyncStub('mcp.getResource', null);
+        mcpApi.callTool = mcpApi.callTool || function (payload) {
+            console.log('[Houdini] mcpApi.callTool called with payload:', payload);
+            try {
+                var result = qtInvokeJson('mcpCallTool', payload, { isError: true, content: [{ type: 'text', text: 'MCP callTool not available' }] });
+                console.log('[Houdini] mcpApi.callTool result:', result);
+                return result;
+            } catch (e) {
+                console.error('[Houdini] mcpApi.callTool error:', e);
+                return Promise.resolve({ isError: true, content: [{ type: 'text', text: 'MCP callTool error: ' + String(e) }] });
+            }
+        };
+        mcpApi.uploadDxt = mcpApi.uploadDxt || asyncStub('mcp.uploadDxt', { success: false, error: 'Not supported in Qt runtime' });
+        mcpApi.abortTool = mcpApi.abortTool || asyncStub('mcp.abortTool', false);
+
+        var apiServerApi = ensureNamespace('apiServer');
+        apiServerApi.getStatus = apiServerApi.getStatus || function () { return resolved({ running: false }); };
+        apiServerApi.start = apiServerApi.start || function () { return resolved({ success: true }); };
+        apiServerApi.restart = apiServerApi.restart || function () { return resolved({ success: true }); };
+        apiServerApi.stop = apiServerApi.stop || function () { return resolved({ success: true }); };
+        apiServerApi.onReady = apiServerApi.onReady || function (callback) {
+            var cancelled = false;
+            var timer = setTimeout(function () {
+                if (!cancelled && typeof callback === 'function') {
+                    try { callback(); } catch (e) {}
+                }
+            }, 0);
+            return function () {
+                cancelled = true;
+                clearTimeout(timer);
+            };
+        };
+
+        var codeToolsApi = ensureNamespace('codeTools');
+        codeToolsApi.run = codeToolsApi.run || asyncStub('codeTools.run', { success: false });
+        codeToolsApi.getAvailableTerminals = codeToolsApi.getAvailableTerminals || asyncList;
+        codeToolsApi.setCustomTerminalPath = codeToolsApi.setCustomTerminalPath || asyncTrue;
+        codeToolsApi.getCustomTerminalPath = codeToolsApi.getCustomTerminalPath || asyncNull;
+        codeToolsApi.removeCustomTerminalPath = codeToolsApi.removeCustomTerminalPath || asyncTrue;
+
+        var ocrApi = ensureNamespace('ocr');
+        ocrApi.ocr = ocrApi.ocr || asyncStub('ocr.ocr', { text: '' });
+        ocrApi.listProviders = ocrApi.listProviders || asyncList;
+
+        var cherryaiApi = ensureNamespace('cherryai');
+        cherryaiApi.generateSignature = cherryaiApi.generateSignature || function () { return resolved(''); };
+
+        var claudeCodePluginApi = ensureNamespace('claudeCodePlugin');
+        claudeCodePluginApi.listAvailable = claudeCodePluginApi.listAvailable || asyncStub('claudeCodePlugin.listAvailable', { success: true, data: [] });
+        claudeCodePluginApi.install = claudeCodePluginApi.install || asyncStub('claudeCodePlugin.install', { success: true });
+        claudeCodePluginApi.uninstall = claudeCodePluginApi.uninstall || asyncStub('claudeCodePlugin.uninstall', { success: true });
+        claudeCodePluginApi.listInstalled = claudeCodePluginApi.listInstalled || asyncStub('claudeCodePlugin.listInstalled', { success: true, data: [] });
+        claudeCodePluginApi.invalidateCache = claudeCodePluginApi.invalidateCache || asyncTrue;
+        claudeCodePluginApi.readContent = claudeCodePluginApi.readContent || asyncStub('claudeCodePlugin.readContent', { success: true, data: '' });
+        claudeCodePluginApi.writeContent = claudeCodePluginApi.writeContent || asyncTrue;
+
+        var webSocketApi = ensureNamespace('webSocket');
+        webSocketApi.start = webSocketApi.start || asyncTrue;
+        webSocketApi.stop = webSocketApi.stop || asyncTrue;
+        webSocketApi.status = webSocketApi.status || function () { return resolved({ running: false }); };
+        webSocketApi.sendFile = webSocketApi.sendFile || asyncTrue;
+        webSocketApi.getAllCandidates = webSocketApi.getAllCandidates || asyncList;
+        
+        var vertexApi = ensureNamespace('vertexAI');
+        vertexApi.getAuthHeaders = vertexApi.getAuthHeaders || function () { return resolved({}); };
+        vertexApi.getAccessToken = vertexApi.getAccessToken || function () { return resolved(''); };
+        vertexApi.clearAuthCache = vertexApi.clearAuthCache || asyncTrue;
+        
+        var ovmsApi = ensureNamespace('ovms');
+        ovmsApi.addModel = ovmsApi.addModel || asyncTrue;
+        ovmsApi.stopAddModel = ovmsApi.stopAddModel || asyncTrue;
+        ovmsApi.getModels = ovmsApi.getModels || asyncList;
+        ovmsApi.isRunning = ovmsApi.isRunning || asyncFalse;
+        ovmsApi.getStatus = ovmsApi.getStatus || function () { return resolved({ status: 'stopped' }); };
+        ovmsApi.runOvms = ovmsApi.runOvms || asyncFalse;
+        ovmsApi.stopOvms = ovmsApi.stopOvms || asyncFalse;
+        
+        var configApi = ensureNamespace('config');
+        configApi.set = configApi.set || function (key, value, notify) {
+            try {
+                localStorage.setItem('houdini.config.' + key, JSON.stringify({ value: value, notify: notify }));
+            } catch (e) {
+                console.error('[Houdini] config.set error:', e);
+            }
+            return resolved(true);
+        };
+        configApi.get = configApi.get || function (key) {
+            try {
+                var raw = localStorage.getItem('houdini.config.' + key);
+                if (raw) {
+                    var parsed = JSON.parse(raw);
+                    return resolved(parsed && parsed.value);
+                }
+            } catch (e) {}
+            return resolved(null);
+        };
+        
+        var miniWindowApi = ensureNamespace('miniWindow');
+        miniWindowApi.show = miniWindowApi.show || asyncFalse;
+        miniWindowApi.hide = miniWindowApi.hide || asyncFalse;
+        miniWindowApi.close = miniWindowApi.close || asyncFalse;
+        miniWindowApi.toggle = miniWindowApi.toggle || asyncFalse;
+        miniWindowApi.setPin = miniWindowApi.setPin || asyncFalse;
+        
+        var aesApi = ensureNamespace('aes');
+        aesApi.encrypt = aesApi.encrypt || function (text) { return resolved(String(text || '')); };
+        aesApi.decrypt = aesApi.decrypt || function (text) { return resolved(String(text || '')); };
+        
+        ensureNamespace('python').execute = ensureNamespace('python').execute || asyncStub('python.execute', { success: false });
+        
+        var shellApi = ensureNamespace('shell');
+        shellApi.openExternal = shellApi.openExternal || function (url) {
+            try {
+                if (window.qt && window.qt.api && typeof window.qt.api.openWebsite === 'function') {
+                    window.qt.api.openWebsite(url);
+                }
+            } catch (e) {
+                console.warn('[Houdini] shell.openExternal fallback error:', e);
+            }
+            return resolved(true);
+        };
+        
+        var copilotApi = ensureNamespace('copilot');
+        copilotApi.getAuthMessage = copilotApi.getAuthMessage || asyncStub('copilot.getAuthMessage', null);
+        copilotApi.getCopilotToken = copilotApi.getCopilotToken || asyncStub('copilot.getCopilotToken', null);
+        copilotApi.refreshCopilotToken = copilotApi.refreshCopilotToken || asyncStub('copilot.refreshCopilotToken', null);
+
+        (function ensureLoggerServiceInit() {
+            var tries = 0;
+            function attempt() {
+                tries++;
+                try {
+                    var candidates = [];
+                    if (window.loggerService) { candidates.push(window.loggerService); }
+                    if (window.__loggerService) { candidates.push(window.__loggerService); }
+                    if (window.__cherryLoggerService) { candidates.push(window.__cherryLoggerService); }
+                    for (var i = 0; i < candidates.length; i++) {
+                        var logger = candidates[i];
+                        if (logger && typeof logger.initWindowSource === 'function' && typeof logger.withContext === 'function') {
+                            if (!logger.__houdiniWindowInitialized) {
+                                logger.initWindowSource('mainWindow');
+                                logger.__houdiniWindowInitialized = true;
+                                console.info('[Houdini] LoggerService window source initialized via bridge');
+                            }
+                            return;
+                        }
+                    }
+                } catch (e) {}
+                if (tries < 50) {
+                    setTimeout(attempt, 200);
+                }
+            }
+            setTimeout(attempt, 0);
+        })();
+        
+        console.info('[Houdini] Extra Cherry Studio APIs initialized for Qt runtime');
+    } catch (err) {
+        console.error('[Houdini] Failed to initialize extra APIs:', err);
+    }
+})();
+"""
+    
+    script += extra_runtime_patch
     return script
 
 
@@ -972,6 +1513,17 @@ def get_post_load_fix_script() -> str:
                 // 检测是否是 HTTP/HTTPS 请求（需要代理）
                 if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
                     console.log('[Houdini] Intercepted HTTP request:', url);
+
+                    // 对 fastmcp2 服务保持与原生 Cherry 一致，直接使用原始 fetch，不走 Python 代理
+                    try {
+                        var lower = String(url).toLowerCase();
+                        if (lower.indexOf('http://localhost:9000/mcp') === 0) {
+                            console.log('[Houdini] Bypass fetchProxy for fastmcp2:', url);
+                            return originalFetch.call(this, input, init);
+                        }
+                    } catch (e) {
+                        console.error('[Houdini] fastmcp2 bypass check error:', e);
+                    }
                     
                     // 等待 QWebChannel 就绪
                     let retries = 0;
@@ -1098,14 +1650,19 @@ def get_post_load_fix_script() -> str:
                             // 非流式请求
                             const result = await window.qt.api.fetchProxy(JSON.stringify(payload));
                             console.log('[Houdini] fetchProxy response received');
-                            
+
                             const parsed = typeof result === 'string' ? JSON.parse(result) : result;
-                            
+
                             if (parsed.error && !parsed.status) {
-                                console.error('[Houdini] fetchProxy error:', parsed.error);
-                                throw new Error(parsed.error);
+                                console.error('[Houdini] fetchProxy error (non-fatal):', parsed.error);
+                                // 将错误包装为 400 响应，让前端自己处理，而不是抛出异常导致面板报错
+                                return new Response(String(parsed.error || 'Bad Request'), {
+                                    status: 400,
+                                    statusText: 'Bad Request',
+                                    headers: { 'Content-Type': 'text/plain' }
+                                });
                             }
-                            
+
                             // 返回模拟的 Response 对象
                             return new Response(parsed.body || '', {
                                 status: parsed.status || 200,

@@ -129,6 +129,38 @@ cherrystudio-for-houdini/
 ### 添加新模型
 在 `simple-chat.html` 中的模型选择器和响应方法中添加新的 AI 模型支持。
 
+## 🔄 更新 Cherry Studio
+
+当上游 Cherry Studio 项目更新时，您需要同步更新移植代码。
+
+### 快速更新（推荐）
+
+使用自动化脚本：
+
+```powershell
+# 自动更新到最新版本
+.\scripts\update_cherry_studio.ps1
+
+# 更新到指定版本
+.\scripts\update_cherry_studio.ps1 -Version v1.6.0
+
+# 跳过某些步骤
+.\scripts\update_cherry_studio.ps1 -SkipBackup -SkipTest
+```
+
+### 手动更新
+
+详细的手动更新步骤请参考：[UPDATE_GUIDE.md](UPDATE_GUIDE.md)
+
+更新步骤概览：
+1. 备份当前工作
+2. 同步上游代码（`cd web && git fetch upstream && git merge upstream/main`）
+3. 安装依赖（`cd web && npm install`）
+4. 重新构建（`cd web && npm run build`）
+5. 复制构建产物到 `houdini_plugin/public/`
+6. 检查适配层兼容性
+7. 测试验证
+
 ## 许可证
 
 本项目基于 Cherry Studio 开发，用于 Houdini 集成。

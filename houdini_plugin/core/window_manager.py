@@ -12,15 +12,15 @@ from PySide6.QtWebEngineCore import QWebEngineScript, QWebEngineProfile, QWebEng
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
 
-from api.cherry_studio_api import CherryStudioAPI
-from web.electron_injector import (
+from ..api.cherry_studio_api import CherryStudioAPI
+from ..web.electron_injector import (
     get_electron_api_script,
     get_early_logger_fix_script,
     get_post_load_fix_script
 )
 
 
-def create_window(load_url: str, theme: str = 'light'):
+def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, parent=None):
     """
     创建主窗口
     
@@ -32,23 +32,24 @@ def create_window(load_url: str, theme: str = 'light'):
         QMainWindow: 创建的主窗口实例
     """
     try:
-        # 在 Houdini 内部尽量挂到主窗口，避免焦点与生命周期问题
-        parent = None
-        try:
-            import hou  # type: ignore
+        # 在 Houdini 内部尽量挂到主窗口，避免焦点与生命周期问题（可被调用方覆盖）
+        if parent is None and not as_widget:
             try:
-                # H20.5 起提供 hou.qt
-                from hou import qt as hou_qt  # type: ignore
-                parent = hou_qt.mainWindow()
+                import hou  # type: ignore
+                try:
+                    from hou import qt as hou_qt  # type: ignore
+                    parent = hou_qt.mainWindow()
+                except Exception:
+                    parent = hou.ui.mainQtWindow()
             except Exception:
-                parent = hou.ui.mainQtWindow()
-        except Exception:
-            parent = None
+                parent = None
         
-        # 创建主窗口
-        window = QMainWindow(parent)
-        window.setWindowTitle("Cherry Studio for Houdini")
-        window.resize(1400, 900)
+        # 如果需要 QWidget 模式，则不创建 QMainWindow
+        window = None
+        if not as_widget:
+            window = QMainWindow(parent)
+            window.setWindowTitle("Cherry Studio for Houdini")
+            window.resize(1400, 900)
         
         # 配置持久化存储（确保配置不会丢失）
         # 重要：必须在任何 WebEngine 相关对象创建之前设置
@@ -186,16 +187,18 @@ def create_window(load_url: str, theme: str = 'light'):
         
         # 设置容器
         container = WebContainer(web_view)
-        window.setCentralWidget(container)
+        if window is not None:
+            window.setCentralWidget(container)
         
         # 创建并注册 API 对象
-        # 注意：使用 window 作为父对象，确保与窗口生命周期绑定
-        api = CherryStudioAPI(window)
+        # 注意：使用合理的父对象，确保生命周期绑定
+        api_parent = window if window is not None else container
+        api = CherryStudioAPI(api_parent)
         page = web_view.page()
         
         # 使用 QWebChannel 连接 Python API 和 JavaScript
         # 注意：传入 window 作为父对象，确保生命周期正确
-        channel = QWebChannel(window)
+        channel = QWebChannel(api_parent)
         channel.registerObject("api", api)
         # 兼容旧逻辑：直接暴露 network 名称
         try:
@@ -264,7 +267,8 @@ def create_window(load_url: str, theme: str = 'light'):
         def on_title_changed(title):
             print(f"窗口标题变化: {title}")
         
-        window.windowTitleChanged.connect(on_title_changed)
+        if window is not None:
+            window.windowTitleChanged.connect(on_title_changed)
         
         # 设置页面加载回调
         def on_load_finished(ok):
@@ -288,12 +292,13 @@ def create_window(load_url: str, theme: str = 'light'):
             web_view.load(QUrl.fromLocalFile(load_url))
         
         # 防止 Python GC 回收
-        window._webview_ref = web_view
-        window._api_ref = api
-        window._channel_ref = channel
+        holder = window if window is not None else container
+        holder._webview_ref = web_view
+        holder._api_ref = api
+        holder._channel_ref = channel
         
-        print("窗口创建成功")
-        return window
+        print("窗口创建成功" if window is not None else "组件创建成功")
+        return window if window is not None else container
         
     except Exception as e:
         print(f"创建窗口失败: {e}")

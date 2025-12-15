@@ -6,11 +6,11 @@ import sys
 import os
 import argparse
 
-from core.app_lifecycle import (
+from .core.app_lifecycle import (
     ensure_qtwebengine_initialized,
     create_app
 )
-from core.window_manager import create_window
+from .core.window_manager import create_window
 
 
 def main():
@@ -19,7 +19,7 @@ def main():
     # 1. 解析命令行参数
     parser = argparse.ArgumentParser(description='Cherry Studio for Houdini')
     parser.add_argument('--url', type=str, help='要加载的URL')
-    parser.add_argument('--theme', type=str, default='light', choices=['light', 'dark'], 
+    parser.add_argument('--theme', type=str, default='dark', choices=['light', 'dark'], 
                         help='界面主题 (light/dark)')
     args = parser.parse_args()
     
@@ -42,7 +42,7 @@ def main():
     app = create_app()
     
     # 5. 创建主窗口
-    window = create_window(load_url, args.theme)
+    window = create_window(load_url, args.theme, as_widget=False)
     window.show()
     
     # 6. 运行事件循环
@@ -61,4 +61,34 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
+def create_widget_for_pane(url: str | None = None, theme: str = 'dark'):
+    """返回可嵌入 Houdini 面板的 QWidget。
+
+    Args:
+        url: 指定加载的 URL（不传则使用默认 index.html）
+        theme: 主题（'light' 或 'dark'）
+
+    Returns:
+        QWidget: 可直接作为 pane 的内容 widget 使用
+    """
+    import os
+
+    if url:
+        load_url = url
+    else:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        index_path = os.path.join(script_dir, 'public', 'index.html')
+        if not os.path.exists(index_path):
+            raise FileNotFoundError(f"找不到 index.html 在 {index_path}")
+        load_url = index_path
+
+    # 初始化 QtWebEngine & 应用
+    ensure_qtwebengine_initialized()
+    app = create_app()
+
+    # 返回 QWidget 而不是窗口
+    widget = create_window(load_url, theme, as_widget=True)
+    return widget
 

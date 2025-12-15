@@ -1,0 +1,18 @@
+import "./react-nO8b1aHv.js";
+import { b as createLucideIcon } from "./createLucideIcon-CjX3bse3.js";
+const __iconNode = [
+	["path", {
+		d: "m9 12 2 2 4-4",
+		key: "dzmm74"
+	}],
+	["path", {
+		d: "M5 7c0-1.1.9-2 2-2h10a2 2 0 0 1 2 2v12H5V7Z",
+		key: "1ezoue"
+	}],
+	["path", {
+		d: "M22 19H2",
+		key: "nuriw5"
+	}]
+];
+const Vote = createLucideIcon("vote", __iconNode);
+export { __iconNode, Vote as default };
