@@ -1,0 +1,22 @@
+import "./react-Cs7_W7Sm.js";
+import { b as createLucideIcon } from "./createLucideIcon-jMI35CFY.js";
+const __iconNode = [
+	["path", {
+		d: "M18 20a6 6 0 0 0-12 0",
+		key: "1qehca"
+	}],
+	["circle", {
+		cx: "12",
+		cy: "10",
+		r: "4",
+		key: "1h16sb"
+	}],
+	["circle", {
+		cx: "12",
+		cy: "12",
+		r: "10",
+		key: "1mglay"
+	}]
+];
+const CircleUserRound = createLucideIcon("circle-user-round", __iconNode);
+export { __iconNode, CircleUserRound as default };

@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """
 Cherry Studio for Houdini 启动脚本
+支持从非 Houdini 环境独立启动
 """
 
 import sys
 import os
 
-# 添加houdini_plugin目录到Python路径
-plugin_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'houdini_plugin')
-if plugin_dir not in sys.path:
-    sys.path.insert(0, plugin_dir)
+# 将项目根目录添加到 Python 路径，以便正确导入 cherrystudio 包
+project_root = os.path.dirname(os.path.abspath(__file__))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
-# 现在可以正常导入模块
-from main import main
+# 使用包导入方式，这样可以正确处理相对导入
+from cherrystudio.main import main
 
 if __name__ == "__main__":
-    # 获取命令行参数
-    url = sys.argv[1] if len(sys.argv) > 1 else None
-    sys.exit(main(url))
+    # 调用主函数（它会自动处理命令行参数）
+    sys.exit(main())

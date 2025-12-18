@@ -19,7 +19,7 @@ set "QTWEBENGINE_CHROMIUM_FLAGS=--disable-gpu --disable-software-rasterizer --no
 set "PYTHONPATH=%PYTHONPATH%;%CD%"
 
 echo Launching Cherry Studio...
-"%HOUDINI_PATH%" houdini_plugin\main.py
+"%HOUDINI_PATH%" cherrystudio\main.py
 
 echo.
 echo Cherry Studio has been closed.

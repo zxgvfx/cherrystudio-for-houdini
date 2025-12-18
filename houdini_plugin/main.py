@@ -52,7 +52,7 @@ def main():
         import hou  # type: ignore
         _ = hou.ui
         # 在 Houdini 内部不调用 app.exec()，避免阻塞或提前退出
-        print("在 Houdini 环境中运行，窗口已显示")
+        print("[Cherry Studio] 窗口已显示")
         return
     except Exception:
         # 独立运行

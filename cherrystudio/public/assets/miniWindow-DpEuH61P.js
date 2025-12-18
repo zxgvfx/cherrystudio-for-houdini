@@ -1,0 +1,149 @@
+import { g as __toESM } from "./chunk-st2fFX3F.js";
+import { c as AntdProvider_default, d as require_lib } from "./LanguageSelect-iX2LOxHD.js";
+import { ex as require_jsx_runtime, f4 as loggerService } from "./es-B_kyM-eZ.js";
+import { c as persistor, d as store_default, d3 as getToastUtilities, dA as CodeStyleProvider, dH as ThemeProvider, gc as useSettings, kb as StoreSyncService_default, kd as Provider_default } from "./store-Cfq_ZiOM.js";
+import { b as require_react } from "./react-nO8b1aHv.js";
+import "./schemas-Bbbixa2f.js";
+import "./dist-mVY8hbYS.js";
+import "./ImageViewer-DfnTJ57y.js";
+import "./dayjs.min-MfknQfLl.js";
+import "./index-browser-Bv7rcEyC.js";
+import "./stylis-nHnh4rAK.js";
+import "./Component-D4bnkToS.js";
+import "./createLucideIcon-CjX3bse3.js";
+import "./arrow-up-right-COIRPpMK.js";
+import "./at-sign--YYfZ-FB.js";
+import "./bot-CifdSbss.js";
+import "./camera-BcX5pjI7.js";
+import "./check-DbK7nSKc.js";
+import "./chevron-down-Brbq9ymt.js";
+import "./chevron-left-BMY3h1gW.js";
+import "./chevron-right-DyczuCUV.js";
+import "./chevron-up-DkNnWKcs.js";
+import "./chevrons-down-up-DhFjuuAs.js";
+import "./chevrons-up-down-DW582Q6t.js";
+import "./circle-arrow-left-CgDuKdRV.js";
+import "./circle-check-big-BelV71JM.js";
+import "./circle-pause-pPU2oCDw.js";
+import "./circle-play-Bk6_yK7j.js";
+import "./circle-question-mark-Co-sWLkc.js";
+import "./circle-x-CGkQvnZB.js";
+import "./circle-RpaaN9rs.js";
+import "./clock-DvpiiPDg.js";
+import "./code-xml-CHpVmSVF.js";
+import "./code-DYb3ktC8.js";
+import "./copy-07cSu9Qf.js";
+import "./corner-down-left-llzVLRlj.js";
+import "./download-BdzTMj7r.js";
+import "./door-open-ZnleqaAl.js";
+import "./ellipsis-vertical-BgV55T9N.js";
+import "./eye-CAQYhGUw.js";
+import "./file-code-D6NPtsNe.js";
+import "./file-pen-line-oBbo89r-.js";
+import "./file-pen-D1V9XjDZ.js";
+import "./file-search-Dv1Y3Bde.js";
+import "./file-text-D86T6Z-T.js";
+import "./folder-open-BQ_CQeJg.js";
+import "./folder-search-C46fULzQ.js";
+import "./forward-9R0naNk-.js";
+import "./globe-BOmmzsYO.js";
+import "./image-Cb1GPeDA.js";
+import "./languages-u0szbzQA.js";
+import "./lightbulb-Dxzcatk0.js";
+import "./link-BREHE-Qi.js";
+import "./list-checks-HlCM2wd1.js";
+import "./list-todo-CMeGmUZa.js";
+import "./maximize-2-D25Ca7tf.js";
+import "./maximize-CM3v-9vV.js";
+import "./menu-YtHp9fAX.js";
+import "./message-square-CBvhQjJe.js";
+import "./minimize-2-Cu_P1Meq.js";
+import "./minus-CGp5ShcX.js";
+import "./notebook-pen-DvwH3DPf.js";
+import "./paperclip-C_oY0YLS.js";
+import "./pencil-ruler-C7xBOEKX.js";
+import "./pencil-CCRxknZf.js";
+import "./pin-BvIPEkPQ.js";
+import "./refresh-cw-DmgBpVEP.js";
+import "./rotate-ccw-CERny_rH.js";
+import "./save-DAN3e6hP.js";
+import "./scan-Ck8acUjb.js";
+import "./search-CTXNvKf6.js";
+import "./send-DomYY08W.js";
+import "./settings-2-L3F6pj2j.js";
+import "./shield-check-DCTTApCY.js";
+import "./sparkle-BE8gp421.js";
+import "./sparkles-brghNVVb.js";
+import "./split-DRaBQ2SB.js";
+import "./square-pen-_zMAK5qp.js";
+import "./square-split-horizontal-BnWO_YOZ.js";
+import "./square-MeUKWaAJ.js";
+import "./terminal-ieif3HI4.js";
+import "./text-CWv5VzCX.js";
+import "./thumbs-up-B-ljCbt1.js";
+import "./trash-CY1O3oyr.js";
+import "./triangle-alert-P49zXNor.js";
+import "./upload-7jBQdE46.js";
+import "./wrap-text-DEwl7hd7.js";
+import "./wrench-cLJMYoQB.js";
+import "./x-DjnF7E7q.js";
+import "./zoom-in-vDLSd3GZ.js";
+import "./zoom-out-DR9Ctul-.js";
+import { b as HomeWindow_default, c as ErrorBoundaryCustomized } from "./HomeWindow-COXVjMLJ.js";
+import "./katex-Cwjminzt.js";
+import "./dist-DP9OFaqC.js";
+import "./decode-Cifd-L7Q.js";
+import "./preload-helper-tKu-GDMy.js";
+import "./dist-CMbMCVHL.js";
+import "./dist-B56-rEVE.js";
+import "./purify.es-t-jsSY2O.js";
+import "./module-C7pr-eFE.js";
+import "./dist-DVyt3Fm-.js";
+import "./internal-DLAXfs79.js";
+import "./dist-DGTu5mjS.js";
+import "./edge-Cdn2gg5V.js";
+import "./edge-B17DljaG.js";
+import { b as require_client } from "./client-zSAJnBnP.js";
+import { b as PersistGate } from "./react-DND1uxom.js";
+import "./en_US-D1NQv6f9.js";
+var import_client = /* @__PURE__ */ __toESM(require_client());
+var import_lib = /* @__PURE__ */ __toESM(require_lib());
+var import_jsx_runtime = /* @__PURE__ */ __toESM(require_jsx_runtime());
+var import_react = /* @__PURE__ */ __toESM(require_react());
+function MiniWindowContent() {
+	const { customCss } = useSettings();
+	(0, import_react.useEffect)(() => {
+		let customCssElement = document.getElementById("user-defined-custom-css");
+		if (customCssElement) customCssElement.remove();
+		if (customCss) {
+			customCssElement = document.createElement("style");
+			customCssElement.id = "user-defined-custom-css";
+			customCssElement.textContent = customCss;
+			document.head.appendChild(customCssElement);
+		}
+	}, [customCss]);
+	return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(HomeWindow_default, {});
+}
+function MiniWindow() {
+	(0, import_react.useEffect)(() => {
+		window.toast = getToastUtilities();
+	}, []);
+	return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Provider_default, {
+		store: store_default,
+		children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ThemeProvider, { children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(AntdProvider_default, { children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(CodeStyleProvider, { children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(PersistGate, {
+			loading: null,
+			persistor,
+			children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ErrorBoundaryCustomized, { children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(MiniWindowContent, {}) })
+		}) }) }) })
+	});
+}
+var MiniWindowApp_default = MiniWindow;
+loggerService.initWindowSource("MiniWindow");
+function initKeyv() {
+	window.keyv = new import_lib.default();
+	window.keyv.init();
+}
+initKeyv();
+StoreSyncService_default.subscribe();
+const root = (0, import_client.createRoot)(document.getElementById("root"));
+root.render(/* @__PURE__ */ (0, import_jsx_runtime.jsx)(MiniWindowApp_default, {}));

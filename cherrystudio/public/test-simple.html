@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cherry Studio 测试页面</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        .container {
+            text-align: center;
+            max-width: 800px;
+            padding: 40px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+        h1 {
+            font-size: 3em;
+            margin-bottom: 20px;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+        }
+        .status {
+            font-size: 1.2em;
+            margin: 20px 0;
+            padding: 15px;
+            background: rgba(0, 255, 0, 0.2);
+            border-radius: 10px;
+            border: 2px solid rgba(0, 255, 0, 0.5);
+        }
+        .info {
+            font-size: 1em;
+            margin: 10px 0;
+            opacity: 0.9;
+        }
+        .button {
+            display: inline-block;
+            padding: 15px 30px;
+            margin: 10px;
+            background: rgba(255, 255, 255, 0.2);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 10px;
+            color: white;
+            text-decoration: none;
+            font-size: 1.1em;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        .button:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: translateY(-2px);
+        }
+        .log {
+            text-align: left;
+            background: rgba(0, 0, 0, 0.3);
+            padding: 20px;
+            border-radius: 10px;
+            margin-top: 20px;
+            font-family: monospace;
+            font-size: 0.9em;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🍒 Cherry Studio</h1>
+        <div class="status">✅ WebEngine 加载成功！</div>
+        
+        <div class="info">
+            <p>这是一个简单的测试页面，用于验证 Cherry Studio 的 WebEngine 集成是否正常工作。</p>
+            <p>如果你能看到这个页面，说明模块重构成功！</p>
+        </div>
+        
+        <div class="button" onclick="testWebChannel()">测试 WebChannel</div>
+        <div class="button" onclick="testAPIs()">测试 APIs</div>
+        <div class="button" onclick="showLog()">显示日志</div>
+        
+        <div id="log" class="log" style="display: none;">
+            <div>=== Cherry Studio 测试日志 ===</div>
+            <div id="log-content"></div>
+        </div>
+    </div>
+
+    <script>
+        let logContent = document.getElementById('log-content');
+        
+        function log(message) {
+            const timestamp = new Date().toLocaleTimeString();
+            logContent.innerHTML += `<div>[${timestamp}] ${message}</div>`;
+        }
+        
+        function testWebChannel() {
+            log('开始测试 WebChannel...');
+            
+            if (typeof qt !== 'undefined') {
+                log('✅ qt 对象存在');
+                
+                if (qt.webChannelTransport) {
+                    log('✅ webChannelTransport 存在');
+                } else {
+                    log('❌ webChannelTransport 不存在');
+                }
+            } else {
+                log('❌ qt 对象不存在');
+            }
+            
+            // 测试 API 对象
+            const apis = ['electron', 'api', 'file', 'selection', 'storeSync', 'network', 'houdini'];
+            apis.forEach(apiName => {
+                if (typeof qt !== 'undefined' && qt[apiName]) {
+                    log(`✅ ${apiName} API 可用`);
+                } else {
+                    log(`❌ ${apiName} API 不可用`);
+                }
+            });
+        }
+        
+        function testAPIs() {
+            log('开始测试 APIs...');
+            
+            if (typeof qt !== 'undefined') {
+                // 测试 electron API
+                if (qt.electron) {
+                    log('测试 electron API...');
+                    try {
+                        qt.electron.invoke('test').then(result => {
+                            log(`electron.test() 结果: ${result}`);
+                        }).catch(err => {
+                            log(`electron.test() 错误: ${err}`);
+                        });
+                    } catch (e) {
+                        log(`electron API 调用失败: ${e.message}`);
+                    }
+                }
+                
+                // 测试 file API
+                if (qt.file) {
+                    log('测试 file API...');
+                    try {
+                        qt.file.invoke('test').then(result => {
+                            log(`file.test() 结果: ${result}`);
+                        }).catch(err => {
+                            log(`file.test() 错误: ${err}`);
+                        });
+                    } catch (e) {
+                        log(`file API 调用失败: ${e.message}`);
+                    }
+                }
+            } else {
+                log('❌ qt 对象不存在，无法测试 APIs');
+            }
+        }
+        
+        function showLog() {
+            const logDiv = document.getElementById('log');
+            logDiv.style.display = logDiv.style.display === 'none' ? 'block' : 'none';
+        }
+        
+        // 页面加载完成后的初始化
+        window.addEventListener('load', function() {
+            log('页面加载完成');
+            log('User Agent: ' + navigator.userAgent);
+            log('当前时间: ' + new Date().toLocaleString());
+            
+            // 自动测试 WebChannel
+            setTimeout(testWebChannel, 1000);
+        });
+        
+        // 监听 WebChannel 消息
+        if (typeof qt !== 'undefined' && qt.webChannelTransport) {
+            qt.webChannelTransport.onmessage = function(message) {
+                log('收到 WebChannel 消息: ' + JSON.stringify(message));
+            };
+        }
+    </script>
+</body>
+</html>

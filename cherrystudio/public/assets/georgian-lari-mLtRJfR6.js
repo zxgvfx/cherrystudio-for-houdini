@@ -1,0 +1,22 @@
+import "./react-nO8b1aHv.js";
+import { b as createLucideIcon } from "./createLucideIcon-CjX3bse3.js";
+const __iconNode = [
+	["path", {
+		d: "M11.5 21a7.5 7.5 0 1 1 7.35-9",
+		key: "1gyj8k"
+	}],
+	["path", {
+		d: "M13 12V3",
+		key: "18om2a"
+	}],
+	["path", {
+		d: "M4 21h16",
+		key: "1h09gz"
+	}],
+	["path", {
+		d: "M9 12V3",
+		key: "geutu0"
+	}]
+];
+const GeorgianLari = createLucideIcon("georgian-lari", __iconNode);
+export { __iconNode, GeorgianLari as default };

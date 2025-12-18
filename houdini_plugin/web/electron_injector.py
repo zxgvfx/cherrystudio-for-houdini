@@ -1745,7 +1745,7 @@ def get_post_load_fix_script() -> str:
         JavaScript 代码字符串
     """
     return """
-    console.log('[Houdini] 🚀 POST-LOAD SCRIPT EXECUTING!');
+    console.log('[Cherry Studio] 🚀 POST-LOAD SCRIPT EXECUTING!');
     
     // 强制修复 LoggerService
     window.source = 'qt';
@@ -1756,16 +1756,16 @@ def get_post_load_fix_script() -> str:
     window.isHoudini = true;
     window.__IS_QT = true;
     
-    console.log('[Houdini] LoggerService修复完成');
+    console.log('[Cherry Studio] LoggerService修复完成');
     
     // 延迟安装 fetch 拦截器，确保 QWebChannel 已完全就绪
     setTimeout(function() {
         if (window.__fetchInterceptorInstalled) {
-            console.log('[Houdini] fetch interceptor already installed');
+            console.log('[Cherry Studio] fetch interceptor already installed');
             return;
         }
         
-        console.log('[Houdini] 🚀 Installing network interceptors...');
+        console.log('[Cherry Studio] 🚀 Installing network interceptors...');
         
         // 拦截 XMLHttpRequest
         const OriginalXHR = window.XMLHttpRequest;
@@ -1781,19 +1781,19 @@ def get_post_load_fix_script() -> str:
             xhr.open = function(method, url, ...args) {
                 requestUrl = url;
                 requestMethod = method;
-                console.log('[Houdini] 📡 XHR intercepted:', method, url);
+                console.log('[Cherry Studio] 📡 XHR intercepted:', method, url);
                 return originalOpen.apply(this, [method, url, ...args]);
             };
             
             xhr.send = function(body) {
                 requestBody = body;
-                console.log('[Houdini] 📡 XHR send, body:', body ? body.substring(0, 200) : 'empty');
+                console.log('[Cherry Studio] 📡 XHR send, body:', body ? body.substring(0, 200) : 'empty');
                 return originalSend.apply(this, arguments);
             };
             
             return xhr;
         };
-        console.log('[Houdini] ✅ XMLHttpRequest interceptor installed');
+        console.log('[Cherry Studio] ✅ XMLHttpRequest interceptor installed');
         
         const originalFetch = window.fetch;
         window.fetch = async function(input, init) {
@@ -1803,7 +1803,7 @@ def get_post_load_fix_script() -> str:
                 
                 // 检测是否是 HTTP/HTTPS 请求（需要代理）
                 if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
-                    console.log('[Houdini] Intercepted HTTP request:', url);
+                    console.log('[Cherry Studio] Intercepted HTTP request:', url);
 
                     // 对本地服务（localhost, 127.0.0.1）直接使用原始 fetch，不走 Python 代理
                     // 这些服务不需要认证，也不应该通过 Python 代理
@@ -1859,19 +1859,19 @@ def get_post_load_fix_script() -> str:
                         // 如果我们在 file:// 协议下，访问 http://localhost 可能会有问题
                         // 暂时强制 Ollama 走 Python 代理来规避这个问题
                         if (shouldBypass && (lower.includes('/api/chat') || lower.includes('/v1/chat/completions'))) {
-                             console.log('[Houdini] ⚠️ Forcing Python proxy for Ollama chat to avoid WebEngine restrictions:', url);
+                             console.log('[Cherry Studio] ⚠️ Forcing Python proxy for Ollama chat to avoid WebEngine restrictions:', url);
                              shouldBypass = false;
                         }
                         
                         if (shouldBypass) {
-                            console.log('[Houdini] 🏠 Bypass fetchProxy for local service (' + bypassReason + '):', url);
+                            console.log('[Cherry Studio] 🏠 Bypass fetchProxy for local service (' + bypassReason + '):', url);
                             return originalFetch.call(this, input, init);
                         } else {
                             // 记录非本地请求，用于调试
-                            console.log('[Houdini] 📡 Non-local request, using fetchProxy:', url);
+                            console.log('[Cherry Studio] 📡 Non-local request, using fetchProxy:', url);
                         }
                     } catch (e) {
-                        console.error('[Houdini] Local service bypass check error:', e, 'URL:', url);
+                        console.error('[Cherry Studio] Local service bypass check error:', e, 'URL:', url);
                         // 如果检查出错，为了安全起见，不 bypass（让请求走代理）
                     }
                     
@@ -1884,7 +1884,7 @@ def get_post_load_fix_script() -> str:
                     
                     if (window.qt?.api?.fetchProxy) {
                         try {
-                            console.log('[Houdini] Using Python fetchProxy for:', url);
+                            console.log('[Cherry Studio] Using Python fetchProxy for:', url);
                             
                             // 收集请求头
                             const headers = {};
@@ -1906,17 +1906,17 @@ def get_post_load_fix_script() -> str:
                                     headers[key] = value;
                                 });
                             } catch(e) {
-                                console.warn('[Houdini] Failed to collect headers from Request:', e);
+                                console.warn('[Cherry Studio] Failed to collect headers from Request:', e);
                             }
                             
                             // 调试：记录认证相关的 headers（隐藏敏感信息）
                             if (headers['Authorization'] || headers['authorization']) {
                                 const authHeader = headers['Authorization'] || headers['authorization'];
                                 const safeAuth = authHeader.length > 20 ? authHeader.substring(0, 20) + '...' : '***';
-                                console.log('[Houdini] 🔐 Found Authorization header:', safeAuth);
+                                console.log('[Cherry Studio] 🔐 Found Authorization header:', safeAuth);
                             }
                             if (headers['X-API-Key'] || headers['x-api-key']) {
-                                console.log('[Houdini] 🔐 Found X-API-Key header');
+                                console.log('[Cherry Studio] 🔐 Found X-API-Key header');
                             }
                             
                             // 获取请求体
@@ -1941,9 +1941,9 @@ def get_post_load_fix_script() -> str:
                             }
                             const isStream = requestBody.stream === true;
                             
-                            console.log('[Houdini] 🔍 Request body:', body ? body.substring(0, 200) : 'empty');
-                            console.log('[Houdini] 🔍 Parsed requestBody.stream:', requestBody.stream);
-                            console.log('[Houdini] 🔍 isStream:', isStream);
+                            console.log('[Cherry Studio] 🔍 Request body:', body ? body.substring(0, 200) : 'empty');
+                            console.log('[Cherry Studio] 🔍 Parsed requestBody.stream:', requestBody.stream);
+                            console.log('[Cherry Studio] 🔍 isStream:', isStream);
 
                             // 如果是 Ollama 的 generate 接口，处理可能的 JSONL 响应（虽然 Ollama API 默认是非 stream 的）
                             // 但通常我们这里收到的是 standard OpenAI format
@@ -1960,12 +1960,12 @@ def get_post_load_fix_script() -> str:
                                 requestId: requestId
                             };
                             
-                            console.log('[Houdini] 🔍 payload.stream:', payload.stream);
-                            console.log('[Houdini] 🔍 payload.requestId:', payload.requestId);
+                            console.log('[Cherry Studio] 🔍 payload.stream:', payload.stream);
+                            console.log('[Cherry Studio] 🔍 payload.requestId:', payload.requestId);
                             
                             // 如果是流式请求，返回 ReadableStream
                             if (isStream) {
-                                console.log('[Houdini] 🌊 Creating stream for request:', requestId);
+                                console.log('[Cherry Studio] 🌊 Creating stream for request:', requestId);
                                 
                                 let streamController;
                                 let responseHeaders = { 'Content-Type': 'text/event-stream' };
@@ -2017,7 +2017,7 @@ def get_post_load_fix_script() -> str:
                                 });
                                 
                                 // 立即返回 Response 对象
-                                console.log('[Houdini] 🌊 Returning Response with stream');
+                                console.log('[Cherry Studio] 🌊 Returning Response with stream');
                                 return new Response(stream, {
                                     status: responseStatus,
                                     statusText: 'OK',
@@ -2027,13 +2027,13 @@ def get_post_load_fix_script() -> str:
                             
                             // 非流式请求
                             const result = await window.qt.api.fetchProxy(JSON.stringify(payload));
-                            console.log('[Houdini] fetchProxy response received');
-
+                            console.log('[Cherry Studio] fetchProxy response received');
+                            
                             const parsed = typeof result === 'string' ? JSON.parse(result) : result;
 
                             // 处理错误响应（包括 401）
                             if (parsed.status && parsed.status >= 400) {
-                                console.error('[Houdini] fetchProxy HTTP error:', parsed.status, parsed.statusText);
+                                console.error('[Cherry Studio] fetchProxy HTTP error:', parsed.status, parsed.statusText);
                                 
                                 // 构建标准错误响应体
                                 let errorBodyStr = '';
@@ -2044,7 +2044,7 @@ def get_post_load_fix_script() -> str:
                                 }
                                 
                                 if (parsed.status === 401) {
-                                    console.error('[Houdini] 🔐 401 Unauthorized - Check API key or authentication settings');
+                                    console.error('[Cherry Studio] 🔐 401 Unauthorized - Check API key or authentication settings');
                                     // 尝试从错误响应中提取更多信息
                                     let errorMessage = 'Unauthorized';
                                     try {
@@ -2074,7 +2074,7 @@ def get_post_load_fix_script() -> str:
                             }
                             
                             if (parsed.error && !parsed.status) {
-                                console.error('[Houdini] fetchProxy error (non-fatal):', parsed.error);
+                                console.error('[Cherry Studio] fetchProxy error (non-fatal):', parsed.error);
                                 // 将错误包装为 400 响应，让前端自己处理，而不是抛出异常导致面板报错
                                 return new Response(String(parsed.error || 'Bad Request'), {
                                     status: 400,
@@ -2090,15 +2090,15 @@ def get_post_load_fix_script() -> str:
                                 headers: parsed.headers || { 'Content-Type': 'application/json' }
                             });
                         } catch(e) {
-                            console.error('[Houdini] fetchProxy call failed:', e);
+                            console.error('[Cherry Studio] fetchProxy call failed:', e);
                             throw e;
                         }
                     } else {
-                        console.error('[Houdini] QWebChannel fetchProxy not available');
+                        console.error('[Cherry Studio] QWebChannel fetchProxy not available');
                     }
                 }
             } catch(e) {
-                console.error('[Houdini] fetch interceptor error:', e);
+                console.error('[Cherry Studio] fetch interceptor error:', e);
                 throw e;
             }
             
@@ -2107,7 +2107,7 @@ def get_post_load_fix_script() -> str:
         };
         
         window.__fetchInterceptorInstalled = true;
-        console.log('[Houdini] fetch interceptor installed');
+        console.log('[Cherry Studio] fetch interceptor installed');
     }, 2000);
     
     // 调试信息：延迟 3 秒输出

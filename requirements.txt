@@ -1,0 +1,12 @@
+# Cherry Studio for Houdini 依赖
+# 用于从非 Houdini 环境独立启动
+
+# 核心依赖
+PySide6>=6.0.0
+
+# 注意：如果安装失败，可以尝试：
+# 1. 增加超时时间：set UV_HTTP_TIMEOUT=300 && uv pip install PySide6
+# 2. 使用 pip：pip install PySide6
+# 3. 使用国内镜像：pip install -i https://pypi.tuna.tsinghua.edu.cn/simple PySide6
+# 4. 使用 conda：conda install -c conda-forge pyside6
+

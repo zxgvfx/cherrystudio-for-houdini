@@ -21,17 +21,42 @@
 
 ## 系统要求
 
+### Houdini 环境
 - Windows 10/11
 - Houdini 20.5.613 或更高版本
-- 已安装 PySide6
+- 已安装 PySide6（Houdini 自带）
+
+### 独立环境（非 Houdini）
+- Windows 10/11
+- Python 3.8 或更高版本
+- PySide6（会自动安装）
 
 ## 安装和使用
 
-### 首次启动
+### 方式一：在 Houdini 环境中启动
 
 1. **启动 Cherry Studio**：
    - 双击 `launch_cherry_studio.bat` 启动
-   - 或运行：`C:"\Program Files\Side Effects Software\Houdini 20.5.613\bin"\hython.exe houdini_plugin\main.py`
+   - 或运行：`C:"\Program Files\Side Effects Software\Houdini 20.5.613\bin"\hython.exe cherrystudio\main.py`
+
+### 方式二：独立启动（非 Houdini 环境）
+
+项目支持从非 Houdini 环境独立启动，适用于开发和测试。
+
+1. **安装依赖**：
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. **启动应用**：
+   - 双击 `launch_standalone.bat`（Windows）
+   - 或运行：`python start_cherry_studio.py`
+   - 或运行：`python -m cherrystudio.main`
+
+3. **命令行参数**：
+   ```bash
+   python start_cherry_studio.py --url <URL> --theme <light|dark>
+   ```
 
 2. **配置 AI 模型**（首次启动会显示配置页面）：
    - 选择您想要使用的 AI 服务提供商
@@ -75,7 +100,7 @@ C:"\Program Files\Side Effects Software\Houdini 20.5.613\bin"\hython.exe houdini
 
 ```
 cherrystudio-for-houdini/
-├── houdini_plugin/
+├── cherrystudio/
 │   ├── main.py              # 主程序入口
 │   └── public/
 │       ├── simple-chat.html # 简化的聊天界面（默认）

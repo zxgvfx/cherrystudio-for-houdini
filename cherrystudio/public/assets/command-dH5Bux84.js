@@ -1,0 +1,7 @@
+import { b as createLucideIcon } from "./createLucideIcon-CjX3bse3.js";
+const __iconNode = [["path", {
+	d: "M15 6v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3",
+	key: "11bfej"
+}]];
+const Command = createLucideIcon("command", __iconNode);
+export { Command as b, __iconNode as c };

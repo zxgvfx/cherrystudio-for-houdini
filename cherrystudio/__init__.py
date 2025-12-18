@@ -1,0 +1,1 @@
+# cherrystudio package initializer

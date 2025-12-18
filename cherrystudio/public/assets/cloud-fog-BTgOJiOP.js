@@ -1,0 +1,18 @@
+import "./react-nO8b1aHv.js";
+import { b as createLucideIcon } from "./createLucideIcon-CjX3bse3.js";
+const __iconNode = [
+	["path", {
+		d: "M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242",
+		key: "1pljnt"
+	}],
+	["path", {
+		d: "M16 17H7",
+		key: "pygtm1"
+	}],
+	["path", {
+		d: "M17 21H9",
+		key: "1u2q02"
+	}]
+];
+const CloudFog = createLucideIcon("cloud-fog", __iconNode);
+export { __iconNode, CloudFog as default };

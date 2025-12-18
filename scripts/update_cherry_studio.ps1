@@ -34,7 +34,7 @@ Cherry Studio 更新脚本
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $WebDir = Join-Path $ProjectRoot "web"
-$PublicDir = Join-Path $ProjectRoot "houdini_plugin\public"
+$PublicDir = Join-Path $ProjectRoot "cherrystudio\public"
 
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "Cherry Studio 更新脚本" -ForegroundColor Cyan
@@ -265,7 +265,7 @@ if (-not $SkipTest) {
     Write-Host ""
     Write-Host "  或运行:" -ForegroundColor Gray
     $houdiniPath = "C:\Program Files\Side Effects Software\Houdini 20.5.613\bin\hython.exe"
-    Write-Host "    `"$houdiniPath`" houdini_plugin\main.py" -ForegroundColor Cyan
+    Write-Host "    `"$houdiniPath`" cherrystudio\main.py" -ForegroundColor Cyan
     Write-Host ""
 } else {
     Write-Host "[6/6] 跳过测试步骤" -ForegroundColor Gray

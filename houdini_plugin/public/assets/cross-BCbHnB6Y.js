@@ -1,8 +1,0 @@
-import "./react-nO8b1aHv.js";
-import { b as createLucideIcon } from "./createLucideIcon-CjX3bse3.js";
-const __iconNode = [["path", {
-	d: "M4 9a2 2 0 0 0-2 2v2a2 2 0 0 0 2 2h4a1 1 0 0 1 1 1v4a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2v-4a1 1 0 0 1 1-1h4a2 2 0 0 0 2-2v-2a2 2 0 0 0-2-2h-4a1 1 0 0 1-1-1V4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4a1 1 0 0 1-1 1z",
-	key: "1xbrqy"
-}]];
-const Cross = createLucideIcon("cross", __iconNode);
-export { __iconNode, Cross as default };

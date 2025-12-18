@@ -1,0 +1,22 @@
+import "./react-nO8b1aHv.js";
+import { b as createLucideIcon } from "./createLucideIcon-CjX3bse3.js";
+const __iconNode = [
+	["path", {
+		d: "M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z",
+		key: "1rqfz7"
+	}],
+	["path", {
+		d: "M9 10h6",
+		key: "9gxzsh"
+	}],
+	["path", {
+		d: "M12 13V7",
+		key: "h0r20n"
+	}],
+	["path", {
+		d: "M9 17h6",
+		key: "r8uit2"
+	}]
+];
+const FileDiff = createLucideIcon("file-diff", __iconNode);
+export { __iconNode, FileDiff as default };

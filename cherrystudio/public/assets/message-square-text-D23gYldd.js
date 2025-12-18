@@ -1,0 +1,18 @@
+import "./react-Cs7_W7Sm.js";
+import { b as createLucideIcon } from "./createLucideIcon-jMI35CFY.js";
+const __iconNode = [
+	["path", {
+		d: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z",
+		key: "1lielz"
+	}],
+	["path", {
+		d: "M13 8H7",
+		key: "14i4kc"
+	}],
+	["path", {
+		d: "M17 12H7",
+		key: "16if0g"
+	}]
+];
+const MessageSquareText = createLucideIcon("message-square-text", __iconNode);
+export { __iconNode, MessageSquareText as default };

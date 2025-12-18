@@ -19,7 +19,7 @@ from PySide6.QtCore import QObject, Slot, Signal
 from ..version import APP_VERSION, APP_PLATFORM, APP_ARCH
 
 # 简单文件日志
-_LOG_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'houdini_network.log')
+_LOG_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'cherrystudio_network.log')
 
 def _log(msg: str) -> None:
     try:
@@ -495,7 +495,7 @@ class CherryStudioAPI(QObject):
                 elif isinstance(data, bytes):
                     body_bytes = data
             req = urllib_request.Request(url, data=body_bytes, method=method)
-            req.add_header('User-Agent', 'Cherry Studio for Houdini/1.0')
+            req.add_header('User-Agent', 'Cherry Studio/1.0')
             
             # 先添加所有传入的 headers（包括认证信息）
             for key, value in headers.items():
@@ -621,7 +621,7 @@ class CherryStudioAPI(QObject):
             try:
                 req = urllib_request.Request(url, method="GET")
                 req.add_header('Content-Type', 'application/json')
-                req.add_header('User-Agent', 'Cherry Studio for Houdini')
+                req.add_header('User-Agent', 'Cherry Studio')
                 with urllib_request.urlopen(req, timeout=10.0) as resp:
                     raw = resp.read().decode("utf-8", errors="ignore")
                     _log(f"ollamaListModels success bytes={len(raw)}")
@@ -663,7 +663,7 @@ class CherryStudioAPI(QObject):
         try:
             url = f"{host.rstrip('/')}/api/tags"
             req = urllib_request.Request(url, method="GET")
-            req.add_header('User-Agent', 'Cherry Studio for Houdini')
+            req.add_header('User-Agent', 'Cherry Studio')
             with urllib_request.urlopen(req, timeout=10.0) as resp:
                 raw = resp.read().decode("utf-8", errors="ignore")
                 data = json.loads(raw)
@@ -700,7 +700,7 @@ class CherryStudioAPI(QObject):
             data = {"name": model_name}
             req = urllib_request.Request(url, method="POST")
             req.add_header('Content-Type', 'application/json')
-            req.add_header('User-Agent', 'Cherry Studio for Houdini')
+            req.add_header('User-Agent', 'Cherry Studio')
             body = json.dumps(data).encode("utf-8")
             req.data = body
             with urllib_request.urlopen(req, timeout=1800.0) as resp:

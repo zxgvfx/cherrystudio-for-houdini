@@ -1,0 +1,18 @@
+import "./react-nO8b1aHv.js";
+import { b as createLucideIcon } from "./createLucideIcon-CjX3bse3.js";
+const __iconNode = [
+	["path", {
+		d: "m14.5 7-5 5",
+		key: "dy991v"
+	}],
+	["path", {
+		d: "M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20",
+		key: "k3hazp"
+	}],
+	["path", {
+		d: "m9.5 7 5 5",
+		key: "s45iea"
+	}]
+];
+const BookX = createLucideIcon("book-x", __iconNode);
+export { __iconNode, BookX as default };

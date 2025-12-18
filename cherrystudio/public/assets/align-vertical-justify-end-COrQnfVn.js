@@ -1,0 +1,26 @@
+import "./react-nO8b1aHv.js";
+import { b as createLucideIcon } from "./createLucideIcon-CjX3bse3.js";
+const __iconNode = [
+	["rect", {
+		width: "14",
+		height: "6",
+		x: "5",
+		y: "12",
+		rx: "2",
+		key: "4l4tp2"
+	}],
+	["rect", {
+		width: "10",
+		height: "6",
+		x: "7",
+		y: "2",
+		rx: "2",
+		key: "ypihtt"
+	}],
+	["path", {
+		d: "M2 22h20",
+		key: "272qi7"
+	}]
+];
+const AlignVerticalJustifyEnd = createLucideIcon("align-vertical-justify-end", __iconNode);
+export { __iconNode, AlignVerticalJustifyEnd as default };
