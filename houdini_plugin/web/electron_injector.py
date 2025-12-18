@@ -3,6 +3,8 @@ JavaScript 注入脚本生成器
 用于在 WebEngine 中注入 Electron API 桥接代码
 """
 
+from ..version import APP_VERSION, APP_PLATFORM, APP_ARCH
+
 def get_electron_api_script(theme: str = 'light') -> str:
     """
     生成主要的 Electron API 注入脚本
@@ -167,7 +169,7 @@ def get_electron_api_script(theme: str = 'light') -> str:
                 try {{ 
                     return JSON.parse(await window.qt?.api?.getAppInfo()) 
                 }} catch(e) {{ 
-                    return {{ version: '1.0.0', platform: 'win32', arch: 'x64' }} 
+                    return {{ version: '{APP_VERSION}', platform: '{APP_PLATFORM}', arch: '{APP_ARCH}' }} 
                 }} 
             }},
             setLanguage: (lang) => {{
@@ -346,7 +348,7 @@ def get_electron_api_script(theme: str = 'light') -> str:
                 try {{ 
                     return await window.qt?.api?.getAppVersion?.() 
                 }} catch(e) {{ 
-                    return '1.0.0' 
+                    return '{APP_VERSION}' 
                 }} 
             }},
             setProxy: async (config) => {{ 
@@ -360,14 +362,14 @@ def get_electron_api_script(theme: str = 'light') -> str:
                 try {{ 
                     return await window.qt?.api?.getPlatform?.() 
                 }} catch(e) {{ 
-                    return 'win32' 
+                    return '{APP_PLATFORM}' 
                 }} 
             }},
             getArch: async () => {{ 
                 try {{ 
                     return await window.qt?.api?.getArch?.() 
                 }} catch(e) {{ 
-                    return 'x64' 
+                    return '{APP_ARCH}' 
                 }} 
             }},
             reload: () => {{ 

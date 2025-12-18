@@ -1,17 +1,30 @@
 #!/usr/bin/env python3
+import os
 import urllib.request
 import urllib.error
 import json
 
+
 def test_network_request():
+    """简单的网络连通性测试（不再硬编码敏感密钥）。
+
+    运行前请在环境变量中配置：
+        CHERRY_API_KEY 或 VVEAI_API_KEY
+    """
     url = "https://api.vveai.com/v1/models"
+
+    api_key = os.getenv("CHERRY_API_KEY") or os.getenv("VVEAI_API_KEY")
+    if not api_key:
+        print("Environment variable CHERRY_API_KEY or VVEAI_API_KEY is required for this test.")
+        return None
+
     headers = {
         "accept": "application/json",
-        "authorization": "Bearer sk-9em4bH7po4O67iPA98D8624eD7234643B7A81aEe0b0d20Ac",
+        "authorization": f"Bearer {api_key}",
         "http-referer": "https://cherry-ai.com",
-        "x-api-key": "sk-9em4bH7po4O67iPA98D8624eD7234643B7A81aEe0b0d20Ac",
+        "x-api-key": api_key,
         "x-stainless-retry-count": "0",
-        "x-title": "Cherry Studio"
+        "x-title": "Cherry Studio",
     }
     
     try:

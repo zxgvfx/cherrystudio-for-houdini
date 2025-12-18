@@ -10,6 +10,8 @@ import queue
 from urllib import request as urllib_request, error as urllib_error
 from PySide6.QtCore import QObject, Slot, Signal
 
+from ..version import APP_VERSION, APP_PLATFORM, APP_ARCH
+
 # 简单文件日志
 _LOG_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'houdini_network.log')
 
@@ -41,17 +43,17 @@ class CherryStudioAPI(QObject):
     @Slot(result=str)
     def getAppVersion(self) -> str:
         """获取应用版本"""
-        return '1.0.0'
+        return APP_VERSION
     
     @Slot(result=str)
     def getPlatform(self) -> str:
         """获取平台信息"""
-        return 'win32'
+        return APP_PLATFORM
     
     @Slot(result=str)
     def getArch(self) -> str:
         """获取架构信息"""
-        return 'x64'
+        return APP_ARCH
     
     @Slot(result=str)
     def getTheme(self) -> str:
@@ -76,7 +78,11 @@ class CherryStudioAPI(QObject):
     @Slot(result=str)
     def getAppInfo(self) -> str:
         """获取应用信息"""
-        return '{"version":"1.0.0","platform":"win32","arch":"x64"}'
+        return json.dumps({
+            "version": APP_VERSION,
+            "platform": APP_PLATFORM,
+            "arch": APP_ARCH,
+        })
     
     @Slot(str, result=str)
     def getDiskInfo(self, path: str) -> str:
@@ -631,7 +637,10 @@ class CherryStudioAPI(QObject):
     
     @Slot(result=str)
     def getInstallInfo(self) -> str:
-        return '{"installed": true, "version": "1.0.0"}'
+        return json.dumps({
+            "installed": True,
+            "version": APP_VERSION,
+        })
     
     @Slot(result=str)
     def getUsersList(self) -> str:
