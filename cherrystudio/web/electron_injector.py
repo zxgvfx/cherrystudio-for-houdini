@@ -1651,162 +1651,52 @@ def get_early_logger_fix_script() -> str:
         // 立即开始尝试恢复
         restoreLocalStorage();
         
-        // IndexedDB 手动持久化机制 (加强版)
+        // IndexedDB 手动持久化机制
         setTimeout(function() {
             if ('indexedDB' in window) {
                 if (!window.indexedDB) {
                     return;
                 }
                 
-                // 定期导出（每30秒）
-                setInterval(function() {
-                    if (window.__exportIndexedDB) {
-                        window.__exportIndexedDB();
-                    }
-                }, 30000);
-                
-                // 页面卸载前导出
-                window.addEventListener('beforeunload', function() {
-                    if (window.__exportIndexedDB) {
-                        window.__exportIndexedDB();
-                    }
-                });
-                
                 // 导出 IndexedDB 到文件
                 window.__exportIndexedDB = function() {
-                    try {
-                        const openRequest = window.indexedDB.open('CherryStudio');
-                        openRequest.onsuccess = function(event) {
-                            const db = event.target.result;
-                            if (!db.objectStoreNames || db.objectStoreNames.length === 0) {
-                                db.close();
-                                return;
-                            }
+                    const openRequest = window.indexedDB.open('CherryStudio');
+                    openRequest.onsuccess = function(event) {
+                        const db = event.target.result;
+                        const storeNames = Array.from(db.objectStoreNames);
+                        
+                        const exportData = { version: db.version, stores: {} };
+                        const tx = db.transaction(storeNames, 'readonly');
+                        let completed = 0;
+                        
+                        storeNames.forEach(function(storeName) {
+                            const store = tx.objectStore(storeName);
+                            const getAllRequest = store.getAll();
                             
-                            const storeNames = Array.from(db.objectStoreNames);
-                            const exportData = { version: db.version, stores: {} };
-                            
-                            try {
-                                const tx = db.transaction(storeNames, 'readonly');
-                                let completed = 0;
-                                let hasData = false;
+                            getAllRequest.onsuccess = function() {
+                                exportData.stores[storeName] = getAllRequest.result;
+                                completed++;
                                 
-                                storeNames.forEach(function(storeName) {
-                                    try {
-                                        const store = tx.objectStore(storeName);
-                                        const getAllRequest = store.getAll();
-                                        
-                                        getAllRequest.onsuccess = function() {
-                                            exportData.stores[storeName] = getAllRequest.result;
-                                            if (getAllRequest.result && getAllRequest.result.length > 0) {
-                                                hasData = true;
-                                            }
-                                            completed++;
-                                            
-                                            if (completed === storeNames.length) {
-                                                if (hasData && window.qt && window.qt.api && window.qt.api.fileWrite) {
-                                                    const jsonData = JSON.stringify(exportData);
-                                                    window.qt.api.fileWrite('indexedDB_backup.json', jsonData).then(function() {
-                                                        console.log('[Houdini] IndexedDB backup saved');
-                                                    });
-                                                }
-                                                db.close();
-                                            }
-                                        };
-                                        
-                                        getAllRequest.onerror = function() {
-                                            completed++;
-                                            if (completed === storeNames.length) db.close();
-                                        };
-                                    } catch(e) {
-                                        completed++;
-                                        if (completed === storeNames.length) db.close();
+                                if (completed === storeNames.length) {
+                                    const jsonData = JSON.stringify(exportData);
+                                    if (window.qt && window.qt.api && window.qt.api.fileWrite) {
+                                        window.qt.api.fileWrite('indexedDB.json', jsonData);
                                     }
-                                });
-                            } catch(e) {
-                                db.close();
-                            }
-                        };
-                    } catch(e) {
-                        console.error('[Houdini] IndexedDB export error:', e);
-                    }
+                                }
+                            };
+                        });
+                        
+                        db.close();
+                    };
                 };
                 
-                // 导入 IndexedDB 从文件 (加强版恢复逻辑)
+                // 导入 IndexedDB 从文件
                 window.__importIndexedDB = function() {
                     if (!window.qt || !window.qt.api || !window.qt.api.fileRead) {
-                        setTimeout(window.__importIndexedDB, 1000);
                         return;
                     }
                     
-                    window.qt.api.fileRead('indexedDB_backup.json').then(function(content) {
-                        if (content) {
-                            try {
-                                const data = JSON.parse(content);
-                                if (!data.version || !data.stores) return;
-                                
-                                const openRequest = window.indexedDB.open('CherryStudio', data.version);
-                                
-                                openRequest.onupgradeneeded = function(event) {
-                                    const db = event.target.result;
-                                    for (const storeName in data.stores) {
-                                        if (!db.objectStoreNames.contains(storeName)) {
-                                            // 尝试推断 keyPath，通常是 'id'
-                                            let keyPath = 'id';
-                                            const storeData = data.stores[storeName];
-                                            if (storeData && storeData.length > 0) {
-                                                if (storeData[0].id) keyPath = 'id';
-                                                else if (storeData[0].uuid) keyPath = 'uuid';
-                                                else if (storeData[0].key) keyPath = 'key';
-                                            }
-                                            db.createObjectStore(storeName, { keyPath: keyPath });
-                                        }
-                                    }
-                                };
-                                
-                                openRequest.onsuccess = function(event) {
-                                    const db = event.target.result;
-                                    const storeNames = Array.from(db.objectStoreNames);
-                                    
-                                    try {
-                                        const tx = db.transaction(storeNames, 'readwrite');
-                                        let restoreCount = 0;
-                                        
-                                        for (const storeName in data.stores) {
-                                            if (storeNames.includes(storeName)) {
-                                                const store = tx.objectStore(storeName);
-                                                const items = data.stores[storeName];
-                                                if (Array.isArray(items)) {
-                                                    items.forEach(item => {
-                                                        try {
-                                                            store.put(item);
-                                                            restoreCount++;
-                                                        } catch(e) {}
-                                                    });
-                                                }
-                                            }
-                                        }
-                                        
-                                        tx.oncomplete = function() {
-                                            console.log('[Houdini] IndexedDB restored:', restoreCount, 'items');
-                                            db.close();
-                                        };
-                                    } catch(e) {
-                                        console.error('[Houdini] IndexedDB restore transaction error:', e);
-                                        db.close();
-                                    }
-                                };
-                            } catch(e) {
-                                console.error('[Houdini] IndexedDB restore parse error:', e);
-                            }
-                        }
-                    });
-                };
-                
-                // 启动时尝试导入（延迟执行，给应用初始化时间）
-                setTimeout(window.__importIndexedDB, 3000);
-            }
-        }, 1000);
+                    window.qt.api.fileRead('indexedDB.json').then(function(content) {
                         if (!content) {
                             return;
                         }
@@ -2179,6 +2069,8 @@ def get_post_load_fix_script() -> str:
                                                         setTimeout(poll, 10);
                                                     } else if (data.type === 'end') {
                                                         streamController.close();
+                                                        // 保存数据
+                                                        if (window.__saveIndexedDB) window.__saveIndexedDB();
                                                     } else if (data.type === 'error') {
                                                         streamController.error(new Error(data.error));
                                                     } else if (data.type === 'empty') {
