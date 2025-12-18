@@ -4,9 +4,15 @@ Cherry Studio API 类
 """
 
 import os
+import sys
 import json
 import threading
 import queue
+import zipfile
+import tarfile
+import shutil
+import tempfile
+from pathlib import Path
 from urllib import request as urllib_request, error as urllib_error
 from PySide6.QtCore import QObject, Slot, Signal
 
@@ -89,11 +95,59 @@ class CherryStudioAPI(QObject):
         """获取磁盘信息"""
         return '{"total":1000000000,"free":500000000}'
     
-    @Slot(str, int, str, str, result=bool)
-    def logToMain(self, source: str, level: int, message: str, data: str = "") -> bool:
-        """日志记录（静默到文件）"""
-        _log(f"[{source}] {message}")
-        return True
+    @Slot(str, result=bool)
+    def logToMain(self, payload: str) -> bool:
+        """
+        日志记录（静默到文件）
+        接受 JSON 字符串，包含 source, level, message, data
+        """
+        try:
+            payload_obj = json.loads(payload) if isinstance(payload, str) else payload
+            
+            # 兼容两种调用方式：
+            # 1. 新方式：单个 JSON 对象 {source, level, message, data}
+            # 2. 旧方式：四个独立参数 (source, level, message, data)
+            if isinstance(payload_obj, dict):
+                source_obj = payload_obj.get('source', {})
+                level = payload_obj.get('level', 0)
+                message = payload_obj.get('message', '')
+                data = payload_obj.get('data', [])
+            else:
+                # 旧方式：尝试解析为数组
+                if isinstance(payload_obj, list) and len(payload_obj) >= 3:
+                    source_obj = payload_obj[0] if isinstance(payload_obj[0], dict) else {'module': str(payload_obj[0])}
+                    level = payload_obj[1] if len(payload_obj) > 1 else 0
+                    message = payload_obj[2] if len(payload_obj) > 2 else ''
+                    data = payload_obj[3] if len(payload_obj) > 3 else []
+                else:
+                    # 无法解析，直接记录
+                    _log(f"[Unknown] {str(payload)[:200]}")
+                    return True
+            
+            # 提取 source 信息
+            if isinstance(source_obj, dict):
+                module = source_obj.get('module', '')
+                window = source_obj.get('window', '')
+                process = source_obj.get('process', 'renderer')
+                source_str = f"{process}:{window}:{module}" if module else f"{process}:{window}"
+            else:
+                source_str = str(source_obj)
+            
+            # 格式化日志消息
+            log_msg = f"[{source_str}] [{level}] {message}"
+            if data:
+                try:
+                    data_str = json.dumps(data, ensure_ascii=False)[:200]
+                    log_msg += f" | Data: {data_str}"
+                except:
+                    log_msg += f" | Data: {str(data)[:200]}"
+            
+            _log(log_msg)
+            return True
+        except Exception as e:
+            # 如果解析失败，直接记录原始内容
+            _log(f"[LogToMain] Error parsing log: {str(e)} | Raw: {str(payload)[:200]}")
+            return True
     
     @Slot(result=bool)
     def isFullScreen(self) -> bool:
@@ -131,11 +185,36 @@ class CherryStudioAPI(QObject):
     
     @Slot(str, result=bool)
     def isBinaryExist(self, binary: str) -> bool:
-        """检查二进制文件是否存在"""
+        """
+        检查二进制文件是否存在
+        优先检查 ~/.cherrystudio/bin 目录，如果没找到再检查系统 PATH
+        这样既能识别应用安装的版本，也能识别系统已有的版本
+        """
         try:
             from shutil import which
+            from pathlib import Path
+            
+            # 优先检查 ~/.cherrystudio/bin 目录
+            home_dir = Path.home()
+            bin_dir = home_dir / '.cherrystudio' / 'bin'
+            
+            if bin_dir.exists():
+                # Windows 使用 .exe 扩展名
+                if os.name == 'nt':
+                    binary_exe = bin_dir / f'{binary}.exe'
+                    if binary_exe.exists() and binary_exe.is_file():
+                        return True
+                else:
+                    binary_path = bin_dir / binary
+                    if binary_path.exists() and binary_path.is_file():
+                        # 检查是否有执行权限
+                        if os.access(binary_path, os.X_OK):
+                            return True
+            
+            # 如果 bin 目录中没有，检查系统 PATH
             return which(binary) is not None
-        except Exception:
+        except Exception as e:
+            _log(f"isBinaryExist error for {binary}: {e}")
             return False
     
     @Slot(str, result=bool)
@@ -153,6 +232,39 @@ class CherryStudioAPI(QObject):
             import webbrowser
             return bool(webbrowser.open(url))
         except Exception:
+            return False
+    
+    @Slot(str, result=bool)
+    def openPath(self, path: str) -> bool:
+        """
+        打开文件或文件夹路径
+        类似于 Electron 的 shell.openPath
+        """
+        try:
+            if not path or not isinstance(path, str):
+                return False
+            
+            # 规范化路径
+            path = os.path.abspath(os.path.expanduser(path))
+            
+            # 检查路径是否存在
+            if not os.path.exists(path):
+                _log(f"openPath: Path does not exist: {path}")
+                return False
+            
+            # 使用平台特定的方式打开
+            if os.name == 'nt':  # Windows
+                os.startfile(path)
+            elif sys.platform == 'darwin':  # macOS
+                import subprocess
+                subprocess.run(['open', path], check=False)
+            else:  # Linux
+                import subprocess
+                subprocess.run(['xdg-open', path], check=False)
+            
+            return True
+        except Exception as e:
+            _log(f"openPath error: {e}")
             return False
     
     # ========== 文件操作 API ==========
@@ -384,13 +496,30 @@ class CherryStudioAPI(QObject):
                     body_bytes = data
             req = urllib_request.Request(url, data=body_bytes, method=method)
             req.add_header('User-Agent', 'Cherry Studio for Houdini/1.0')
-            if body_bytes:
-                req.add_header('Content-Type', 'application/json')
+            
+            # 先添加所有传入的 headers（包括认证信息）
             for key, value in headers.items():
                 try:
+                    # 跳过空值
+                    if value is None or value == '':
+                        continue
                     req.add_header(str(key), str(value))
-                except Exception:
+                except Exception as e:
+                    _log(f"[fetchProxy] Failed to add header {key}: {e}")
                     continue
+            
+            # 只有在没有 Content-Type 且有 body 时才添加默认的 Content-Type
+            has_content_type = any(k.lower() == 'content-type' for k in headers.keys())
+            if body_bytes and not has_content_type:
+                req.add_header('Content-Type', 'application/json')
+            
+            # 调试：记录认证相关的 headers（隐藏敏感信息）
+            auth_headers = {k: v for k, v in headers.items() 
+                          if 'auth' in k.lower() or 'key' in k.lower() or 'token' in k.lower()}
+            if auth_headers:
+                safe_auth = {k: (v[:20] + '...' if len(str(v)) > 20 else '***') 
+                           for k, v in auth_headers.items()}
+                _log(f"[fetchProxy] Request headers (auth): {json.dumps(safe_auth)}")
             # 检查是否是流式请求
             is_stream = config.get("stream", False)
             request_id = config.get("requestId", "")
@@ -456,15 +585,25 @@ class CherryStudioAPI(QObject):
                 error_body = e.read().decode("utf-8", errors="ignore")
             except Exception:
                 error_body = ""
+            
+            # 特殊处理 401 错误，提供更详细的错误信息
+            if e.code == 401:
+                _log(f"[fetchProxy] 401 Unauthorized for {url}")
+                # 记录请求 headers（隐藏敏感信息）
+                safe_headers = {k: '***' if any(x in k.lower() for x in ['auth', 'key', 'token', 'secret']) else v 
+                              for k, v in headers.items()}
+                _log(f"[fetchProxy] Request headers: {json.dumps(safe_headers)}")
+                _log(f"[fetchProxy] Error response: {error_body[:500]}")
+            
             result = {
                 "status": e.code,
                 "statusText": getattr(e, "reason", ""),
                 "headers": dict(e.headers.items()) if getattr(e, "headers", None) else {},
                 "body": error_body,
-                "error": str(e)
+                "error": f"HTTP {e.code}: {getattr(e, 'reason', 'Unknown error')}"
             }
             if e.code == 401:
-                result["error"] = "API key required or invalid"
+                result["error"] = "Authentication failed. Please check your API key or authentication settings."
             return json.dumps(result)
         except Exception as e:
             return json.dumps({"error": str(e)})
@@ -904,19 +1043,63 @@ class CherryStudioAPI(QObject):
                     'content': [{'type': 'text', 'text': 'Server baseUrl is required'}]
                 })
             
+            # 准备认证信息
+            headers = server_config.get('headers', {}) or {}
+            api_key = server_config.get('apiKey') or server_config.get('api_key')
+            
+            # 如果有 API key，添加到 headers
+            if api_key:
+                # 检查是否已经有 Authorization header
+                has_auth = any(k.lower() == 'authorization' for k in headers.keys())
+                if not has_auth:
+                    # 默认使用 Bearer token
+                    headers['Authorization'] = f'Bearer {api_key}'
+                # 如果没有 Authorization，尝试使用 X-API-Key
+                has_api_key = any(k.lower() == 'x-api-key' for k in headers.keys())
+                if not has_auth and not has_api_key:
+                    headers['X-API-Key'] = api_key
+            
             # 异步调用工具
             async def call_tool():
                 try:
-                    _log(f"[MCP] Calling tool: {tool_name} on {base_url} with args: {json.dumps(tool_args)}")
+                    _log(f"[MCP] Creating FastMCP client for {base_url}")
+                    # 使用 FastMCP 客户端，它会自动处理 SSE/Stdio 等协议细节
                     client = Client(base_url)
+                    
+                    # 注意：FastMCP Client 目前可能不直接支持在构造时传入 headers
+                    # 如果需要认证，可能需要查看 FastMCP 文档或源码支持
+                    # 但对于本地 Houdini MCP 服务，通常不需要额外认证
+                    
                     async with client:
-                        result = await client.call_tool(tool_name, tool_args)
-                        _log(f"[MCP] Tool call result type: {type(result)}, content: {str(result)[:200]}")
+                        _log(f"[MCP] Calling tool: {tool_name} on {base_url} with args: {json.dumps(tool_args)}")
+                        # 注意：fastmcp 0.4.x+ 的 client.call_tool 签名可能是 call_tool(name: str, arguments: dict = None)
+                        # 某些版本可能不支持 **kwargs 展开参数，而是需要传入 arguments 字典
+                        try:
+                            # 尝试方式 1: 传入 arguments 字典（标准 MCP 协议方式）
+                            result = await client.call_tool(tool_name, arguments=tool_args)
+                        except TypeError:
+                            # 尝试方式 2: 展开参数（旧版 fastmcp 行为）
+                            result = await client.call_tool(tool_name, **tool_args)
+                            
+                        _log(f"[MCP] Tool call result type: {type(result)}")
                         return result
+
                 except Exception as e:
                     import traceback
                     error_detail = f"{str(e)}\n{traceback.format_exc()}"
                     _log(f"[MCP] Error calling tool {tool_name}: {error_detail}")
+                    
+                    # 检查是否是 401 错误
+                    error_str = str(e)
+                    if '401' in error_str or 'Unauthorized' in error_str or 'HTTP Error 401' in error_str:
+                        auth_hint = ""
+                        if not headers and not api_key:
+                            auth_hint = " Please configure API key or authentication headers in MCP server settings."
+                        return {
+                            'isError': True,
+                            'content': [{'type': 'text', 'text': f'Authentication failed (401 Unauthorized).{auth_hint} Error: {str(e)}'}]
+                        }
+                    
                     return {
                         'isError': True,
                         'content': [{'type': 'text', 'text': f'Error calling tool: {str(e)}'}]
@@ -1018,6 +1201,247 @@ class CherryStudioAPI(QObject):
     @Slot(str, result=str)
     def mcpRemoveServer(self, server: str) -> str:
         return 'false'
+    
+    @Slot(result=str)
+    def mcpGetInstallInfo(self) -> str:
+        """
+        获取 MCP 安装信息
+        返回 uv、bun 的路径和安装目录
+        优先检查 ~/.cherrystudio/bin 目录，再检查 PATH
+        """
+        try:
+            import shutil
+            from pathlib import Path
+            
+            # 获取用户主目录下的 Cherry Studio bin 目录
+            home_dir = Path.home()
+            bin_dir = home_dir / '.cherrystudio' / 'bin'
+            
+            # 查找 uv 和 bun 可执行文件
+            uv_path = ''
+            bun_path = ''
+            
+            # 优先检查 bin 目录
+            if bin_dir.exists():
+                uv_exe = bin_dir / ('uv.exe' if os.name == 'nt' else 'uv')
+                bun_exe = bin_dir / ('bun.exe' if os.name == 'nt' else 'bun')
+                
+                # 检查 uv
+                if uv_exe.exists() and uv_exe.is_file():
+                    # 在 Unix 系统上检查可执行权限
+                    if os.name == 'nt' or os.access(uv_exe, os.X_OK):
+                        uv_path = str(uv_exe)
+                
+                # 检查 bun
+                if bun_exe.exists() and bun_exe.is_file():
+                    # 在 Unix 系统上检查可执行权限
+                    if os.name == 'nt' or os.access(bun_exe, os.X_OK):
+                        bun_path = str(bun_exe)
+            
+            # 如果 bin 目录中没有找到，尝试在 PATH 中查找
+            if not uv_path:
+                uv_cmd = shutil.which('uv')
+                if uv_cmd:
+                    uv_path = uv_cmd
+            
+            if not bun_path:
+                bun_cmd = shutil.which('bun')
+                if bun_cmd:
+                    bun_path = bun_cmd
+            
+            result = {
+                'dir': str(bin_dir),
+                'uvPath': uv_path,
+                'bunPath': bun_path
+            }
+            
+            return json.dumps(result)
+        except Exception as e:
+            _log(f"mcpGetInstallInfo error: {e}")
+            # 返回空路径的默认值，避免前端解构错误
+            return json.dumps({
+                'dir': '',
+                'uvPath': '',
+                'bunPath': ''
+            })
+    
+    @Slot(result=bool)
+    def installBunBinary(self) -> bool:
+        """
+        安装 Bun 二进制文件
+        下载并解压到 ~/.cherrystudio/bin 目录
+        """
+        try:
+            home_dir = Path.home()
+            bin_dir = home_dir / '.cherrystudio' / 'bin'
+            bin_dir.mkdir(parents=True, exist_ok=True)
+            
+            # 确定平台和架构
+            platform = sys.platform
+            arch = APP_ARCH if hasattr(APP_ARCH, '__str__') else ('x64' if sys.maxsize > 2**32 else 'x86')
+            
+            # Bun 下载 URL 映射
+            BUN_RELEASE_BASE_URL = 'https://gitcode.com/CherryHQ/bun/releases/download'
+            DEFAULT_BUN_VERSION = '1.3.1'
+            
+            BUN_PACKAGES = {
+                'darwin-arm64': 'bun-darwin-aarch64.zip',
+                'darwin-x64': 'bun-darwin-x64.zip',
+                'win32-x64': 'bun-windows-x64.zip',
+                'win32-arm64': 'bun-windows-x64.zip',
+                'linux-x64': 'bun-linux-x64.zip',
+                'linux-arm64': 'bun-linux-aarch64.zip',
+            }
+            
+            # 确定平台键
+            if platform == 'darwin':
+                platform_key = f'darwin-{arch}'
+            elif platform == 'win32':
+                platform_key = f'win32-{arch}'
+            elif platform.startswith('linux'):
+                platform_key = f'linux-{arch}'
+            else:
+                _log(f"installBunBinary: Unsupported platform: {platform}")
+                return False
+            
+            package_name = BUN_PACKAGES.get(platform_key)
+            if not package_name:
+                _log(f"installBunBinary: No binary available for {platform_key}")
+                return False
+            
+            # 下载 URL
+            download_url = f"{BUN_RELEASE_BASE_URL}/bun-v{DEFAULT_BUN_VERSION}/{package_name}"
+            
+            # 下载文件
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp_file:
+                temp_path = tmp_file.name
+            
+            try:
+                _log(f"installBunBinary: Downloading from {download_url}")
+                urllib_request.urlretrieve(download_url, temp_path)
+                
+                # 解压 ZIP 文件
+                _log(f"installBunBinary: Extracting to {bin_dir}")
+                with zipfile.ZipFile(temp_path, 'r') as zip_ref:
+                    for member in zip_ref.namelist():
+                        if not member.endswith('/'):  # 跳过目录
+                            filename = os.path.basename(member)
+                            if filename:  # 确保有文件名
+                                output_path = bin_dir / filename
+                                with zip_ref.open(member) as source, open(output_path, 'wb') as target:
+                                    shutil.copyfileobj(source, target)
+                                
+                                # 设置可执行权限（Unix 系统）
+                                if platform != 'win32':
+                                    os.chmod(output_path, 0o755)
+                
+                _log(f"installBunBinary: Successfully installed bun")
+                return True
+            finally:
+                # 清理临时文件
+                try:
+                    os.unlink(temp_path)
+                except Exception:
+                    pass
+                    
+        except Exception as e:
+            _log(f"installBunBinary error: {e}")
+            return False
+    
+    @Slot(result=bool)
+    def installUVBinary(self) -> bool:
+        """
+        安装 UV 二进制文件
+        下载并解压到 ~/.cherrystudio/bin 目录
+        """
+        try:
+            home_dir = Path.home()
+            bin_dir = home_dir / '.cherrystudio' / 'bin'
+            bin_dir.mkdir(parents=True, exist_ok=True)
+            
+            # 确定平台和架构
+            platform = sys.platform
+            arch = APP_ARCH if hasattr(APP_ARCH, '__str__') else ('x64' if sys.maxsize > 2**32 else 'x86')
+            
+            # UV 下载 URL 映射
+            UV_RELEASE_BASE_URL = 'https://github.com/astral-sh/uv/releases/download'
+            DEFAULT_UV_VERSION = '0.5.8'
+            
+            UV_PACKAGES = {
+                'darwin-arm64': 'uv-aarch64-apple-darwin.tar.gz',
+                'darwin-x64': 'uv-x86_64-apple-darwin.tar.gz',
+                'win32-x64': 'uv-x86_64-pc-windows-msvc.zip',
+                'win32-arm64': 'uv-aarch64-pc-windows-msvc.zip',
+                'linux-x64': 'uv-x86_64-unknown-linux-gnu.tar.gz',
+                'linux-arm64': 'uv-aarch64-unknown-linux-gnu.tar.gz',
+            }
+            
+            # 确定平台键
+            if platform == 'darwin':
+                platform_key = f'darwin-{arch}'
+            elif platform == 'win32':
+                platform_key = f'win32-{arch}'
+            elif platform.startswith('linux'):
+                platform_key = f'linux-{arch}'
+            else:
+                _log(f"installUVBinary: Unsupported platform: {platform}")
+                return False
+            
+            package_name = UV_PACKAGES.get(platform_key)
+            if not package_name:
+                _log(f"installUVBinary: No binary available for {platform_key}")
+                return False
+            
+            # 下载 URL
+            download_url = f"{UV_RELEASE_BASE_URL}/{DEFAULT_UV_VERSION}/{package_name}"
+            
+            # 下载文件
+            is_zip = package_name.endswith('.zip')
+            suffix = '.zip' if is_zip else '.tar.gz'
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
+                temp_path = tmp_file.name
+            
+            try:
+                _log(f"installUVBinary: Downloading from {download_url}")
+                urllib_request.urlretrieve(download_url, temp_path)
+                
+                # 解压文件
+                _log(f"installUVBinary: Extracting to {bin_dir}")
+                if is_zip:
+                    with zipfile.ZipFile(temp_path, 'r') as zip_ref:
+                        for member in zip_ref.namelist():
+                            if not member.endswith('/'):
+                                filename = os.path.basename(member)
+                                if filename:
+                                    output_path = bin_dir / filename
+                                    with zip_ref.open(member) as source, open(output_path, 'wb') as target:
+                                        shutil.copyfileobj(source, target)
+                                    if platform != 'win32':
+                                        os.chmod(output_path, 0o755)
+                else:
+                    with tarfile.open(temp_path, 'r:gz') as tar_ref:
+                        for member in tar_ref.getmembers():
+                            if member.isfile():
+                                filename = os.path.basename(member.name)
+                                if filename:
+                                    output_path = bin_dir / filename
+                                    with tar_ref.extractfile(member) as source, open(output_path, 'wb') as target:
+                                        shutil.copyfileobj(source, target)
+                                    if platform != 'win32':
+                                        os.chmod(output_path, 0o755)
+                
+                _log(f"installUVBinary: Successfully installed uv")
+                return True
+            finally:
+                # 清理临时文件
+                try:
+                    os.unlink(temp_path)
+                except Exception:
+                    pass
+                    
+        except Exception as e:
+            _log(f"installUVBinary error: {e}")
+            return False
     
     @Slot(result=str)
     def getVaults(self) -> str:

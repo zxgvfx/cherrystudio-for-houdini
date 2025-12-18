@@ -257,10 +257,19 @@ def get_electron_api_script(theme: str = 'light') -> str:
                     }}
                 }}
             }},
-            logToMain: (s,l,m,d) => {{ 
+            logToMain: (source, level, message, data) => {{ 
                 try {{ 
-                    window.qt?.api?.logToMain(s,l,m,d||"") 
-                }} catch(e) {{}} 
+                    // 将参数序列化为 JSON 字符串
+                    var payload = JSON.stringify({{
+                        source: source || {{}},
+                        level: level || 0,
+                        message: message || '',
+                        data: data || []
+                    }});
+                    window.qt?.api?.logToMain?.(payload);
+                }} catch(e) {{
+                    console.error('[Houdini] logToMain error:', e);
+                }} 
             }},
             setTheme: (theme) => {{ 
                 try {{ 
@@ -307,6 +316,30 @@ def get_electron_api_script(theme: str = 'light') -> str:
                 try {{ 
                     await window.qt?.api?.openWebsite?.(url) 
                 }} catch(e) {{}} 
+            }},
+            openPath: async (path) => {{ 
+                try {{ 
+                    return await window.qt?.api?.openPath?.(path) 
+                }} catch(e) {{ 
+                    console.error('[Houdini] openPath error:', e);
+                    return false;
+                }} 
+            }},
+            installBunBinary: async () => {{ 
+                try {{ 
+                    return await window.qt?.api?.installBunBinary?.() 
+                }} catch(e) {{ 
+                    console.error('[Houdini] installBunBinary error:', e);
+                    throw new Error('Failed to install bun: ' + (e.message || String(e)));
+                }} 
+            }},
+            installUVBinary: async () => {{ 
+                try {{ 
+                    return await window.qt?.api?.installUVBinary?.() 
+                }} catch(e) {{ 
+                    console.error('[Houdini] installUVBinary error:', e);
+                    throw new Error('Failed to install uv: ' + (e.message || String(e)));
+                }} 
             }},
             isBinaryExist: async (binary) => {{ 
                 try {{ 
@@ -448,6 +481,14 @@ def get_electron_api_script(theme: str = 'light') -> str:
                 return (typeof r==='string')? JSON.parse(r): (r||null)
             }} catch(e) {{ 
                 return null 
+            }} 
+        }},
+        openPath: async function(path) {{ 
+            try {{ 
+                return await window.qt?.api?.openPath?.(path) 
+            }} catch(e) {{ 
+                console.error('[Houdini] file.openPath error:', e);
+                return false;
             }} 
         }}
     }};
@@ -1063,13 +1104,17 @@ def get_electron_api_script(theme: str = 'light') -> str:
         mcpApi.checkMcpConnectivity = mcpApi.checkMcpConnectivity || function (server) {
             return qtInvokeJson('mcpCheckMcpConnectivity', server, false);
         };
-        mcpApi.getInstallInfo = mcpApi.getInstallInfo || asyncStub('mcp.getInstallInfo', null);
+        mcpApi.getInstallInfo = mcpApi.getInstallInfo || function () {
+            return qtInvokeJson('mcpGetInstallInfo', undefined, { dir: '', uvPath: '', bunPath: '' });
+        };
         mcpApi.getPrompt = mcpApi.getPrompt || asyncStub('mcp.getPrompt', null);
         mcpApi.getResource = mcpApi.getResource || asyncStub('mcp.getResource', null);
         mcpApi.callTool = mcpApi.callTool || function (payload) {
             console.log('[Houdini] mcpApi.callTool called with payload:', payload);
             try {
-                var result = qtInvokeJson('mcpCallTool', payload, { isError: true, content: [{ type: 'text', text: 'MCP callTool not available' }] });
+                // 将 payload 转换为 JSON 字符串，确保传给 Python 的是字符串
+                var payloadStr = typeof payload === 'string' ? payload : JSON.stringify(payload);
+                var result = qtInvokeJson('mcpCallTool', payloadStr, { isError: true, content: [{ type: 'text', text: 'MCP callTool not available' }] });
                 console.log('[Houdini] mcpApi.callTool result:', result);
                 return result;
             } catch (e) {
@@ -1192,32 +1237,254 @@ def get_electron_api_script(theme: str = 'light') -> str:
         copilotApi.getCopilotToken = copilotApi.getCopilotToken || asyncStub('copilot.getCopilotToken', null);
         copilotApi.refreshCopilotToken = copilotApi.refreshCopilotToken || asyncStub('copilot.refreshCopilotToken', null);
 
-        (function ensureLoggerServiceInit() {
+        // 拦截 LoggerService 的 initWindowSource 方法，自动初始化
+        (function interceptLoggerServiceInit() {
+            // 方法1: 拦截全局的 LoggerService 类
+            if (typeof window !== 'undefined') {
+                // 尝试拦截 LoggerService.getInstance
+                var originalGetInstance = null;
+                try {
+                    // 等待 LoggerService 类加载
+                    var checkLoggerService = function() {
+                        try {
+                            // 尝试从各种可能的模块位置获取
+                            var LoggerServiceClass = null;
+                            
+                            // 检查 window 上的 LoggerService
+                            if (window.LoggerService && typeof window.LoggerService.getInstance === 'function') {
+                                LoggerServiceClass = window.LoggerService;
+                            }
+                            
+                            // 如果找到了 LoggerService 类，拦截 getInstance
+                            if (LoggerServiceClass && !LoggerServiceClass.__houdiniIntercepted) {
+                                originalGetInstance = LoggerServiceClass.getInstance;
+                                LoggerServiceClass.getInstance = function() {
+                                    var instance = originalGetInstance.call(this);
+                                    // 自动初始化 window source
+                                    if (instance && typeof instance.initWindowSource === 'function') {
+                                        try {
+                                            // 尝试检查 window 属性（可能是私有的）
+                                            var currentWindow = instance.window;
+                                            if (!currentWindow || currentWindow === '') {
+                                                instance.initWindowSource('mainWindow');
+                                                console.info('[Houdini] LoggerService auto-initialized via getInstance interceptor');
+                                            }
+                                        } catch(e) {
+                                            // 如果无法访问 window 属性，直接尝试初始化
+                                            try {
+                                                instance.initWindowSource('mainWindow');
+                                                console.info('[Houdini] LoggerService auto-initialized via getInstance interceptor (fallback)');
+                                            } catch(e2) {
+                                                // 初始化失败，忽略
+                                            }
+                                        }
+                                    }
+                                    return instance;
+                                };
+                                LoggerServiceClass.__houdiniIntercepted = true;
+                                console.info('[Houdini] LoggerService.getInstance intercepted');
+                            }
+                        } catch(e) {
+                            // 忽略错误，继续尝试
+                        }
+                    };
+                    
+                    // 多次尝试拦截
+                    checkLoggerService();
+                    setTimeout(checkLoggerService, 100);
+                    setTimeout(checkLoggerService, 500);
+                    setTimeout(checkLoggerService, 1000);
+                    setTimeout(checkLoggerService, 2000);
+                } catch(e) {
+                    console.error('[Houdini] LoggerService interception setup error:', e);
+                }
+            }
+            
+            // 方法1.5: 拦截 console.error，在 LoggerService 报错时自动初始化
+            if (typeof console !== 'undefined' && console.error) {
+                var originalConsoleError = console.error;
+                var errorInterceptCount = 0;
+                var lastInterceptTime = 0;
+                console.error = function() {
+                    var args = Array.prototype.slice.call(arguments);
+                    var message = args.join(' ');
+                    
+                    // 检测 LoggerService 的初始化错误
+                    if (message && message.indexOf('window source not initialized') >= 0) {
+                        var now = Date.now();
+                        // 限制拦截频率，避免重复处理
+                        if (now - lastInterceptTime > 1000 && errorInterceptCount < 5) {
+                            errorInterceptCount++;
+                            lastInterceptTime = now;
+                            
+                            // 尝试找到并初始化 LoggerService
+                            setTimeout(function() {
+                                try {
+                                    var candidates = [];
+                                    if (window.loggerService) candidates.push(window.loggerService);
+                                    if (window.__loggerService) candidates.push(window.__loggerService);
+                                    if (window.__cherryLoggerService) candidates.push(window.__cherryLoggerService);
+                                    
+                                    // 尝试通过 LoggerService 类获取实例
+                                    if (window.LoggerService && typeof window.LoggerService.getInstance === 'function') {
+                                        try {
+                                            var instance = window.LoggerService.getInstance();
+                                            if (instance) candidates.push(instance);
+                                        } catch(e) {}
+                                    }
+                                    
+                                    // 尝试查找所有可能的 logger 实例
+                                    try {
+                                        var props = Object.getOwnPropertyNames(window);
+                                        for (var i = 0; i < props.length; i++) {
+                                            var prop = props[i];
+                                            var obj = window[prop];
+                                            if (obj && typeof obj === 'object' && typeof obj.initWindowSource === 'function' && typeof obj.processLog === 'function') {
+                                                candidates.push(obj);
+                                            }
+                                        }
+                                    } catch(e) {}
+                                    
+                                    var initialized = false;
+                                    for (var i = 0; i < candidates.length; i++) {
+                                        var logger = candidates[i];
+                                        if (logger && typeof logger.initWindowSource === 'function') {
+                                            try {
+                                                // 检查是否已初始化
+                                                if (!logger.window || logger.window === '') {
+                                                    logger.initWindowSource('mainWindow');
+                                                    logger.__houdiniWindowInitialized = true;
+                                                    initialized = true;
+                                                    console.info('[Houdini] LoggerService auto-initialized via error interceptor');
+                                                }
+                                            } catch(e) {
+                                                // 如果无法访问 window 属性，直接尝试初始化
+                                                try {
+                                                    logger.initWindowSource('mainWindow');
+                                                    logger.__houdiniWindowInitialized = true;
+                                                    initialized = true;
+                                                    console.info('[Houdini] LoggerService auto-initialized via error interceptor (fallback)');
+                                                } catch(e2) {}
+                                            }
+                                        }
+                                    }
+                                    
+                                    // 如果还是没找到，尝试拦截 processLog 方法
+                                    if (!initialized) {
+                                        try {
+                                            // 尝试拦截所有可能的 LoggerService 实例的 processLog 方法
+                                            for (var i = 0; i < candidates.length; i++) {
+                                                var logger = candidates[i];
+                                                if (logger && typeof logger.processLog === 'function' && !logger.__processLogIntercepted) {
+                                                    var originalProcessLog = logger.processLog;
+                                                    logger.processLog = function() {
+                                                        // 在调用 processLog 时检查并初始化
+                                                        if (!this.window || this.window === '') {
+                                                            try {
+                                                                this.initWindowSource('mainWindow');
+                                                                this.__houdiniWindowInitialized = true;
+                                                                console.info('[Houdini] LoggerService auto-initialized via processLog interceptor');
+                                                            } catch(e) {}
+                                                        }
+                                                        return originalProcessLog.apply(this, arguments);
+                                                    };
+                                                    logger.__processLogIntercepted = true;
+                                                }
+                                            }
+                                        } catch(e) {}
+                                    }
+                                } catch(e) {}
+                            }, 10);
+                        }
+                    }
+                    
+                    // 调用原始 console.error
+                    return originalConsoleError.apply(console, args);
+                };
+            }
+            
+            // 方法2: 持续尝试查找并初始化 LoggerService 实例
             var tries = 0;
+            var maxTries = 200; // 增加重试次数
             function attempt() {
                 tries++;
                 try {
                     var candidates = [];
+                    // 尝试多种可能的 LoggerService 实例位置
                     if (window.loggerService) { candidates.push(window.loggerService); }
                     if (window.__loggerService) { candidates.push(window.__loggerService); }
                     if (window.__cherryLoggerService) { candidates.push(window.__cherryLoggerService); }
+                    
+                    // 尝试通过 LoggerService 类获取实例
+                    if (window.LoggerService && typeof window.LoggerService.getInstance === 'function') {
+                        try {
+                            var instance = window.LoggerService.getInstance();
+                            if (instance) { candidates.push(instance); }
+                        } catch(e) {}
+                    }
+                    
+                    // 尝试通过 Object.getOwnPropertyNames 查找
+                    try {
+                        var props = Object.getOwnPropertyNames(window);
+                        for (var i = 0; i < props.length; i++) {
+                            var prop = props[i];
+                            if (prop.toLowerCase().includes('logger') && window[prop] && typeof window[prop].initWindowSource === 'function') {
+                                candidates.push(window[prop]);
+                            }
+                        }
+                    } catch(e) {}
+                    
                     for (var i = 0; i < candidates.length; i++) {
                         var logger = candidates[i];
-                        if (logger && typeof logger.initWindowSource === 'function' && typeof logger.withContext === 'function') {
-                            if (!logger.__houdiniWindowInitialized) {
-                                logger.initWindowSource('mainWindow');
-                                logger.__houdiniWindowInitialized = true;
-                                console.info('[Houdini] LoggerService window source initialized via bridge');
+                        if (logger && typeof logger.initWindowSource === 'function') {
+                            // 检查是否已初始化（通过检查 window 属性）
+                            var needsInit = false;
+                            try {
+                                // 尝试访问私有属性（可能失败，但不影响）
+                                if (!logger.window || logger.window === '') {
+                                    needsInit = true;
+                                }
+                            } catch(e) {
+                                // 如果无法访问，尝试初始化（initWindowSource 会检查）
+                                needsInit = true;
                             }
-                            return;
+                            
+                            if (needsInit && !logger.__houdiniWindowInitialized) {
+                                try {
+                                    logger.initWindowSource('mainWindow');
+                                    logger.__houdiniWindowInitialized = true;
+                                    console.info('[Houdini] LoggerService window source initialized via bridge');
+                                    return; // 成功初始化，退出
+                                } catch(e) {
+                                    // 初始化失败，继续尝试其他候选
+                                }
+                            }
                         }
                     }
-                } catch (e) {}
-                if (tries < 50) {
-                    setTimeout(attempt, 200);
+                    
+                    // 如果还没找到，继续尝试
+                    if (tries < maxTries) {
+                        setTimeout(attempt, 50); // 缩短重试间隔
+                    } else if (tries === maxTries) {
+                        // 只在最后一次尝试时输出一次警告，避免刷屏
+                        if (!window.__houdiniLoggerServiceWarningShown) {
+                            window.__houdiniLoggerServiceWarningShown = true;
+                            console.warn('[Houdini] LoggerService not found after ' + maxTries + ' attempts. This warning is harmless and does not affect functionality.');
+                        }
+                    }
+                } catch (e) {
+                    if (tries < maxTries) {
+                        setTimeout(attempt, 50);
+                    }
                 }
             }
-            setTimeout(attempt, 0);
+            // 立即尝试，也延迟尝试（以防 LoggerService 还没加载）
+            attempt();
+            setTimeout(attempt, 50);
+            setTimeout(attempt, 200);
+            setTimeout(attempt, 500);
+            setTimeout(attempt, 1000);
+            setTimeout(attempt, 2000);
         })();
         
         console.info('[Houdini] Extra Cherry Studio APIs initialized for Qt runtime');
@@ -1251,6 +1518,28 @@ def get_early_logger_fix_script() -> str:
         window.houdini = true;
         window.isHoudini = true;
         window.__IS_QT = true;
+        
+        // 提前尝试初始化 LoggerService（如果已加载）
+        (function tryInitLoggerServiceEarly() {
+            try {
+                var candidates = [];
+                if (window.loggerService) { candidates.push(window.loggerService); }
+                if (window.__loggerService) { candidates.push(window.__loggerService); }
+                if (window.__cherryLoggerService) { candidates.push(window.__cherryLoggerService); }
+                
+                for (var i = 0; i < candidates.length; i++) {
+                    var logger = candidates[i];
+                    if (logger && typeof logger.initWindowSource === 'function') {
+                        if (!logger.window || logger.window === '') {
+                            logger.initWindowSource('mainWindow');
+                            console.log('[Houdini] LoggerService initialized early');
+                        }
+                    }
+                }
+            } catch(e) {
+                // 忽略错误，LoggerService 可能还没加载
+            }
+        })();
         
         // 延迟所有脚本执行，直到 localStorage 恢复完成
         // 通过劫持 document.readyState 来阻止 React 初始化
@@ -1516,15 +1805,74 @@ def get_post_load_fix_script() -> str:
                 if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
                     console.log('[Houdini] Intercepted HTTP request:', url);
 
-                    // 对 fastmcp2 服务保持与原生 Cherry 一致，直接使用原始 fetch，不走 Python 代理
+                    // 对本地服务（localhost, 127.0.0.1）直接使用原始 fetch，不走 Python 代理
+                    // 这些服务不需要认证，也不应该通过 Python 代理
+                    var shouldBypass = false;
+                    var bypassReason = '';
+                    
                     try {
                         var lower = String(url).toLowerCase();
-                        if (lower.indexOf('http://localhost:9000/mcp') === 0) {
-                            console.log('[Houdini] Bypass fetchProxy for fastmcp2:', url);
+                        
+                        // 方法1: 简单的字符串匹配（最快，最可靠，优先使用）
+                        // 检查 URL 中是否包含本地地址标识
+                        if (lower.indexOf('localhost') !== -1 || 
+                            lower.indexOf('127.0.0.1') !== -1 ||
+                            lower.indexOf('[::1]') !== -1 ||
+                            lower.indexOf('0.0.0.0') !== -1) {
+                            shouldBypass = true;
+                            bypassReason = 'localhost string match';
+                        }
+                        
+                        // 方法2: URL 对象解析（作为备用检查）
+                        if (!shouldBypass) {
+                            try {
+                                var urlObj = new URL(url);
+                                var hostname = urlObj.hostname.toLowerCase();
+                                
+                                // 检查是否是本地地址
+                                if (hostname === 'localhost' || 
+                                    hostname === '127.0.0.1' || 
+                                    hostname === '[::1]' ||
+                                    (hostname.startsWith('127.') && hostname.split('.').length === 4) ||
+                                    hostname === '0.0.0.0') {
+                                    shouldBypass = true;
+                                    bypassReason = 'localhost hostname: ' + hostname;
+                                }
+                            } catch (urlError) {
+                                // URL 解析失败，继续使用字符串匹配的结果
+                                // 如果字符串匹配也没找到，说明可能不是本地服务
+                            }
+                        }
+
+                        // 对 Ollama 的 chat/completions 接口特殊处理
+                        // 如果是 localhost 请求但 failed to fetch，尝试强制走 Python 代理
+                        // 这是一个可选的 fallback 策略
+                        
+                        // 特殊处理：fastmcp2 服务
+                        if (!shouldBypass && lower.indexOf('http://localhost:9000/mcp') === 0) {
+                            shouldBypass = true;
+                            bypassReason = 'fastmcp2 service';
+                        }
+                        
+                        // 强制 Ollama 走 Python 代理（如果本地 fetch 失败）
+                        // 注意：WebEngine 可能会阻止对 localhost 的请求（CORS 或 Mixed Content）
+                        // 如果我们在 file:// 协议下，访问 http://localhost 可能会有问题
+                        // 暂时强制 Ollama 走 Python 代理来规避这个问题
+                        if (shouldBypass && (lower.includes('/api/chat') || lower.includes('/v1/chat/completions'))) {
+                             console.log('[Houdini] ⚠️ Forcing Python proxy for Ollama chat to avoid WebEngine restrictions:', url);
+                             shouldBypass = false;
+                        }
+                        
+                        if (shouldBypass) {
+                            console.log('[Houdini] 🏠 Bypass fetchProxy for local service (' + bypassReason + '):', url);
                             return originalFetch.call(this, input, init);
+                        } else {
+                            // 记录非本地请求，用于调试
+                            console.log('[Houdini] 📡 Non-local request, using fetchProxy:', url);
                         }
                     } catch (e) {
-                        console.error('[Houdini] fastmcp2 bypass check error:', e);
+                        console.error('[Houdini] Local service bypass check error:', e, 'URL:', url);
+                        // 如果检查出错，为了安全起见，不 bypass（让请求走代理）
                     }
                     
                     // 等待 QWebChannel 就绪
@@ -1540,11 +1888,36 @@ def get_post_load_fix_script() -> str:
                             
                             // 收集请求头
                             const headers = {};
+                            
+                            // 首先从 init 参数中收集 headers（优先级更高）
+                            if (init && init.headers) {
+                                if (init.headers instanceof Headers) {
+                                    init.headers.forEach((value, key) => {
+                                        headers[key] = value;
+                                    });
+                                } else if (typeof init.headers === 'object') {
+                                    Object.assign(headers, init.headers);
+                                }
+                            }
+                            
+                            // 然后从 Request 对象中收集 headers（会覆盖 init 中的同名 header）
                             try {
                                 request.headers.forEach((value, key) => {
                                     headers[key] = value;
                                 });
-                            } catch(e) {}
+                            } catch(e) {
+                                console.warn('[Houdini] Failed to collect headers from Request:', e);
+                            }
+                            
+                            // 调试：记录认证相关的 headers（隐藏敏感信息）
+                            if (headers['Authorization'] || headers['authorization']) {
+                                const authHeader = headers['Authorization'] || headers['authorization'];
+                                const safeAuth = authHeader.length > 20 ? authHeader.substring(0, 20) + '...' : '***';
+                                console.log('[Houdini] 🔐 Found Authorization header:', safeAuth);
+                            }
+                            if (headers['X-API-Key'] || headers['x-api-key']) {
+                                console.log('[Houdini] 🔐 Found X-API-Key header');
+                            }
                             
                             // 获取请求体
                             let body;
@@ -1571,6 +1944,9 @@ def get_post_load_fix_script() -> str:
                             console.log('[Houdini] 🔍 Request body:', body ? body.substring(0, 200) : 'empty');
                             console.log('[Houdini] 🔍 Parsed requestBody.stream:', requestBody.stream);
                             console.log('[Houdini] 🔍 isStream:', isStream);
+
+                            // 如果是 Ollama 的 generate 接口，处理可能的 JSONL 响应（虽然 Ollama API 默认是非 stream 的）
+                            // 但通常我们这里收到的是 standard OpenAI format
                             
                             // 构建请求配置
                             const requestId = isStream ? 'stream_' + Date.now() + '_' + Math.random() : '';
@@ -1579,7 +1955,7 @@ def get_post_load_fix_script() -> str:
                                 method: method,
                                 headers: headers,
                                 body: body,
-                                timeout: isStream ? 60 : 30,
+                                timeout: isStream ? 300 : 60,  // 增加超时时间，尤其是流式请求
                                 stream: isStream,
                                 requestId: requestId
                             };
@@ -1655,6 +2031,48 @@ def get_post_load_fix_script() -> str:
 
                             const parsed = typeof result === 'string' ? JSON.parse(result) : result;
 
+                            // 处理错误响应（包括 401）
+                            if (parsed.status && parsed.status >= 400) {
+                                console.error('[Houdini] fetchProxy HTTP error:', parsed.status, parsed.statusText);
+                                
+                                // 构建标准错误响应体
+                                let errorBodyStr = '';
+                                if (parsed.body) {
+                                     errorBodyStr = parsed.body;
+                                } else if (parsed.error) {
+                                     errorBodyStr = JSON.stringify({ error: { message: parsed.error, type: 'proxy_error', code: parsed.status } });
+                                }
+                                
+                                if (parsed.status === 401) {
+                                    console.error('[Houdini] 🔐 401 Unauthorized - Check API key or authentication settings');
+                                    // 尝试从错误响应中提取更多信息
+                                    let errorMessage = 'Unauthorized';
+                                    try {
+                                        if (parsed.body) {
+                                            const errorBody = typeof parsed.body === 'string' ? JSON.parse(parsed.body) : parsed.body;
+                                            if (errorBody.error && errorBody.error.message) {
+                                                errorMessage = errorBody.error.message;
+                                            } else if (errorBody.message) {
+                                                errorMessage = errorBody.message;
+                                            }
+                                        }
+                                    } catch(e) {
+                                        // 忽略解析错误
+                                    }
+                                    return new Response(parsed.body || JSON.stringify({ error: { message: errorMessage, type: 'auth_error' } }), {
+                                        status: 401,
+                                        statusText: parsed.statusText || 'Unauthorized',
+                                        headers: parsed.headers || { 'Content-Type': 'application/json' }
+                                    });
+                                }
+                                // 其他 4xx/5xx 错误
+                                return new Response(errorBodyStr || '', {
+                                    status: parsed.status,
+                                    statusText: parsed.statusText || 'Error',
+                                    headers: parsed.headers || { 'Content-Type': 'application/json' }
+                                });
+                            }
+                            
                             if (parsed.error && !parsed.status) {
                                 console.error('[Houdini] fetchProxy error (non-fatal):', parsed.error);
                                 // 将错误包装为 400 响应，让前端自己处理，而不是抛出异常导致面板报错
@@ -1725,4 +2143,5 @@ def get_post_load_fix_script() -> str:
         console.log('[DEBUG] ========== 系统诊断结束 ==========');
     }, 3000);
     """
+
 
