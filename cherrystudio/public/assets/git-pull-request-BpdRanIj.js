@@ -1,0 +1,29 @@
+import "./react-nO8b1aHv.js";
+import { b as createLucideIcon } from "./createLucideIcon-4-34_nUO.js";
+const __iconNode = [
+	["circle", {
+		cx: "18",
+		cy: "18",
+		r: "3",
+		key: "1xkwt0"
+	}],
+	["circle", {
+		cx: "6",
+		cy: "6",
+		r: "3",
+		key: "1lh9wr"
+	}],
+	["path", {
+		d: "M13 6h3a2 2 0 0 1 2 2v7",
+		key: "1yeb86"
+	}],
+	["line", {
+		x1: "6",
+		x2: "6",
+		y1: "9",
+		y2: "21",
+		key: "rroup"
+	}]
+];
+const GitPullRequest = createLucideIcon("git-pull-request", __iconNode);
+export { __iconNode, GitPullRequest as default };

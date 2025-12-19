@@ -1,0 +1,18 @@
+import "./react-nO8b1aHv.js";
+import { b as createLucideIcon } from "./createLucideIcon-4-34_nUO.js";
+const __iconNode = [
+	["path", {
+		d: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z",
+		key: "1lielz"
+	}],
+	["path", {
+		d: "m10 7-3 3 3 3",
+		key: "1eugdv"
+	}],
+	["path", {
+		d: "M17 13v-1a2 2 0 0 0-2-2H7",
+		key: "ernfh3"
+	}]
+];
+const MessageSquareReply = createLucideIcon("message-square-reply", __iconNode);
+export { __iconNode, MessageSquareReply as default };

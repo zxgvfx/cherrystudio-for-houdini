@@ -1,0 +1,22 @@
+import "./react-nO8b1aHv.js";
+import { b as createLucideIcon } from "./createLucideIcon-4-34_nUO.js";
+const __iconNode = [
+	["path", {
+		d: "m2 9 3-3 3 3",
+		key: "1ltn5i"
+	}],
+	["path", {
+		d: "M13 18H7a2 2 0 0 1-2-2V6",
+		key: "1r6tfw"
+	}],
+	["path", {
+		d: "m22 15-3 3-3-3",
+		key: "4rnwn2"
+	}],
+	["path", {
+		d: "M11 6h6a2 2 0 0 1 2 2v10",
+		key: "2f72bc"
+	}]
+];
+const Repeat2 = createLucideIcon("repeat-2", __iconNode);
+export { __iconNode, Repeat2 as default };

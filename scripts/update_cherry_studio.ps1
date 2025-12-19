@@ -280,6 +280,6 @@ Write-Host ""
 Write-Host "下一步:" -ForegroundColor Yellow
 Write-Host "1. 检查适配层兼容性（electron_injector.py, cherry_studio_api.py）" -ForegroundColor Gray
 Write-Host "2. 测试所有功能" -ForegroundColor Gray
-Write-Host "3. 如有问题，参考 UPDATE_GUIDE.md" -ForegroundColor Gray
+Write-Host "3. For issues, check UPDATE_GUIDE.md" -ForegroundColor Gray
 Write-Host ""
 

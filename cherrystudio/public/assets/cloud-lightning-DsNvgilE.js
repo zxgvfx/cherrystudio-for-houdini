@@ -1,0 +1,11 @@
+import "./react-nO8b1aHv.js";
+import { b as createLucideIcon } from "./createLucideIcon-4-34_nUO.js";
+const __iconNode = [["path", {
+	d: "M6 16.326A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 .5 8.973",
+	key: "1cez44"
+}], ["path", {
+	d: "m13 12-3 5h4l-3 5",
+	key: "1t22er"
+}]];
+const CloudLightning = createLucideIcon("cloud-lightning", __iconNode);
+export { __iconNode, CloudLightning as default };

@@ -1,0 +1,26 @@
+import "./react-nO8b1aHv.js";
+import { b as createLucideIcon } from "./createLucideIcon-4-34_nUO.js";
+const __iconNode = [
+	["path", {
+		d: "M19 5a2 2 0 0 0-2 2v11",
+		key: "s41o68"
+	}],
+	["path", {
+		d: "M2 18c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 2.6 0 2.4 2 5 2 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1",
+		key: "rd2r6e"
+	}],
+	["path", {
+		d: "M7 13h10",
+		key: "1rwob1"
+	}],
+	["path", {
+		d: "M7 9h10",
+		key: "12czzb"
+	}],
+	["path", {
+		d: "M9 5a2 2 0 0 0-2 2v11",
+		key: "x0q4gh"
+	}]
+];
+const WavesLadder = createLucideIcon("waves-ladder", __iconNode);
+export { __iconNode, WavesLadder as default };

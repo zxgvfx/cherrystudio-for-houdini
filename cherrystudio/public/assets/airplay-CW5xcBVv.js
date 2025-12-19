@@ -1,0 +1,11 @@
+import "./react-nO8b1aHv.js";
+import { b as createLucideIcon } from "./createLucideIcon-4-34_nUO.js";
+const __iconNode = [["path", {
+	d: "M5 17H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-1",
+	key: "ns4c3b"
+}], ["path", {
+	d: "m12 15 5 6H7Z",
+	key: "14qnn2"
+}]];
+const Airplay = createLucideIcon("airplay", __iconNode);
+export { __iconNode, Airplay as default };

@@ -1,0 +1,20 @@
+import "./react-nO8b1aHv.js";
+import { b as createLucideIcon } from "./createLucideIcon-4-34_nUO.js";
+const __iconNode = [
+	["circle", {
+		cx: "12",
+		cy: "17",
+		r: "1",
+		key: "1ixnty"
+	}],
+	["path", {
+		d: "M21 7v6h-6",
+		key: "3ptur4"
+	}],
+	["path", {
+		d: "M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7",
+		key: "1kgawr"
+	}]
+];
+const RedoDot = createLucideIcon("redo-dot", __iconNode);
+export { __iconNode, RedoDot as default };

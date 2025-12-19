@@ -1,0 +1,26 @@
+import "./react-nO8b1aHv.js";
+import { b as createLucideIcon } from "./createLucideIcon-4-34_nUO.js";
+const __iconNode = [
+	["path", {
+		d: "m15 18-.722-3.25",
+		key: "1j64jw"
+	}],
+	["path", {
+		d: "M2 8a10.645 10.645 0 0 0 20 0",
+		key: "1e7gxb"
+	}],
+	["path", {
+		d: "m20 15-1.726-2.05",
+		key: "1cnuld"
+	}],
+	["path", {
+		d: "m4 15 1.726-2.05",
+		key: "1dsqqd"
+	}],
+	["path", {
+		d: "m9 18 .722-3.25",
+		key: "ypw2yx"
+	}]
+];
+const EyeClosed = createLucideIcon("eye-closed", __iconNode);
+export { __iconNode, EyeClosed as default };

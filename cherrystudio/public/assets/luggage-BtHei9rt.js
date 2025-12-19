@@ -1,0 +1,30 @@
+import "./react-nO8b1aHv.js";
+import { b as createLucideIcon } from "./createLucideIcon-4-34_nUO.js";
+const __iconNode = [
+	["path", {
+		d: "M6 20a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2",
+		key: "1m57jg"
+	}],
+	["path", {
+		d: "M8 18V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v14",
+		key: "1l99gc"
+	}],
+	["path", {
+		d: "M10 20h4",
+		key: "ni2waw"
+	}],
+	["circle", {
+		cx: "16",
+		cy: "20",
+		r: "2",
+		key: "1vifvg"
+	}],
+	["circle", {
+		cx: "8",
+		cy: "20",
+		r: "2",
+		key: "ckkr5m"
+	}]
+];
+const Luggage = createLucideIcon("luggage", __iconNode);
+export { __iconNode, Luggage as default };

@@ -1,0 +1,26 @@
+import "./react-nO8b1aHv.js";
+import { b as createLucideIcon } from "./createLucideIcon-4-34_nUO.js";
+const __iconNode = [
+	["path", {
+		d: "M21 4H3",
+		key: "1hwok0"
+	}],
+	["path", {
+		d: "M18 8H6",
+		key: "41n648"
+	}],
+	["path", {
+		d: "M19 12H9",
+		key: "1g4lpz"
+	}],
+	["path", {
+		d: "M16 16h-6",
+		key: "1j5d54"
+	}],
+	["path", {
+		d: "M11 20H9",
+		key: "39obr8"
+	}]
+];
+const Tornado = createLucideIcon("tornado", __iconNode);
+export { __iconNode, Tornado as default };

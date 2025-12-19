@@ -1,0 +1,25 @@
+import { b as createLucideIcon } from "./createLucideIcon-4-34_nUO.js";
+const __iconNode = [
+	["path", {
+		d: "m3 16 4 4 4-4",
+		key: "1co6wj"
+	}],
+	["path", {
+		d: "M7 20V4",
+		key: "1yoxec"
+	}],
+	["path", {
+		d: "M20 8h-5",
+		key: "1vsyxs"
+	}],
+	["path", {
+		d: "M15 10V6.5a2.5 2.5 0 0 1 5 0V10",
+		key: "ag13bf"
+	}],
+	["path", {
+		d: "M15 14h5l-5 6h5",
+		key: "ur5jdg"
+	}]
+];
+const ArrowDownAZ = createLucideIcon("arrow-down-a-z", __iconNode);
+export { ArrowDownAZ as b, __iconNode as c };

@@ -435,6 +435,15 @@ def get_electron_api_script(theme: str = 'light') -> str:
                     console.error('[Houdini] handleZoomFactor error:', e);
                     return 1.0;
                 }}
+            }},
+            getGitBashPathInfo: async () => {{
+                try {{
+                    const r = await window.qt?.api?.getGitBashPathInfo?.();
+                    return (typeof r==='string')? JSON.parse(r): (r||{{path: null, source: null}});
+                }} catch(e) {{
+                    console.error('[Houdini] getGitBashPathInfo error:', e);
+                    return {{path: null, source: null}};
+                }}
             }}
         }};
     }}
@@ -471,39 +480,50 @@ def get_electron_api_script(theme: str = 'light') -> str:
     }}
     
     // 提供 window.api.file 接口
-    window.api.file = window.api.file || {{
-        isTextFile: async function(filePath) {{ 
+    window.api.file = window.api.file || {{}};
+    
+    if (!window.api.file.isTextFile) {{
+        window.api.file.isTextFile = async function(filePath) {{ 
             try {{ 
                 return await window.qt?.api?.isTextFile?.(filePath) 
             }} catch(e) {{ 
                 return false 
             }} 
-        }},
-        select: async function(options) {{ 
+        }};
+    }}
+
+    if (!window.api.file.select) {{
+        window.api.file.select = async function(options) {{ 
             try {{ 
                 const result = await window.qt?.api?.fileSelect?.(JSON.stringify(options||{{}}))
                 return (typeof result==='string')? JSON.parse(result): (result||[])
             }} catch(e) {{ 
                 return [] 
             }} 
-        }},
-        binaryImage: async function(fileId) {{ 
+        }};
+    }}
+
+    if (!window.api.file.binaryImage) {{
+        window.api.file.binaryImage = async function(fileId) {{ 
             try {{ 
                 const r = await window.qt?.api?.binaryImage?.(fileId)
                 return (typeof r==='string')? JSON.parse(r): (r||null)
             }} catch(e) {{ 
                 return null 
             }} 
-        }},
-        openPath: async function(path) {{ 
+        }};
+    }}
+
+    if (!window.api.file.openPath) {{
+        window.api.file.openPath = async function(path) {{ 
             try {{ 
                 return await window.qt?.api?.openPath?.(path) 
             }} catch(e) {{ 
                 console.error('[Houdini] file.openPath error:', e);
                 return false;
             }} 
-        }}
-    }};
+        }};
+    }}
     
     // 提供 window.api.ollama 快捷接口（兼容 Cherry Studio）
     window.api.ollama = window.api.ollama || {{
@@ -719,9 +739,60 @@ def get_electron_api_script(theme: str = 'light') -> str:
     
     // 确保 window.electron.ipcRenderer 存在（防止前端报错）
     window.electron = window.electron || {{}};
+
+    // 模拟 window.electron.process
+    window.electron.process = window.electron.process || {{
+        platform: '{APP_PLATFORM}',
+        type: 'renderer',
+        env: {{ NODE_ENV: 'production' }},
+        versions: {{ node: '18.0.0', electron: '25.0.0', chrome: '114.0.0' }}
+    }};
+
     window.electron.ipcRenderer = window.electron.ipcRenderer || {{}};
     if (typeof window.electron.ipcRenderer.invoke !== 'function') {{
-        window.electron.ipcRenderer.invoke = async function() {{ return null }};
+        window.electron.ipcRenderer.invoke = async function(channel, ...args) {{
+            console.log('[Houdini] 📡 ipcRenderer.invoke:', channel, args);
+            
+            if (channel === 'agent-message:get-history') {{
+                try {{
+                    const payload = args[0] || {{}};
+                    const result = await window.qt.api.agentMessageGetHistory(JSON.stringify(payload));
+                    return (typeof result === 'string') ? JSON.parse(result) : (result || []);
+                }} catch (e) {{
+                    console.error('[Houdini] agentMessageGetHistory error:', e);
+                    return [];
+                }}
+            }}
+            
+            if (channel === 'agent-message:persist-exchange') {{
+                try {{
+                    const payload = args[0] || {{}};
+                    return await window.qt.api.agentMessagePersistExchange(JSON.stringify(payload));
+                }} catch (e) {{
+                    console.error('[Houdini] agentMessagePersistExchange error:', e);
+                    return false;
+                }}
+            }}
+            
+            if (channel.startsWith('mcp:')) {{
+                if (channel === 'mcp:list-tools') {{
+                    try {{
+                        const server = args[0] || {{}};
+                        const result = await window.qt.api.mcpListTools(JSON.stringify(server));
+                        return (typeof result === 'string') ? JSON.parse(result) : (result || []);
+                    }} catch (e) {{ return []; }}
+                }}
+                if (channel === 'mcp:call-tool') {{
+                    try {{
+                        const payload = args[0] || {{}};
+                        const result = await window.qt.api.mcpCallTool(JSON.stringify(payload));
+                        return (typeof result === 'string') ? JSON.parse(result) : (result || {{ isError: true, content: [] }});
+                    }} catch (e) {{ return {{ isError: true, content: [] }}; }}
+                }}
+            }}
+
+            return null;
+        }};
     }}
     if (typeof window.electron.ipcRenderer.send !== 'function') {{
         window.electron.ipcRenderer.send = function(){{}};
@@ -1027,6 +1098,12 @@ def get_electron_api_script(theme: str = 'light') -> str:
             return resolved('QtWebEngine');
         };
         systemApi.checkGitBash = systemApi.checkGitBash || asyncFalse;
+        systemApi.getGitBashPathInfo = systemApi.getGitBashPathInfo || function () {
+            return qtInvokeJson('getGitBashPathInfo', undefined, { path: null, source: null });
+        };
+        systemApi.setGitBashPath = systemApi.setGitBashPath || function (path) {
+            return qtInvokeJson('setGitBashPath', path, false);
+        };
         
         var devToolsApi = ensureNamespace('devTools');
         devToolsApi.toggle = devToolsApi.toggle || function () {
@@ -1194,12 +1271,78 @@ def get_electron_api_script(theme: str = 'light') -> str:
         };
         mcpApi.uploadDxt = mcpApi.uploadDxt || asyncStub('mcp.uploadDxt', { success: false, error: 'Not supported in Qt runtime' });
         mcpApi.abortTool = mcpApi.abortTool || asyncStub('mcp.abortTool', false);
+        mcpApi.onServerLog = mcpApi.onServerLog || function (callback) {
+            // 在 Qt 运行时中，我们暂时不实现实时日志推送
+            // 或者可以通过 QWebChannel 的信号来实现
+            // 这里返回一个空的 unsubscribe 函数
+            return function() {};
+        };
+        mcpApi.getServerLogs = mcpApi.getServerLogs || asyncList;
 
         var apiServerApi = ensureNamespace('apiServer');
-        apiServerApi.getStatus = apiServerApi.getStatus || function () { return resolved({ running: false }); };
-        apiServerApi.start = apiServerApi.start || function () { return resolved({ success: true }); };
-        apiServerApi.restart = apiServerApi.restart || function () { return resolved({ success: true }); };
-        apiServerApi.stop = apiServerApi.stop || function () { return resolved({ success: true }); };
+        apiServerApi.getStatus = apiServerApi.getStatus || function () {
+            try {
+                var statusStr = window.qt?.api?.apiServerStatus?.();
+                if (typeof statusStr === 'string') {
+                    var status = JSON.parse(statusStr);
+                    console.log('[Houdini] apiServer.getStatus result:', status);
+                    // 直接返回后端格式 { running: boolean, config: ApiServerConfig | null }
+                    return {
+                        running: status.running || false,
+                        config: status.config || null
+                    };
+                }
+            } catch (e) {
+                console.error('[Houdini] apiServer.getStatus error:', e);
+            }
+            return { running: false, config: null };
+        };
+        apiServerApi.start = apiServerApi.start || function () {
+            try {
+                var resultStr = window.qt?.api?.apiServerStart?.();
+                if (typeof resultStr === 'string') {
+                    var result = JSON.parse(resultStr);
+                    // 转换为前端期望的格式 { success: boolean, error?: string }
+                    return {
+                        success: result.running || false,
+                        error: result.error || null
+                    };
+                }
+            } catch (e) {
+                console.error('[Houdini] apiServer.start error:', e);
+            }
+            return { success: false, error: 'Not available' };
+        };
+        apiServerApi.restart = apiServerApi.restart || function () {
+            try {
+                var resultStr = window.qt?.api?.apiServerRestart?.();
+                if (typeof resultStr === 'string') {
+                    var result = JSON.parse(resultStr);
+                    return {
+                        success: result.running || false,
+                        error: result.error || null
+                    };
+                }
+            } catch (e) {
+                console.error('[Houdini] apiServer.restart error:', e);
+            }
+            return { success: false, error: 'Not available' };
+        };
+        apiServerApi.stop = apiServerApi.stop || function () {
+            try {
+                var resultStr = window.qt?.api?.apiServerStop?.();
+                if (typeof resultStr === 'string') {
+                    var result = JSON.parse(resultStr);
+                    return {
+                        success: !result.running,
+                        error: result.error || null
+                    };
+                }
+            } catch (e) {
+                console.error('[Houdini] apiServer.stop error:', e);
+            }
+            return { success: false, error: 'Not available' };
+        };
         apiServerApi.onReady = apiServerApi.onReady || function (callback) {
             var cancelled = false;
             var timer = setTimeout(function () {

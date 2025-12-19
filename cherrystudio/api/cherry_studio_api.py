@@ -12,11 +12,14 @@ import zipfile
 import tarfile
 import shutil
 import tempfile
+import subprocess
+import time
 from pathlib import Path
 from urllib import request as urllib_request, error as urllib_error
 from PySide6.QtCore import QObject, Slot, Signal
 
 from ..version import APP_VERSION, APP_PLATFORM, APP_ARCH
+from .agent_server import AgentServer
 
 # 简单文件日志
 _LOG_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'cherrystudio_network.log')
@@ -30,6 +33,347 @@ def _log(msg: str) -> None:
         pass
 
 
+class MCPStdioClient:
+    """MCP stdio transport 客户端
+    
+    通过 subprocess 启动 MCP 服务器进程，并通过 stdin/stdout 使用 JSON-RPC 协议通信
+    """
+    
+    def __init__(self, command: str, args: list = None, env: dict = None, cwd: str = None):
+        """初始化 MCP stdio 客户端
+        
+        Args:
+            command: 要执行的命令（如 'npx', 'python', 'node' 等）
+            args: 命令参数列表
+            env: 环境变量字典
+            cwd: 工作目录
+        """
+        self.command = command
+        self.args = args or []
+        self.env = env or {}
+        self.cwd = cwd
+        self.process = None
+        self.request_id_counter = 0
+        self.pending_requests = {}  # request_id -> (event, result_queue)
+        self.lock = threading.Lock()
+        self.reader_thread = None
+        self._closed = False
+        
+    def _get_next_request_id(self) -> int:
+        """获取下一个请求 ID"""
+        with self.lock:
+            self.request_id_counter += 1
+            return self.request_id_counter
+    
+    def start(self):
+        """启动 MCP 服务器进程"""
+        if self.process is not None:
+            return
+        
+        try:
+            # 准备环境变量
+            process_env = os.environ.copy()
+            process_env.update(self.env)
+            
+            _log(f"[MCP Stdio] Starting process: {self.command} {self.args}")
+            
+            # 启动进程
+            self.process = subprocess.Popen(
+                [self.command] + self.args,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=process_env,
+                cwd=self.cwd,
+                bufsize=0,  # 无缓冲
+                text=False  # 使用二进制模式
+            )
+            
+            # 启动读取线程
+            self.reader_thread = threading.Thread(target=self._read_loop, daemon=True)
+            self.reader_thread.start()
+            
+            # 发送初始化请求
+            self._initialize()
+            
+            _log(f"[MCP Stdio] Process started with PID: {self.process.pid}")
+            
+        except Exception as e:
+            _log(f"[MCP Stdio] Failed to start process: {e}")
+            raise
+    
+    def _initialize(self):
+        """发送初始化请求"""
+        init_request = {
+            "jsonrpc": "2.0",
+            "id": self._get_next_request_id(),
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {
+                    "name": "Cherry Studio",
+                    "version": APP_VERSION
+                }
+            }
+        }
+        
+        # 发送初始化请求并等待响应
+        try:
+            response = self._send_request(init_request, timeout=10.0)
+            _log(f"[MCP Stdio] Initialized: {response}")
+            
+            # 发送 initialized 通知
+            initialized_notification = {
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized"
+            }
+            self._send_notification(initialized_notification)
+            
+        except Exception as e:
+            _log(f"[MCP Stdio] Initialization failed: {e}")
+            raise
+    
+    def _read_loop(self):
+        """读取进程输出的循环"""
+        buffer = b''
+        try:
+            while not self._closed and self.process and self.process.poll() is None:
+                # 读取数据（可能不是完整行）
+                chunk = self.process.stdout.read(4096)
+                if not chunk:
+                    if self.process.poll() is not None:
+                        break
+                    time.sleep(0.01)  # 短暂休眠避免 CPU 占用过高
+                    continue
+                
+                buffer += chunk
+                
+                # 处理缓冲区中的完整行
+                while b'\n' in buffer:
+                    line, buffer = buffer.split(b'\n', 1)
+                    if not line.strip():
+                        continue
+                    
+                    try:
+                        # 解码并解析 JSON
+                        line_str = line.decode('utf-8').strip()
+                        if not line_str:
+                            continue
+                        
+                        message = json.loads(line_str)
+                        self._handle_message(message)
+                        
+                    except json.JSONDecodeError as e:
+                        _log(f"[MCP Stdio] Failed to parse JSON: {line_str[:200] if 'line_str' in locals() else line[:200]}, error: {e}")
+                    except UnicodeDecodeError as e:
+                        _log(f"[MCP Stdio] Failed to decode UTF-8: {e}")
+                    except Exception as e:
+                        _log(f"[MCP Stdio] Error handling message: {e}")
+                        
+        except Exception as e:
+            _log(f"[MCP Stdio] Read loop error: {e}")
+        finally:
+            _log(f"[MCP Stdio] Read loop ended")
+    
+    def _handle_message(self, message: dict):
+        """处理收到的消息"""
+        if 'id' in message:
+            # 这是一个响应
+            request_id = message['id']
+            with self.lock:
+                if request_id in self.pending_requests:
+                    event, result_queue = self.pending_requests.pop(request_id)
+                    result_queue.put(message)
+                    event.set()
+        else:
+            # 这是一个通知（如日志、进度等）
+            method = message.get('method', '')
+            if method.startswith('notifications/'):
+                _log(f"[MCP Stdio] Notification: {method}")
+            else:
+                _log(f"[MCP Stdio] Unknown notification: {message}")
+    
+    def _send_notification(self, notification: dict):
+        """发送通知（不需要响应）"""
+        if not self.process or self.process.poll() is not None:
+            raise RuntimeError("Process is not running")
+        
+        try:
+            message = json.dumps(notification) + '\n'
+            self.process.stdin.write(message.encode('utf-8'))
+            self.process.stdin.flush()
+        except Exception as e:
+            _log(f"[MCP Stdio] Failed to send notification: {e}")
+            raise
+    
+    def _send_request(self, request: dict, timeout: float = 30.0) -> dict:
+        """发送请求并等待响应"""
+        if not self.process or self.process.poll() is not None:
+            raise RuntimeError("Process is not running")
+        
+        request_id = request.get('id')
+        if request_id is None:
+            request_id = self._get_next_request_id()
+            request['id'] = request_id
+        
+        # 创建等待事件和结果队列
+        event = threading.Event()
+        result_queue = queue.Queue()
+        
+        with self.lock:
+            self.pending_requests[request_id] = (event, result_queue)
+        
+        try:
+            # 发送请求
+            message = json.dumps(request) + '\n'
+            self.process.stdin.write(message.encode('utf-8'))
+            self.process.stdin.flush()
+            
+            # 等待响应
+            if event.wait(timeout):
+                response = result_queue.get(timeout=1.0)
+                
+                # 检查错误
+                if 'error' in response:
+                    error = response['error']
+                    raise RuntimeError(f"MCP error: {error.get('message', 'Unknown error')} (code: {error.get('code', 'unknown')})")
+                
+                return response.get('result', {})
+            else:
+                raise TimeoutError(f"Request timeout after {timeout}s")
+                
+        finally:
+            with self.lock:
+                self.pending_requests.pop(request_id, None)
+    
+    def list_tools(self) -> list:
+        """列出可用工具"""
+        request = {
+            "jsonrpc": "2.0",
+            "id": self._get_next_request_id(),
+            "method": "tools/list"
+        }
+        
+        response = self._send_request(request)
+        tools = response.get('tools', [])
+        _log(f"[MCP Stdio] Listed {len(tools)} tools")
+        return tools
+    
+    def call_tool(self, name: str, arguments: dict) -> dict:
+        """调用工具"""
+        request = {
+            "jsonrpc": "2.0",
+            "id": self._get_next_request_id(),
+            "method": "tools/call",
+            "params": {
+                "name": name,
+                "arguments": arguments
+            }
+        }
+        
+        response = self._send_request(request, timeout=60.0)
+        _log(f"[MCP Stdio] Tool call result: {response.get('content', [])[:100]}")
+        return response
+    
+    def close(self):
+        """关闭连接"""
+        self._closed = True
+        
+        if self.process:
+            try:
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+                    self.process.wait()
+            except Exception as e:
+                _log(f"[MCP Stdio] Error closing process: {e}")
+            finally:
+                self.process = None
+    
+    def __enter__(self):
+        self.start()
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+
+# MCP stdio 客户端连接池
+_mcp_stdio_clients = {}
+_mcp_stdio_clients_lock = threading.Lock()
+
+
+def _get_mcp_stdio_client_key(server_config: dict) -> str:
+    """生成服务器配置的唯一键"""
+    import hashlib
+    key_data = json.dumps({
+        'command': server_config.get('command'),
+        'args': server_config.get('args', []),
+        'cwd': server_config.get('dxtPath')
+    }, sort_keys=True)
+    return hashlib.md5(key_data.encode()).hexdigest()
+
+
+def _find_command_path(command: str) -> str:
+    """查找命令的完整路径"""
+    if os.path.sep in command or (os.name == 'nt' and ':' in command):
+        # 已经是完整路径
+        return command
+    
+    # 尝试在 PATH 中查找
+    import shutil
+    path = shutil.which(command)
+    if path:
+        return path
+    
+    # 如果找不到，返回原命令（让系统处理）
+    return command
+
+
+def _get_or_create_mcp_stdio_client(server_config: dict) -> MCPStdioClient:
+    """获取或创建 MCP stdio 客户端"""
+    key = _get_mcp_stdio_client_key(server_config)
+    
+    with _mcp_stdio_clients_lock:
+        if key not in _mcp_stdio_clients:
+            command = server_config.get('command', '')
+            args = server_config.get('args', [])
+            env = server_config.get('env', {})
+            cwd = server_config.get('dxtPath')
+            
+            # 处理 npx 命令
+            if command == 'npx':
+                # 尝试查找 npx，如果找不到则尝试使用 node
+                npx_path = _find_command_path('npx')
+                if npx_path and npx_path != 'npx':
+                    command = npx_path
+                else:
+                    # 如果找不到 npx，尝试使用 node 直接执行
+                    # 对于 @mcpmarket/mcp-auto-install，可能需要调整参数
+                    node_path = _find_command_path('node')
+                    if node_path and node_path != 'node':
+                        # 使用 node 执行 npx 脚本
+                        # 注意：这可能需要调整，取决于具体的 MCP 服务器
+                        command = node_path
+                        # 如果第一个参数是包名，可能需要特殊处理
+                        if args and args[0].startswith('@'):
+                            # 对于 npm 包，可能需要使用不同的方式
+                            _log(f"[MCP Stdio] Warning: npx not found, using node. This may not work for all packages.")
+            
+            # 查找命令路径
+            command = _find_command_path(command)
+            
+            client = MCPStdioClient(command, args, env, cwd)
+            client.start()
+            _mcp_stdio_clients[key] = client
+            _log(f"[MCP Stdio] Created new client for key: {key}, command: {command}")
+        
+        return _mcp_stdio_clients[key]
+
+
 class CherryStudioAPI(QObject):
     """Cherry Studio API 类，提供 JavaScript 调用的 Python 方法"""
     
@@ -39,6 +383,18 @@ class CherryStudioAPI(QObject):
     _stream_buffers = {}
     _stream_locks = {}
     
+    # Agent 服务器实例
+    _agent_server: AgentServer = None
+    _agent_server_lock = threading.Lock()
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # 移除自动启动线程
+    
+    def _auto_start_agent_server(self):
+        """自动启动 Agent Server"""
+        pass
+            
     # ========== 基础系统 API ==========
     
     @Slot(result=bool)
@@ -864,6 +1220,16 @@ class CherryStudioAPI(QObject):
     
     # ========== 存根 API 方法 (暂未实现完整逻辑) ==========
     
+    @Slot(str, result=str)
+    def agentMessageGetHistory(self, payload: str) -> str:
+        """获取 Agent 消息历史"""
+        return '[]'
+
+    @Slot(str, result=bool)
+    def agentMessagePersistExchange(self, payload: str) -> bool:
+        """持久化 Agent 消息"""
+        return True
+
     @Slot(result=str)
     def getInstallInfo(self) -> str:
         return json.dumps({
@@ -941,29 +1307,242 @@ class CherryStudioAPI(QObject):
     def memorySetConfig(self, config: str) -> str:
         return 'true'
     
+    def _load_providers_from_localstorage(self) -> list:
+        """从 localStorage.json 加载 providers 配置"""
+        try:
+            storage_path = os.path.join(self._get_app_data_dir(), 'localStorage.json')
+            if not os.path.exists(storage_path):
+                return []
+            
+            with open(storage_path, 'r', encoding='utf-8') as f:
+                storage_data = json.load(f)
+            
+            # 查找 providers 配置
+            providers_str = storage_data.get('providers', '[]')
+            if isinstance(providers_str, str):
+                providers = json.loads(providers_str)
+            else:
+                providers = providers_str
+            
+            if not isinstance(providers, list):
+                return []
+            
+            # 过滤有效的 providers（需要有 apiKey）
+            valid_providers = []
+            for provider in providers:
+                if isinstance(provider, dict) and provider.get('apiKey'):
+                    valid_providers.append(provider)
+            
+            return valid_providers
+            
+        except Exception as e:
+            _log(f"Error loading providers from localStorage: {e}")
+            return []
+    
+    def _get_api_server_config(self) -> dict:
+        """从 localStorage 获取 API Server 配置"""
+        try:
+            storage_path = os.path.join(self._get_app_data_dir(), 'localStorage.json')
+            if not os.path.exists(storage_path):
+                return {"host": "127.0.0.1", "port": 0, "apiKey": "default-key", "enabled": False}
+            
+            with open(storage_path, 'r', encoding='utf-8') as f:
+                storage_data = json.load(f)
+            
+            # 查找 apiServer 配置
+            api_server_str = storage_data.get('apiServer', '{}')
+            if isinstance(api_server_str, str):
+                api_server = json.loads(api_server_str)
+            else:
+                api_server = api_server_str
+            
+            if not isinstance(api_server, dict):
+                api_server = {}
+            
+            # 返回默认值或配置值
+            return {
+                "host": api_server.get("host", "127.0.0.1"),
+                "port": api_server.get("port", 0),
+                "apiKey": api_server.get("apiKey", "default-key"),
+                "enabled": api_server.get("enabled", False)
+            }
+        except Exception as e:
+            _log(f"Error loading apiServer config: {e}")
+            return {"host": "127.0.0.1", "port": 0, "apiKey": "default-key", "enabled": False}
+    
     @Slot(result=str)
     def apiServerStatus(self) -> str:
-        return '{"running": false, "port": 0, "url": "", "error": null}'
+        """获取 API 服务器状态"""
+        try:
+            config = self._get_api_server_config()
+            with CherryStudioAPI._agent_server_lock:
+                if CherryStudioAPI._agent_server and CherryStudioAPI._agent_server.is_running():
+                    port = CherryStudioAPI._agent_server.get_port()
+                    # 更新配置中的实际端口
+                    config["port"] = port
+                    return json.dumps({
+                        "running": True,
+                        "config": config
+                    })
+                else:
+                    return json.dumps({
+                        "running": False,
+                        "config": None
+                    })
+        except Exception as e:
+            _log(f"apiServerStatus error: {e}")
+            return json.dumps({
+                "running": False,
+                "config": None
+            })
     
     @Slot(str, result=str)
     def apiServerConfigure(self, config: str) -> str:
+        """配置 API 服务器（暂不实现）"""
         return '{"success": true}'
     
     @Slot(result=str)
     def apiServerStart(self) -> str:
-        return '{"running": true, "port": 0, "url": "", "error": null}'
+        """启动 API 服务器"""
+        try:
+            with CherryStudioAPI._agent_server_lock:
+                # 如果已经运行，返回当前状态
+                if CherryStudioAPI._agent_server and CherryStudioAPI._agent_server.is_running():
+                    port = CherryStudioAPI._agent_server.get_port()
+                    return json.dumps({
+                        "running": True,
+                        "port": port,
+                        "url": f"http://127.0.0.1:{port}",
+                        "error": None
+                    })
+                
+                _log("Attempting to start Agent Server...")
+                # 创建并启动服务器
+                providers_loader = self._load_providers_from_localstorage
+                CherryStudioAPI._agent_server = AgentServer(providers_loader=providers_loader)
+                
+                # 尝试启动
+                try:
+                    success, port = CherryStudioAPI._agent_server.start(host='127.0.0.1', port=0)
+                except Exception as start_err:
+                    import traceback
+                    err_msg = f"AgentServer.start exception: {str(start_err)}\n{traceback.format_exc()}"
+                    _log(err_msg)
+                    return json.dumps({
+                        "running": False,
+                        "port": 0,
+                        "url": "",
+                        "error": str(start_err)
+                    })
+                
+                if success:
+                    _log(f"Agent server started on port {port}")
+                    return json.dumps({
+                        "running": True,
+                        "port": port,
+                        "url": f"http://127.0.0.1:{port}",
+                        "error": None
+                    })
+                else:
+                    _log("AgentServer.start returned False")
+                    return json.dumps({
+                        "running": False,
+                        "port": 0,
+                        "url": "",
+                        "error": "Failed to start server (unknown reason)"
+                    })
+                    
+        except Exception as e:
+            import traceback
+            err_msg = f"apiServerStart outer exception: {str(e)}\n{traceback.format_exc()}"
+            _log(err_msg)
+            return json.dumps({
+                "running": False,
+                "port": 0,
+                "url": "",
+                "error": str(e)
+            })
     
     @Slot(result=str)
     def apiServerRestart(self) -> str:
-        return '{"running": true, "port": 0, "url": "", "error": null}'
+        """重启 API 服务器"""
+        try:
+            with CherryStudioAPI._agent_server_lock:
+                # 先停止
+                if CherryStudioAPI._agent_server:
+                    CherryStudioAPI._agent_server.stop()
+                    CherryStudioAPI._agent_server = None
+                
+                # 再启动
+                providers_loader = self._load_providers_from_localstorage
+                CherryStudioAPI._agent_server = AgentServer(providers_loader=providers_loader)
+                success, port = CherryStudioAPI._agent_server.start(host='127.0.0.1', port=0)
+                
+                if success:
+                    return json.dumps({
+                        "running": True,
+                        "port": port,
+                        "url": f"http://127.0.0.1:{port}",
+                        "error": None
+                    })
+                else:
+                    return json.dumps({
+                        "running": False,
+                        "port": 0,
+                        "url": "",
+                        "error": "Failed to restart server"
+                    })
+                    
+        except Exception as e:
+            _log(f"apiServerRestart error: {e}")
+            return json.dumps({
+                "running": False,
+                "port": 0,
+                "url": "",
+                "error": str(e)
+            })
     
     @Slot(result=str)
     def apiServerStop(self) -> str:
-        return '{"running": false, "port": 0, "url": "", "error": null}'
+        """停止 API 服务器"""
+        try:
+            with CherryStudioAPI._agent_server_lock:
+                if CherryStudioAPI._agent_server:
+                    CherryStudioAPI._agent_server.stop()
+                    CherryStudioAPI._agent_server = None
+                
+                return json.dumps({
+                    "running": False,
+                    "port": 0,
+                    "url": "",
+                    "error": None
+                })
+        except Exception as e:
+            _log(f"apiServerStop error: {e}")
+            return json.dumps({
+                "running": False,
+                "port": 0,
+                "url": "",
+                "error": str(e)
+            })
     
     @Slot(str, result=str)
     def apiServerToggle(self, payload: str) -> str:
-        return '{"running": false, "port": 0, "url": "", "error": null}'
+        """切换 API 服务器状态"""
+        try:
+            with CherryStudioAPI._agent_server_lock:
+                if CherryStudioAPI._agent_server and CherryStudioAPI._agent_server.is_running():
+                    return self.apiServerStop()
+                else:
+                    return self.apiServerStart()
+        except Exception as e:
+            _log(f"apiServerToggle error: {e}")
+            return json.dumps({
+                "running": False,
+                "port": 0,
+                "url": "",
+                "error": str(e)
+            })
     
     @Slot(str, result=str)
     def mcpCheckMcpConnectivity(self, server: str) -> str:
@@ -988,8 +1567,82 @@ class CherryStudioAPI(QObject):
             _log(f"[MCP] mcpListTools called with server: {str(server)[:200]}")
             server_config = json.loads(server) if isinstance(server, str) else server
             base_url = server_config.get('baseUrl', server_config.get('url', ''))
+            server_name = server_config.get('name', '')
+            command = server_config.get('command', '')
             
-            _log(f"[MCP] Server baseUrl: {base_url}")
+            _log(f"[MCP] Server name: {server_name}, baseUrl: {base_url}, command: {command}")
+            
+            # 检查是否是使用 stdio transport 的服务器（通过 command 启动）
+            if not base_url and command:
+                _log(f"[MCP] Server uses stdio transport (command: {command}), attempting to connect...")
+                try:
+                    # 使用 stdio transport 客户端
+                    client = _get_or_create_mcp_stdio_client(server_config)
+                    tools = client.list_tools()
+                    
+                    if tools:
+                        # 转换为可序列化的格式
+                        server_id = server_config.get('id', '')
+                        server_name = server_config.get('name', 'unknown')
+                        
+                        tools_data = []
+                        for tool in tools:
+                            tool_name = tool.get('name', '') if isinstance(tool, dict) else getattr(tool, 'name', str(tool))
+                            sanitized_server = server_name.strip().replace('-', '_')[:7]
+                            sanitized_tool = tool_name.strip().replace('-', '_')
+                            
+                            # 生成 serverId 后缀
+                            server_id_suffix = ''
+                            if server_id:
+                                server_id_suffix = re.sub(r'[^a-zA-Z0-9]', '', server_id[-6:])
+                                if not server_id_suffix:
+                                    hash_val = sum(ord(c) for c in server_id)
+                                    server_id_suffix = format(hash_val, 'x')[-6:] or 'x'
+                            
+                            # 组合工具 ID
+                            if sanitized_server and not sanitized_tool.startswith(sanitized_server[:7]):
+                                base_name = f"{sanitized_server[:7]}-{sanitized_tool}"
+                            else:
+                                base_name = sanitized_tool
+                            
+                            base_name = ''.join(c if c.isalnum() or c in '_-' else '_' for c in base_name)
+                            if base_name and not base_name[0].isalpha():
+                                base_name = f"tool_{base_name}"
+                            
+                            max_base_len = 63 - (len(server_id_suffix) + 1 if server_id_suffix else 0)
+                            if len(base_name) > max_base_len:
+                                base_name = base_name[:max_base_len]
+                            
+                            tool_id = f"{base_name}_{server_id_suffix}" if server_id_suffix else base_name
+                            
+                            # 处理工具数据
+                            tool_dict = tool if isinstance(tool, dict) else {
+                                'name': getattr(tool, 'name', ''),
+                                'description': getattr(tool, 'description', ''),
+                                'inputSchema': getattr(tool, 'inputSchema', {})
+                            }
+                            
+                            tools_data.append({
+                                "id": tool_id,
+                                "name": tool_dict.get('name', tool_name),
+                                "description": tool_dict.get('description', ''),
+                                "inputSchema": tool_dict.get('inputSchema', {}),
+                                "serverId": server_id,
+                                "serverName": server_name,
+                                "type": "mcp"
+                            })
+                        
+                        _log(f"[MCP] Returning {len(tools_data)} tools from stdio transport")
+                        return json.dumps(tools_data)
+                    else:
+                        _log(f"[MCP] No tools returned from stdio transport server")
+                        return '[]'
+                        
+                except Exception as e:
+                    import traceback
+                    _log(f"[MCP] Error with stdio transport: {str(e)}\n{traceback.format_exc()}")
+                    return '[]'
+            
             if not base_url:
                 _log(f"[MCP] No baseUrl found, returning empty list")
                 return '[]'
@@ -1127,6 +1780,45 @@ class CherryStudioAPI(QObject):
                 })
             
             base_url = server_config.get('baseUrl', server_config.get('url', ''))
+            command = server_config.get('command', '')
+            
+            # 检查是否是使用 stdio transport 的服务器
+            if not base_url and command:
+                _log(f"[MCP] Server uses stdio transport (command: {command}), attempting to call tool...")
+                try:
+                    # 使用 stdio transport 客户端
+                    client = _get_or_create_mcp_stdio_client(server_config)
+                    result = client.call_tool(tool_name, tool_args)
+                    
+                    # 转换结果为 Cherry Studio 格式
+                    content = result.get('content', [])
+                    if isinstance(content, list):
+                        # 已经是内容列表格式
+                        return json.dumps({
+                            'isError': False,
+                            'content': content
+                        })
+                    elif isinstance(content, str):
+                        # 单个文本内容
+                        return json.dumps({
+                            'isError': False,
+                            'content': [{'type': 'text', 'text': content}]
+                        })
+                    else:
+                        # 其他格式，转换为文本
+                        return json.dumps({
+                            'isError': False,
+                            'content': [{'type': 'text', 'text': json.dumps(result)}]
+                        })
+                        
+                except Exception as e:
+                    import traceback
+                    error_detail = f"{str(e)}\n{traceback.format_exc()}"
+                    _log(f"[MCP] Error calling tool via stdio transport: {error_detail}")
+                    return json.dumps({
+                        'isError': True,
+                        'content': [{'type': 'text', 'text': f'Error calling tool via stdio transport: {str(e)}'}]
+                    })
             if not base_url:
                 return json.dumps({
                     'isError': True,
@@ -1548,4 +2240,179 @@ class CherryStudioAPI(QObject):
     @Slot(str, result=str)
     def saveData(self, data: str) -> str:
         return 'false'
+    
+    def _find_executable(self, name: str) -> str | None:
+        """查找可执行文件（Windows 使用 where.exe）"""
+        if os.name != 'nt':  # 非 Windows 系统
+            return None
+        
+        try:
+            import shutil
+            # 使用 shutil.which 查找可执行文件（跨平台）
+            exe_path = shutil.which(f"{name}.exe")
+            if exe_path and os.path.exists(exe_path):
+                return exe_path
+            return None
+        except Exception as e:
+            _log(f"_find_executable({name}) error: {e}")
+            return None
+    
+    def _validate_git_bash_path(self, bash_path: str | None) -> str | None:
+        """验证 Git Bash 路径是否有效"""
+        if not bash_path:
+            return None
+        
+        try:
+            resolved = os.path.abspath(bash_path)
+            if not os.path.exists(resolved):
+                _log(f"Git Bash path does not exist: {resolved}")
+                return None
+            
+            # 检查是否是 bash.exe
+            if not resolved.lower().endswith('bash.exe'):
+                _log(f"Git Bash path is not bash.exe: {resolved}")
+                return None
+            
+            _log(f"Validated Git Bash path: {resolved}")
+            return resolved
+        except Exception as e:
+            _log(f"_validate_git_bash_path error: {e}")
+            return None
+    
+    def _find_git_bash(self, custom_path: str | None = None) -> str | None:
+        """查找 Git Bash 可执行文件"""
+        if os.name != 'nt':  # 非 Windows 系统
+            return None
+        
+        # 1. 检查自定义路径
+        if custom_path:
+            validated = self._validate_git_bash_path(custom_path)
+            if validated:
+                _log(f"Using custom Git Bash path: {validated}")
+                return validated
+        
+        # 2. 检查环境变量覆盖
+        env_override = os.environ.get('CLAUDE_CODE_GIT_BASH_PATH')
+        if env_override:
+            validated = self._validate_git_bash_path(env_override)
+            if validated:
+                _log(f"Using CLAUDE_CODE_GIT_BASH_PATH override: {validated}")
+                return validated
+        
+        # 3. 查找 git.exe 并推导 bash.exe 路径
+        git_path = self._find_executable('git')
+        if git_path:
+            git_dir = os.path.dirname(git_path)
+            # 尝试多个可能的 bash.exe 位置
+            possible_bash_paths = [
+                os.path.join(git_dir, '..', '..', 'bin', 'bash.exe'),  # 标准 Git: Git/cmd/git.exe -> Git/bin/bash.exe
+                os.path.join(git_dir, '..', 'bash.exe'),  # Portable Git: Git/bin/git.exe -> Git/bin/bash.exe
+                os.path.join(git_dir, '..', '..', 'usr', 'bin', 'bash.exe')  # MSYS2: msys64/usr/bin/git.exe -> msys64/usr/bin/bash.exe
+            ]
+            
+            for bash_path in possible_bash_paths:
+                resolved = os.path.abspath(bash_path)
+                if os.path.exists(resolved):
+                    _log(f"Found bash.exe via git.exe path derivation: {resolved}")
+                    return resolved
+        
+        # 4. 检查常见的 Git Bash 安装路径
+        common_paths = []
+        if 'ProgramFiles' in os.environ:
+            common_paths.append(os.path.join(os.environ['ProgramFiles'], 'Git', 'bin', 'bash.exe'))
+        if 'ProgramFiles(x86)' in os.environ:
+            common_paths.append(os.path.join(os.environ['ProgramFiles(x86)'], 'Git', 'bin', 'bash.exe'))
+        if 'LOCALAPPDATA' in os.environ:
+            common_paths.append(os.path.join(os.environ['LOCALAPPDATA'], 'Programs', 'Git', 'bin', 'bash.exe'))
+        
+        for bash_path in common_paths:
+            if os.path.exists(bash_path):
+                _log(f"Found bash.exe at common path: {bash_path}")
+                return bash_path
+        
+        _log("Git Bash not found - checked git derivation and common paths")
+        return None
+    
+    def _auto_discover_git_bash(self) -> str | None:
+        """自动发现 Git Bash 路径"""
+        if os.name != 'nt':
+            return None
+        
+        # 1. 检查环境变量覆盖（最高优先级）
+        env_override = os.environ.get('CLAUDE_CODE_GIT_BASH_PATH')
+        if env_override:
+            validated = self._validate_git_bash_path(env_override)
+            if validated:
+                _log(f"Using CLAUDE_CODE_GIT_BASH_PATH override: {validated}")
+                return validated
+        
+        # 2. 尝试自动发现
+        discovered_path = self._find_git_bash()
+        if discovered_path:
+            _log(f"Auto-discovered Git Bash path: {discovered_path}")
+            return discovered_path
+        
+        return None
+    
+    def _get_git_bash_config_path(self) -> str:
+        """获取 Git Bash 配置文件路径"""
+        return os.path.join(self._get_app_data_dir(), "git_bash_config.json")
+
+    @Slot(result=str)
+    def getGitBashPathInfo(self) -> str:
+        """获取 Git Bash 路径信息"""
+        try:
+            if os.name != 'nt':  # 非 Windows 系统
+                return json.dumps({"path": None, "source": None})
+            
+            # 1. 尝试读取手动配置
+            config_path = self._get_git_bash_config_path()
+            if os.path.exists(config_path):
+                try:
+                    with open(config_path, 'r', encoding='utf-8') as f:
+                        config = json.load(f)
+                        manual_path = config.get('path')
+                        if manual_path and os.path.exists(manual_path):
+                            return json.dumps({"path": manual_path, "source": "manual"})
+                except Exception as e:
+                    _log(f"Error reading git bash config: {e}")
+
+            # 2. 尝试自动发现
+            path = self._auto_discover_git_bash()
+            source = 'auto' if path else None
+            
+            result = {
+                "path": path,
+                "source": source
+            }
+            _log(f"getGitBashPathInfo result: {result}")
+            return json.dumps(result)
+        except Exception as e:
+            _log(f"getGitBashPathInfo error: {e}")
+            return json.dumps({"path": None, "source": None})
+
+    @Slot(str, result=bool)
+    def setGitBashPath(self, path: str) -> bool:
+        """设置 Git Bash 路径"""
+        try:
+            config_path = self._get_git_bash_config_path()
+            
+            # 如果 path 为空，表示重置/清除
+            if not path:
+                if os.path.exists(config_path):
+                    os.remove(config_path)
+                return True
+                
+            # 验证路径
+            if not os.path.exists(path):
+                return False
+                
+            # 保存配置
+            with open(config_path, 'w', encoding='utf-8') as f:
+                json.dump({"path": path}, f)
+            
+            return True
+        except Exception as e:
+            _log(f"setGitBashPath error: {e}")
+            return False
 
