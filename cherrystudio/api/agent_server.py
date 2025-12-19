@@ -11,15 +11,13 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
 from typing import Optional
 
-def _log(msg: str) -> None:
-    """简单日志"""
-    try:
-        log_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'cherrystudio_agent_server.log')
-        with open(log_file, 'a', encoding='utf-8') as f:
-            from datetime import datetime
-            f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
-    except Exception:
-        pass
+# 导入统一日志模块
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from utils.logger import agent_server_logger
+
+_log = agent_server_logger
 
 
 class AgentAPIHandler(BaseHTTPRequestHandler):

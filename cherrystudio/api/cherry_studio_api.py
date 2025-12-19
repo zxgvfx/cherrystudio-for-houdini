@@ -20,17 +20,10 @@ from PySide6.QtCore import QObject, Slot, Signal
 
 from ..version import APP_VERSION, APP_PLATFORM, APP_ARCH
 from .agent_server import AgentServer
+from ..utils.logger import network_logger
 
-# 简单文件日志
-_LOG_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'cherrystudio_network.log')
-
-def _log(msg: str) -> None:
-    try:
-        with open(_LOG_FILE, 'a', encoding='utf-8') as f:
-            from datetime import datetime
-            f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
-    except Exception:
-        pass
+# 使用统一的日志模块
+_log = network_logger
 
 
 class MCPStdioClient:
