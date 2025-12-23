@@ -21,6 +21,7 @@ from PySide6.QtCore import QObject, Slot, Signal
 from ..version import APP_VERSION, APP_PLATFORM, APP_ARCH
 from .agent_server import AgentServer
 from ..utils.logger import network_logger
+from ..core.config_manager import config_manager
 
 # 使用统一的日志模块
 _log = network_logger
@@ -877,10 +878,8 @@ class CherryStudioAPI(QObject):
         if hasattr(self, '_app_data_dir'):
             return self._app_data_dir
         
-        # 使用与 QWebEngineProfile 相同的路径
-        from PySide6.QtCore import QStandardPaths
-        app_data_path = QStandardPaths.writableLocation(QStandardPaths.AppDataLocation)
-        self._app_data_dir = os.path.join(app_data_path, "CherryStudio")
+        # 使用用户主目录下的 .cherrystudio 目录
+        self._app_data_dir = os.path.join(os.path.expanduser("~"), ".cherrystudio")
         os.makedirs(self._app_data_dir, exist_ok=True)
         return self._app_data_dir
     
@@ -1977,6 +1976,53 @@ class CherryStudioAPI(QObject):
     def mcpRemoveServer(self, server: str) -> str:
         return 'false'
     
+    # ========== 配置管理 API ==========
+    
+    @Slot(result=str)
+    def configGetMergedConfig(self) -> str:
+        """获取合并后的配置"""
+        try:
+            # 确保加载最新配置（包括中心化配置）
+            # 注意：load() 方法现在只负责加载中心化配置，用户配置由前端 localStorage 管理
+            # 但这里返回的结构包含了 centralizedModels 等字段，前端会用到
+            config = config_manager.load()
+            return json.dumps(config)
+        except Exception as e:
+            _log(f"configGetMergedConfig error: {e}")
+            return "{}"
+
+    @Slot(result=str)
+    def configReload(self) -> str:
+        """重新加载配置"""
+        try:
+            config = config_manager.reload()
+            return json.dumps(config)
+        except Exception as e:
+            _log(f"configReload error: {e}")
+            return "{}"
+
+    @Slot(str, result=str)
+    def configUpdateUserModels(self, models_json: str) -> str:
+        """更新用户模型配置"""
+        try:
+            models = json.loads(models_json) if models_json else []
+            config = config_manager.update_user_models(models)
+            return json.dumps(config)
+        except Exception as e:
+            _log(f"configUpdateUserModels error: {e}")
+            return "{}"
+
+    @Slot(str, result=str)
+    def configUpdateUserMcpServers(self, servers_json: str) -> str:
+        """更新用户 MCP 服务器配置"""
+        try:
+            servers = json.loads(servers_json) if servers_json else []
+            config = config_manager.update_user_mcp_servers(servers)
+            return json.dumps(config)
+        except Exception as e:
+            _log(f"configUpdateUserMcpServers error: {e}")
+            return "{}"
+
     @Slot(result=str)
     def mcpGetInstallInfo(self) -> str:
         """

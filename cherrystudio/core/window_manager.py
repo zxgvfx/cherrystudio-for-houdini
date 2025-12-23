@@ -82,8 +82,8 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
         
         # 配置持久化存储（确保配置不会丢失）
         # 重要：必须在任何 WebEngine 相关对象创建之前设置
-        app_data_path = QStandardPaths.writableLocation(QStandardPaths.AppDataLocation)
-        storage_path = os.path.join(app_data_path, "CherryStudio")
+        # 使用用户主目录下的 .cherrystudio 目录，确保跨宿主应用路径一致
+        storage_path = os.path.join(os.path.expanduser("~"), ".cherrystudio")
         os.makedirs(storage_path, exist_ok=True)
         
         # 使用默认 profile（hython 环境不支持命名 Profile，会崩溃）

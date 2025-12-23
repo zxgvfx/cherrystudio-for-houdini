@@ -44,6 +44,50 @@ def get_electron_api_script(theme: str = 'light') -> str:
                         data[key] = localStorage.getItem(key);
                     }}
                 }}
+
+                // Filter out centralized config data from Redux state before saving
+                if (data['persist:cherry-studio']) {{
+                    try {{
+                        const reduxState = JSON.parse(data['persist:cherry-studio']);
+                        
+                        // Filter centralized models from llm state
+                        if (reduxState.llm) {{
+                            const llmState = JSON.parse(reduxState.llm);
+                            if (llmState.providers) {{
+                                // Filter out models and servers marked as isCentralized or in Centralized group
+                                llmState.providers = llmState.providers.map(provider => {{
+                                    if (provider.isSystem && (provider.id === 'centralized' || provider.isCentralized || provider.name === 'Centralized' || provider.name === 'Managed')) {{
+                                       // This is a centralized provider (old or new), remove its models (or empty it)
+                                       return {{ ...provider, models: [] }}; 
+                                    }}
+                                    
+                                    if (provider.models) {{
+                                        provider.models = provider.models.filter(m => !m.isCentralized);
+                                    }}
+                                    return provider;
+                                }}).filter(p => {{
+                                    // Remove the centralized provider itself if it was added by us
+                                    if (p.id === 'centralized' || p.isCentralized) return false;
+                                    return true;
+                                }});
+                            }}
+                            reduxState.llm = JSON.stringify(llmState);
+                        }}
+                        
+                        // Filter centralized MCP servers from mcp state
+                        if (reduxState.mcp) {{
+                            const mcpState = JSON.parse(reduxState.mcp);
+                            if (mcpState.servers) {{
+                                mcpState.servers = mcpState.servers.filter(server => !server.isCentralized);
+                            }}
+                            reduxState.mcp = JSON.stringify(mcpState);
+                        }}
+                        
+                        data['persist:cherry-studio'] = JSON.stringify(reduxState);
+                    }} catch (e) {{
+                        console.error('[Houdini] Error filtering centralized config:', e);
+                    }}
+                }}
                 
                 const dataStr = JSON.stringify(data);
                 // 使用简单的字符串长度作为哈希，避免 btoa 的编码问题
@@ -443,6 +487,57 @@ def get_electron_api_script(theme: str = 'light') -> str:
                 }} catch(e) {{
                     console.error('[Houdini] getGitBashPathInfo error:', e);
                     return {{path: null, source: null}};
+                }}
+            }},
+            config: {{
+                set: async (key, value, isNotify) => {{ 
+                    try {{ 
+                        // 暂不支持细粒度配置 set
+                        return true 
+                    }} catch(e) {{ return false }} 
+                }},
+                get: async (key) => {{ 
+                    try {{ 
+                        // 暂不支持细粒度配置 get
+                        return null 
+                    }} catch(e) {{ return null }} 
+                }},
+                getMergedConfig: async () => {{
+                    try {{
+                        const result = await window.qt?.api?.configGetMergedConfig?.();
+                        console.error('[Houdini] config.getMergedConfig result:', result);
+                        return result ? JSON.parse(result) : null;
+                    }} catch(e) {{
+                        console.error('[Houdini] config.getMergedConfig error:', e);
+                        return null;
+                    }}
+                }},
+                reload: async () => {{
+                    try {{
+                        const result = await window.qt?.api?.configReload?.();
+                        return result ? JSON.parse(result) : null;
+                    }} catch(e) {{
+                        console.error('[Houdini] config.reload error:', e);
+                        return null;
+                    }}
+                }},
+                updateUserModels: async (models) => {{
+                    try {{
+                        const result = await window.qt?.api?.configUpdateUserModels?.(JSON.stringify(models));
+                        return result ? JSON.parse(result) : null;
+                    }} catch(e) {{
+                        console.error('[Houdini] config.updateUserModels error:', e);
+                        return null;
+                    }}
+                }},
+                updateUserMcpServers: async (servers) => {{
+                    try {{
+                        const result = await window.qt?.api?.configUpdateUserMcpServers?.(JSON.stringify(servers));
+                        return result ? JSON.parse(result) : null;
+                    }} catch(e) {{
+                        console.error('[Houdini] config.updateUserMcpServers error:', e);
+                        return null;
+                    }}
                 }}
             }}
         }};
