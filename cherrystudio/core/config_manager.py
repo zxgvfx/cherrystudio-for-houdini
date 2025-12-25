@@ -100,6 +100,9 @@ class ConfigManager:
         centralized_model_ids = {m["id"] for m in centralized.get("models", []) if "id" in m}
         centralized_server_ids = {s["id"] for s in centralized.get("mcpServers", []) if "id" in s}
         
+        # 获取 defaultModels 配置（支持 defaultModels 或 defaultModelSettings 字段名）
+        default_models = centralized.get("defaultModels") or centralized.get("defaultModelSettings")
+        
         # 返回配置给前端
         # 注意：前端会接收这个 _config，并将其中的 centralizedModels/Servers 合并到 Redux store 中
         # 所以这里我们主要负责传递 centralized 数据
@@ -109,11 +112,15 @@ class ConfigManager:
             "mcpServers": centralized.get("mcpServers", []),
             "centralizedProviders": centralized.get("providers", []),
             "centralizedMcpServers": centralized.get("mcpServers", []),
+            "defaultModels": default_models,  # 添加 defaultModels 支持
             "userModels": [], 
             "userMcpServers": [],
             "version": "1.0.0",
             "lastUpdated": datetime.datetime.now().isoformat()
         }
+        
+        if default_models:
+            _log.info(f"Loaded defaultModels from centralized config: {default_models}")
         
         return self._config
 

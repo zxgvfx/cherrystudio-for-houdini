@@ -1,0 +1,93 @@
+[
+  {
+    "id": "assistant-default",
+    "name": "默认助手",
+    "emoji": "🤖",
+    "description": "通用的 AI 助手",
+    "prompt": "你是一个有用的 AI 助手。",
+    "group": ["通用"],
+    "type": "assistant",
+    "topics": [],
+    "defaultModel": null,
+    "regularPhrases": [],
+    "settings": {
+      "temperature": 0.7,
+      "maxTokens": 2000,
+      "contextCount": 5,
+      "toolUseMode": "auto"
+    }
+  },
+  {
+    "id": "assistant-code",
+    "name": "编程助手",
+    "emoji": "💻",
+    "description": "专门用于编程和代码相关的任务",
+    "prompt": "你是一个专业的编程助手，擅长各种编程语言和开发工具。请提供清晰、准确的代码建议和解释。",
+    "group": ["编程"],
+    "type": "assistant",
+    "topics": [],
+    "defaultModel": null,
+    "regularPhrases": [],
+    "settings": {
+      "temperature": 0.3,
+      "maxTokens": 4000,
+      "contextCount": 10,
+      "toolUseMode": "auto"
+    }
+  },
+  {
+    "id": "assistant-write",
+    "name": "写作助手",
+    "emoji": "✍️",
+    "description": "帮助创作、编辑和优化文本内容",
+    "prompt": "你是一个专业的写作助手，擅长各种文体的创作和编辑。请帮助用户创作高质量的内容。",
+    "group": ["写作"],
+    "type": "assistant",
+    "topics": [],
+    "defaultModel": null,
+    "regularPhrases": [],
+    "settings": {
+      "temperature": 0.8,
+      "maxTokens": 3000,
+      "contextCount": 8,
+      "toolUseMode": "auto"
+    }
+  },
+  {
+    "id": "assistant-translate",
+    "name": "翻译助手",
+    "emoji": "🌐",
+    "description": "专业的翻译助手，支持多种语言",
+    "prompt": "你是一个专业的翻译助手，擅长各种语言之间的翻译。请提供准确、流畅的翻译。",
+    "group": ["翻译"],
+    "type": "assistant",
+    "topics": [],
+    "defaultModel": null,
+    "regularPhrases": [],
+    "settings": {
+      "temperature": 0.2,
+      "maxTokens": 2000,
+      "contextCount": 5,
+      "toolUseMode": "auto"
+    }
+  },
+  {
+    "id": "assistant-analysis",
+    "name": "分析助手",
+    "emoji": "📊",
+    "description": "数据分析和问题解决",
+    "prompt": "你是一个专业的分析助手，擅长数据分析和问题解决。请提供深入、准确的分析。",
+    "group": ["分析"],
+    "type": "assistant",
+    "topics": [],
+    "defaultModel": null,
+    "regularPhrases": [],
+    "settings": {
+      "temperature": 0.5,
+      "maxTokens": 3000,
+      "contextCount": 10,
+      "toolUseMode": "auto"
+    }
+  }
+]
+

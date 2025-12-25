@@ -1,0 +1,55 @@
+{
+  "version": "1.0.0",
+  "lastUpdated": "2023-12-23T12:00:00.000Z",
+  "defaultModels": {
+    "defaultModel": "gpt-4o-corp",
+    "quickModel": "deepseek-chat-corp",
+    "translateModel": "deepseek-chat-corp"
+  },
+  "providers": [
+    {
+      "id": "centralized-openai",
+      "name": "Corporate OpenAI",
+      "type": "openai",
+      "apiHost": "https://api.openai.com",
+      "apiKey": "sk-proj-...",
+      "icon": "",
+      "models": [
+        {
+          "id": "gpt-4o-corp",
+          "name": "GPT-4o (Corp)",
+          "modelId": "gpt-4o",
+          "isCentralized": true
+        }
+      ]
+    },
+    {
+      "id": "centralized-deepseek",
+      "name": "DeepSeek Internal",
+      "type": "openai",
+      "apiHost": "https://api.deepseek.com",
+      "apiKey": "sk-...",
+      "icon": "",
+      "models": [
+        {
+          "id": "deepseek-chat-corp",
+          "name": "DeepSeek Chat (Corp)",
+          "modelId": "deepseek-chat",
+          "isCentralized": true
+        }
+      ]
+    }
+  ],
+  "mcpServers": [
+    {
+      "id": "corp-filesystem",
+      "name": "Corporate Filesystem",
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/shared/docs"],
+      "description": "Access to shared documentation folder",
+      "isCentralized": true,
+      "isActive": true
+    }
+  ]
+}

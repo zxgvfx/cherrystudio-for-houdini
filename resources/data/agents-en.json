@@ -1,0 +1,93 @@
+[
+  {
+    "id": "assistant-default",
+    "name": "Default Assistant",
+    "emoji": "🤖",
+    "description": "A general-purpose AI assistant",
+    "prompt": "You are a helpful AI assistant.",
+    "group": ["General"],
+    "type": "assistant",
+    "topics": [],
+    "defaultModel": null,
+    "regularPhrases": [],
+    "settings": {
+      "temperature": 0.7,
+      "maxTokens": 2000,
+      "contextCount": 5,
+      "toolUseMode": "auto"
+    }
+  },
+  {
+    "id": "assistant-code",
+    "name": "Code Assistant",
+    "emoji": "💻",
+    "description": "Specialized in programming and code-related tasks",
+    "prompt": "You are a professional programming assistant, skilled in various programming languages and development tools. Please provide clear and accurate code suggestions and explanations.",
+    "group": ["Programming"],
+    "type": "assistant",
+    "topics": [],
+    "defaultModel": null,
+    "regularPhrases": [],
+    "settings": {
+      "temperature": 0.3,
+      "maxTokens": 4000,
+      "contextCount": 10,
+      "toolUseMode": "auto"
+    }
+  },
+  {
+    "id": "assistant-write",
+    "name": "Writing Assistant",
+    "emoji": "✍️",
+    "description": "Helps with creation, editing, and optimization of text content",
+    "prompt": "You are a professional writing assistant, skilled in various writing styles and editing. Please help users create high-quality content.",
+    "group": ["Writing"],
+    "type": "assistant",
+    "topics": [],
+    "defaultModel": null,
+    "regularPhrases": [],
+    "settings": {
+      "temperature": 0.8,
+      "maxTokens": 3000,
+      "contextCount": 8,
+      "toolUseMode": "auto"
+    }
+  },
+  {
+    "id": "assistant-translate",
+    "name": "Translation Assistant",
+    "emoji": "🌐",
+    "description": "Professional translation assistant supporting multiple languages",
+    "prompt": "You are a professional translation assistant, skilled in translation between various languages. Please provide accurate and fluent translations.",
+    "group": ["Translation"],
+    "type": "assistant",
+    "topics": [],
+    "defaultModel": null,
+    "regularPhrases": [],
+    "settings": {
+      "temperature": 0.2,
+      "maxTokens": 2000,
+      "contextCount": 5,
+      "toolUseMode": "auto"
+    }
+  },
+  {
+    "id": "assistant-analysis",
+    "name": "Analysis Assistant",
+    "emoji": "📊",
+    "description": "Data analysis and problem solving",
+    "prompt": "You are a professional analysis assistant, skilled in data analysis and problem solving. Please provide in-depth and accurate analysis.",
+    "group": ["Analysis"],
+    "type": "assistant",
+    "topics": [],
+    "defaultModel": null,
+    "regularPhrases": [],
+    "settings": {
+      "temperature": 0.5,
+      "maxTokens": 3000,
+      "contextCount": 10,
+      "toolUseMode": "auto"
+    }
+  }
+]
+
