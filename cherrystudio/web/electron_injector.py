@@ -301,6 +301,37 @@ def get_electron_api_script(theme: str = 'light') -> str:
                     }}
                 }}
             }},
+            topic: {{
+                save: async (topicId, data) => {{
+                    try {{
+                        return await window.qt?.api?.topicSave?.(topicId, data);
+                    }} catch(e) {{
+                        return false;
+                    }}
+                }},
+                load: async (topicId) => {{
+                    try {{
+                        return await window.qt?.api?.topicLoad?.(topicId);
+                    }} catch(e) {{
+                        return '';
+                    }}
+                }},
+                delete: async (topicId) => {{
+                    try {{
+                        return await window.qt?.api?.topicDelete?.(topicId);
+                    }} catch(e) {{
+                        return false;
+                    }}
+                }},
+                list: async () => {{
+                    try {{
+                        const result = await window.qt?.api?.topicList?.();
+                        return result ? JSON.parse(result) : [];
+                    }} catch(e) {{
+                        return [];
+                    }}
+                }}
+            }},
             logToMain: (source, level, message, data) => {{ 
                 try {{ 
                     // 将参数序列化为 JSON 字符串
@@ -505,7 +536,6 @@ def get_electron_api_script(theme: str = 'light') -> str:
                 getMergedConfig: async () => {{
                     try {{
                         const result = await window.qt?.api?.configGetMergedConfig?.();
-                        console.error('[Houdini] config.getMergedConfig result:', result);
                         return result ? JSON.parse(result) : null;
                     }} catch(e) {{
                         console.error('[Houdini] config.getMergedConfig error:', e);

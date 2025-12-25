@@ -524,10 +524,24 @@ class CherryStudioAPI(QObject):
     @Slot(result=str)
     def getAppInfo(self) -> str:
         """获取应用信息"""
+        # 获取项目根目录（cherrystudio 目录的父目录）
+        current_file = os.path.abspath(__file__)
+        cherrystudio_dir = os.path.dirname(os.path.dirname(current_file))  # cherrystudio 目录
+        project_root = os.path.dirname(cherrystudio_dir)  # 项目根目录
+        
+        # resources 目录路径
+        resources_path = os.path.join(project_root, "resources")
+        
+        # files 目录路径（用户数据目录）
+        files_path = self._get_app_data_dir()
+        
         return json.dumps({
             "version": APP_VERSION,
             "platform": APP_PLATFORM,
             "arch": APP_ARCH,
+            "resourcesPath": resources_path,
+            "filesPath": files_path,
+            "isPackaged": False  # 对于 Houdini 版本，通常不是打包版本
         })
     
     @Slot(str, result=str)
@@ -2028,16 +2042,21 @@ class CherryStudioAPI(QObject):
         """
         获取 MCP 安装信息
         返回 uv、bun 的路径和安装目录
-        优先检查 ~/.cherrystudio/bin 目录，再检查 PATH
+        优先检查 CHERRY_STUDIO_BIN_DIR 环境变量，否则检查 cherrystudio\bin 目录，再检查 PATH
         """
         try:
             import shutil
             from pathlib import Path
+            import os
             
-            # 获取用户主目录下的 Cherry Studio bin 目录
-            home_dir = Path.home()
-            bin_dir = home_dir / '.cherrystudio' / 'bin'
-            
+            # 获取 Cherry Studio bin 目录
+            # 优先使用环境变量
+            env_bin_dir = os.environ.get('CHERRY_STUDIO_BIN_DIR')
+            if env_bin_dir:
+                bin_dir = Path(env_bin_dir)
+            else:
+                # 获取cherrystudio\bin 目录
+                bin_dir = Path(__file__).parent.parent.parent / 'bin'
             # 查找 uv 和 bun 可执行文件
             uv_path = ''
             bun_path = ''
@@ -2454,4 +2473,64 @@ class CherryStudioAPI(QObject):
         except Exception as e:
             _log(f"setGitBashPath error: {e}")
             return False
+
+    # ========== Topic 持久化 API ==========
+
+    @Slot(str, str, result=bool)
+    def topicSave(self, topic_id: str, data: str) -> bool:
+        """保存 Topic 数据"""
+        try:
+            topics_dir = os.path.join(self._get_app_data_dir(), "topics")
+            os.makedirs(topics_dir, exist_ok=True)
+            file_path = os.path.join(topics_dir, f"{topic_id}.json")
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(data)
+            return True
+        except Exception as e:
+            _log(f"topicSave error: {e}")
+            return False
+
+    @Slot(str, result=str)
+    def topicLoad(self, topic_id: str) -> str:
+        """加载 Topic 数据"""
+        try:
+            topics_dir = os.path.join(self._get_app_data_dir(), "topics")
+            file_path = os.path.join(topics_dir, f"{topic_id}.json")
+            if os.path.exists(file_path):
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    return f.read()
+            return ""
+        except Exception as e:
+            _log(f"topicLoad error: {e}")
+            return ""
+
+    @Slot(str, result=bool)
+    def topicDelete(self, topic_id: str) -> bool:
+        """删除 Topic 数据"""
+        try:
+            topics_dir = os.path.join(self._get_app_data_dir(), "topics")
+            file_path = os.path.join(topics_dir, f"{topic_id}.json")
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            return True
+        except Exception as e:
+            _log(f"topicDelete error: {e}")
+            return False
+            
+    @Slot(result=str)
+    def topicList(self) -> str:
+        """列出所有保存的 Topic ID"""
+        try:
+            topics_dir = os.path.join(self._get_app_data_dir(), "topics")
+            if not os.path.exists(topics_dir):
+                return "[]"
+            
+            topics = []
+            for filename in os.listdir(topics_dir):
+                if filename.endswith(".json"):
+                    topics.append(filename[:-5])  # 移除 .json 后缀
+            return json.dumps(topics)
+        except Exception as e:
+            _log(f"topicList error: {e}")
+            return "[]"
 
