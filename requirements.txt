@@ -1,12 +1,44 @@
 # Cherry Studio for Houdini 依赖
 # 用于从非 Houdini 环境独立启动
 
-# 核心依赖
+# ============ 核心依赖 ============
+
+# Qt 框架 - 用于 UI 和 WebEngine
 PySide6>=6.0.0
 
-# 注意：如果安装失败，可以尝试：
-# 1. 增加超时时间：set UV_HTTP_TIMEOUT=300 && uv pip install PySide6
-# 2. 使用 pip：pip install PySide6
-# 3. 使用国内镜像：pip install -i https://pypi.tuna.tsinghua.edu.cn/simple PySide6
-# 4. 使用 conda：conda install -c conda-forge pyside6
+# MCP (Model Context Protocol) 客户端 - 用于工具集成
+fastmcp>=0.1.0
+
+# ============ 可选依赖 ============
+# 以下依赖根据需要安装
+
+# 如果需要使用 Houdini 集成功能，需要 hou 模块
+# 注意：hou 模块通常由 Houdini 自带，无需单独安装
+
+# ============ 安装说明 ============
+# 
+# 标准安装：
+#   pip install -r requirements.txt
+#
+# 使用 uv 安装（更快）：
+#   uv pip install -r requirements.txt
+#
+# 如果 PySide6 安装失败，可以尝试：
+#   1. 增加超时时间：
+#      set UV_HTTP_TIMEOUT=300 && uv pip install PySide6
+#   
+#   2. 使用国内镜像：
+#      pip install -i https://pypi.tuna.tsinghua.edu.cn/simple PySide6
+#   
+#   3. 使用 conda：
+#      conda install -c conda-forge pyside6
+#   
+#   4. 分开安装：
+#      pip install PySide6-Essentials
+#      pip install PySide6-Addons
+#
+# 如果 fastmcp 安装失败：
+#   pip install fastmcp --upgrade
+#   或者使用国内镜像：
+#   pip install -i https://pypi.tuna.tsinghua.edu.cn/simple fastmcp
 
