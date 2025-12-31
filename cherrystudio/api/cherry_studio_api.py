@@ -67,11 +67,29 @@ class MCPStdioClient:
         try:
             # 准备环境变量
             process_env = os.environ.copy()
+            
+            # 清理可能导致污染的环境变量
+            keys_to_remove = ['PYTHONPATH', 'PYTHONHOME']
+            for key in keys_to_remove:
+                if key in process_env:
+                    _log(f"[MCP Stdio] Removing potentially polluting env var: {key}={process_env[key]}")
+                    del process_env[key]
+
             process_env.update(self.env)
             
+            # 打印关键调试信息
             _log(f"[MCP Stdio] Starting process: {self.command} {self.args}")
+            _log(f"[MCP Stdio] CWD: {self.cwd}")
+            _log(f"[MCP Stdio] PATH: {process_env.get('PATH', 'Not Set')}")
+            _log(f"[MCP Stdio] NPM_CONFIG_REGISTRY: {process_env.get('NPM_CONFIG_REGISTRY', 'Not Set')}")
+            _log(f"[MCP Stdio] HTTP_PROXY: {process_env.get('HTTP_PROXY', process_env.get('http_proxy', 'Not Set'))}")
+            _log(f"[MCP Stdio] HTTPS_PROXY: {process_env.get('HTTPS_PROXY', process_env.get('https_proxy', 'Not Set'))}")
             
             # 启动进程
+            use_shell = False
+            if os.name == 'nt' and self.command.lower().endswith(('.cmd', '.bat')):
+                 use_shell = True
+            
             self.process = subprocess.Popen(
                 [self.command] + self.args,
                 stdin=subprocess.PIPE,
@@ -80,12 +98,17 @@ class MCPStdioClient:
                 env=process_env,
                 cwd=self.cwd,
                 bufsize=0,  # 无缓冲
-                text=False  # 使用二进制模式
+                text=False,  # 使用二进制模式
+                shell=use_shell if use_shell else False
             )
             
             # 启动读取线程
             self.reader_thread = threading.Thread(target=self._read_loop, daemon=True)
             self.reader_thread.start()
+
+            # 启动 stderr 读取线程
+            self.stderr_thread = threading.Thread(target=self._read_stderr_loop, daemon=True)
+            self.stderr_thread.start()
             
             # 发送初始化请求
             self._initialize()
@@ -114,7 +137,9 @@ class MCPStdioClient:
         
         # 发送初始化请求并等待响应
         try:
-            response = self._send_request(init_request, timeout=10.0)
+            _log("[MCP Stdio] Sending initialize request...")
+            # 初始化可能需要下载依赖，增加超时时间
+            response = self._send_request(init_request, timeout=60.0)
             _log(f"[MCP Stdio] Initialized: {response}")
             
             # 发送 initialized 通知
@@ -169,7 +194,32 @@ class MCPStdioClient:
             _log(f"[MCP Stdio] Read loop error: {e}")
         finally:
             _log(f"[MCP Stdio] Read loop ended")
+            # 进程结束时，取消所有挂起的请求，避免无限等待超时
+            self._cancel_all_requests("Process terminated unexpectedly")
     
+    def _read_stderr_loop(self):
+        """读取进程 stderr 的循环"""
+        try:
+            while not self._closed and self.process and self.process.poll() is None:
+                # 读取一行错误输出
+                line = self.process.stderr.readline()
+                if not line:
+                    if self.process.poll() is not None:
+                        break
+                    continue
+                
+                try:
+                    error_msg = line.decode('utf-8', errors='replace').strip()
+                    if error_msg:
+                        _log(f"[MCP Stdio] STDERR: {error_msg}")
+                except Exception:
+                    pass
+                    
+        except Exception as e:
+            _log(f"[MCP Stdio] Stderr read loop error: {e}")
+        finally:
+            _log(f"[MCP Stdio] Stderr read loop ended")
+
     def _handle_message(self, message: dict):
         """处理收到的消息"""
         if 'id' in message:
@@ -241,6 +291,15 @@ class MCPStdioClient:
             with self.lock:
                 self.pending_requests.pop(request_id, None)
     
+    def _cancel_all_requests(self, reason: str):
+        """取消所有挂起的请求"""
+        with self.lock:
+            for request_id, (event, result_queue) in self.pending_requests.items():
+                # 发送错误信息到队列
+                result_queue.put({'error': {'code': -32000, 'message': reason}})
+                event.set()
+            self.pending_requests.clear()
+
     def list_tools(self) -> list:
         """列出可用工具"""
         request = {
@@ -249,10 +308,19 @@ class MCPStdioClient:
             "method": "tools/list"
         }
         
-        response = self._send_request(request)
-        tools = response.get('tools', [])
-        _log(f"[MCP Stdio] Listed {len(tools)} tools")
-        return tools
+        try:
+            # 内网环境或者初次加载可能较慢，增加超时时间到 120 秒
+            _log("[MCP Stdio] Requesting tools/list...")
+            response = self._send_request(request, timeout=120.0)
+            tools = response.get('tools', [])
+            _log(f"[MCP Stdio] Listed {len(tools)} tools")
+            return tools
+        except TimeoutError:
+            _log("[MCP Stdio] Timeout waiting for tools/list response (120s)")
+            raise
+        except Exception as e:
+            _log(f"[MCP Stdio] Error listing tools: {e}")
+            raise
     
     def call_tool(self, name: str, arguments: dict) -> dict:
         """调用工具"""
@@ -321,6 +389,33 @@ def _find_command_path(command: str) -> str:
     import shutil
     path = shutil.which(command)
     if path:
+        # 如果找到的是 uv.exe 或 uv，将其目录添加到 PATH
+        # 这样后续就可以调用 npx 或 uvx 了
+        if command.lower() in ('uv', 'uv.exe'):
+            uv_dir = os.path.dirname(path)
+            current_path = os.environ.get('PATH', '')
+            if uv_dir not in current_path:
+                # 将 uv 目录添加到 PATH 的最前面，优先使用
+                os.environ['PATH'] = uv_dir + os.pathsep + current_path
+                _log(f"[_find_command_path] Added uv directory to PATH: {uv_dir}")
+        # 如果找到的是 node.exe、node、npm 或 npx，将其目录添加到 PATH
+        # 这样后续就可以调用 npm 或 npx 了
+        elif command.lower() in ('node', 'node.exe', 'npm', 'npm.cmd', 'npx', 'npx.cmd'):
+            node_dir = os.path.dirname(path)
+            current_path = os.environ.get('PATH', '')
+            if node_dir not in current_path:
+                # 将 node/npm/npx 目录添加到 PATH 的最前面，优先使用
+                os.environ['PATH'] = node_dir + os.pathsep + current_path
+                _log(f"[_find_command_path] Added {command} directory to PATH: {node_dir}")
+        # 如果找到的是 bun.exe、bun 或 bunx，将其目录添加到 PATH
+        # 这样后续就可以调用 bunx 了
+        elif command.lower() in ('bun', 'bun.exe', 'bunx', 'bunx.cmd'):
+            bun_dir = os.path.dirname(path)
+            current_path = os.environ.get('PATH', '')
+            if bun_dir not in current_path:
+                # 将 bun 目录添加到 PATH 的最前面，优先使用
+                os.environ['PATH'] = bun_dir + os.pathsep + current_path
+                _log(f"[_find_command_path] Added bun directory to PATH: {bun_dir}")
         return path
     
     # 如果找不到，返回原命令（让系统处理）
@@ -360,6 +455,14 @@ def _get_or_create_mcp_stdio_client(server_config: dict) -> MCPStdioClient:
             # 查找命令路径
             command = _find_command_path(command)
             
+            # Windows 下处理 .cmd/.bat 文件
+            if os.name == 'nt' and command.lower().endswith(('.cmd', '.bat')):
+                # 如果是批处理文件，必须通过 cmd /c 执行，否则 subprocess 可能无法启动
+                args = ['/c', command] + args
+                command = 'cmd.exe'
+                _log(f"[MCP Stdio] Wrapped command with cmd.exe /c for batch file")
+            
+            print(f"[MCP Stdio] Found command path: {command}")
             client = MCPStdioClient(command, args, env, cwd)
             client.start()
             _mcp_stdio_clients[key] = client
@@ -641,32 +744,105 @@ class CherryStudioAPI(QObject):
     def isBinaryExist(self, binary: str) -> bool:
         """
         检查二进制文件是否存在
-        优先检查 ~/.cherrystudio/bin 目录，如果没找到再检查系统 PATH
+        优先检查 'J:/vfxtools/piplineTD/models/packages/bin' 目录，如果没找到再检查系统 PATH
         这样既能识别应用安装的版本，也能识别系统已有的版本
+        如果找到 uv.exe 或 uv，会将其目录添加到 PATH，以便后续可以调用 npx 或 uvx
+        如果找到 node.exe 或 node，会将其目录添加到 PATH，以便后续可以调用 npm 或 npx
         """
         try:
             from shutil import which
             from pathlib import Path
             
-            # 优先检查 ~/.cherrystudio/bin 目录
+            # 优先检查 'J:/vfxtools/piplineTD/models/packages/bin' 目录
             home_dir = Path.home()
-            bin_dir = home_dir / '.cherrystudio' / 'bin'
+            bin_dir = Path('J:/vfxtools/piplineTD/models/packages/bin')
             
             if bin_dir.exists():
                 # Windows 使用 .exe 扩展名
                 if os.name == 'nt':
                     binary_exe = bin_dir / f'{binary}.exe'
                     if binary_exe.exists() and binary_exe.is_file():
+                        # 如果找到的是 uv.exe，将其目录添加到 PATH
+                        if binary.lower() == 'uv':
+                            uv_dir = str(bin_dir)
+                            current_path = os.environ.get('PATH', '')
+                            if uv_dir not in current_path:
+                                os.environ['PATH'] = uv_dir + os.pathsep + current_path
+                                _log(f"[isBinaryExist] Added uv directory to PATH: {uv_dir}")
+                        # 如果找到的是 node.exe、npm 或 npx，将其目录添加到 PATH
+                        # 这样后续就可以调用 npm 或 npx 了
+                        elif binary.lower() in ('node', 'npm', 'npx'):
+                            node_dir = str(bin_dir)
+                            current_path = os.environ.get('PATH', '')
+                            if node_dir not in current_path:
+                                os.environ['PATH'] = node_dir + os.pathsep + current_path
+                                _log(f"[isBinaryExist] Added {binary} directory to PATH: {node_dir}")
+                        # 如果找到的是 bun.exe、bun 或 bunx，将其目录添加到 PATH
+                        # 这样后续就可以调用 bunx 了
+                        elif binary.lower() in ('bun', 'bunx'):
+                            bun_dir = str(bin_dir)
+                            current_path = os.environ.get('PATH', '')
+                            if bun_dir not in current_path:
+                                os.environ['PATH'] = bun_dir + os.pathsep + current_path
+                                _log(f"[isBinaryExist] Added {binary} directory to PATH: {bun_dir}")
                         return True
                 else:
                     binary_path = bin_dir / binary
                     if binary_path.exists() and binary_path.is_file():
                         # 检查是否有执行权限
                         if os.access(binary_path, os.X_OK):
+                            # 如果找到的是 uv，将其目录添加到 PATH
+                            if binary.lower() == 'uv':
+                                uv_dir = str(bin_dir)
+                                current_path = os.environ.get('PATH', '')
+                                if uv_dir not in current_path:
+                                    os.environ['PATH'] = uv_dir + os.pathsep + current_path
+                                    _log(f"[isBinaryExist] Added uv directory to PATH: {uv_dir}")
+                            # 如果找到的是 node、npm 或 npx，将其目录添加到 PATH
+                            # 这样后续就可以调用 npm 或 npx 了
+                            elif binary.lower() in ('node', 'npm', 'npx'):
+                                node_dir = str(bin_dir)
+                                current_path = os.environ.get('PATH', '')
+                                if node_dir not in current_path:
+                                    os.environ['PATH'] = node_dir + os.pathsep + current_path
+                                    _log(f"[isBinaryExist] Added {binary} directory to PATH: {node_dir}")
+                            # 如果找到的是 bun 或 bunx，将其目录添加到 PATH
+                            elif binary.lower() in ('bun', 'bunx'):
+                                bun_dir = str(bin_dir)
+                                current_path = os.environ.get('PATH', '')
+                                if bun_dir not in current_path:
+                                    os.environ['PATH'] = bun_dir + os.pathsep + current_path
+                                    _log(f"[isBinaryExist] Added {binary} directory to PATH: {bun_dir}")
                             return True
             
             # 如果 bin 目录中没有，检查系统 PATH
-            return which(binary) is not None
+            path = which(binary)
+            if path:
+                # 如果找到的是 uv.exe 或 uv，将其目录添加到 PATH
+                if binary.lower() in ('uv', 'uv.exe'):
+                    uv_dir = os.path.dirname(path)
+                    current_path = os.environ.get('PATH', '')
+                    if uv_dir not in current_path:
+                        os.environ['PATH'] = uv_dir + os.pathsep + current_path
+                        _log(f"[isBinaryExist] Added uv directory to PATH: {uv_dir}")
+                # 如果找到的是 node.exe、node、npm 或 npx，将其目录添加到 PATH
+                # 这样后续就可以调用 npm 或 npx 了
+                elif binary.lower() in ('node', 'node.exe', 'npm', 'npm.cmd', 'npx', 'npx.cmd'):
+                    node_dir = os.path.dirname(path)
+                    current_path = os.environ.get('PATH', '')
+                    if node_dir not in current_path:
+                        os.environ['PATH'] = node_dir + os.pathsep + current_path
+                        _log(f"[isBinaryExist] Added {binary} directory to PATH: {node_dir}")
+                # 如果找到的是 bun.exe、bun 或 bunx，将其目录添加到 PATH
+                elif binary.lower() in ('bun', 'bun.exe', 'bunx', 'bunx.cmd'):
+                    bun_dir = os.path.dirname(path)
+                    current_path = os.environ.get('PATH', '')
+                    if bun_dir not in current_path:
+                        os.environ['PATH'] = bun_dir + os.pathsep + current_path
+                        _log(f"[isBinaryExist] Added {binary} directory to PATH: {bun_dir}")
+                return True
+            
+            return False
         except Exception as e:
             _log(f"isBinaryExist error for {binary}: {e}")
             return False
@@ -799,6 +975,26 @@ class CherryStudioAPI(QObject):
         except Exception as e:
             print(f"Error in file select: {e}")
             return "[]"
+    
+    @Slot(result=str)
+    def selectFolder(self) -> str:
+        """显示文件夹选择对话框"""
+        try:
+            from PySide6.QtWidgets import QFileDialog, QApplication
+            app = QApplication.instance()
+            if not app:
+                return ""
+            
+            folder_path = QFileDialog.getExistingDirectory(
+                None,
+                "选择文件夹",
+                "",
+                QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
+            )
+            return folder_path if folder_path else ""
+        except Exception as e:
+            _log(f"Error in selectFolder: {e}")
+            return ""
     
     @Slot(str, result=str)
     def binaryImage(self, fileId: str) -> str:
@@ -1410,11 +1606,15 @@ class CherryStudioAPI(QObject):
     @Slot(result=str)
     def apiServerStart(self) -> str:
         """启动 API 服务器"""
+        print("[apiServerStart] Called")  # 直接输出到终端
+        _log("[apiServerStart] Called")
         try:
             with CherryStudioAPI._agent_server_lock:
                 # 如果已经运行，返回当前状态
                 if CherryStudioAPI._agent_server and CherryStudioAPI._agent_server.is_running():
                     port = CherryStudioAPI._agent_server.get_port()
+                    print(f"[apiServerStart] Server already running on port {port}")
+                    _log(f"[apiServerStart] Server already running on port {port}")
                     return json.dumps({
                         "running": True,
                         "port": port,
@@ -1422,17 +1622,22 @@ class CherryStudioAPI(QObject):
                         "error": None
                     })
                 
-                _log("Attempting to start Agent Server...")
+                print("[apiServerStart] Attempting to start Agent Server...")
+                _log("[apiServerStart] Attempting to start Agent Server...")
                 # 创建并启动服务器
                 providers_loader = self._load_providers_from_localstorage
                 CherryStudioAPI._agent_server = AgentServer(providers_loader=providers_loader)
                 
-                # 尝试启动
+                # 尝试启动 - 使用动态端口
                 try:
-                    success, port = CherryStudioAPI._agent_server.start(host='127.0.0.1', port=0)
+                    print("[apiServerStart] Calling AgentServer.start()...")
+                    _log("[apiServerStart] Calling AgentServer.start()...")
+                    success, port = CherryStudioAPI._agent_server.start(host='127.0.0.1', port=0)  # 使用动态端口
+                    print(f"[apiServerStart] AgentServer.start() returned: success={success}, port={port}")
+                    _log(f"[apiServerStart] AgentServer.start() returned: success={success}, port={port}")
                 except Exception as start_err:
                     import traceback
-                    err_msg = f"AgentServer.start exception: {str(start_err)}\n{traceback.format_exc()}"
+                    err_msg = f"[apiServerStart] AgentServer.start exception: {str(start_err)}\n{traceback.format_exc()}"
                     _log(err_msg)
                     return json.dumps({
                         "running": False,
@@ -1442,7 +1647,7 @@ class CherryStudioAPI(QObject):
                     })
                 
                 if success:
-                    _log(f"Agent server started on port {port}")
+                    _log(f"[apiServerStart] ✓ Agent server started successfully on port {port}")
                     return json.dumps({
                         "running": True,
                         "port": port,
@@ -1450,7 +1655,7 @@ class CherryStudioAPI(QObject):
                         "error": None
                     })
                 else:
-                    _log("AgentServer.start returned False")
+                    _log("[apiServerStart] ✗ AgentServer.start returned False")
                     return json.dumps({
                         "running": False,
                         "port": 0,
@@ -1531,6 +1736,59 @@ class CherryStudioAPI(QObject):
                 "url": "",
                 "error": str(e)
             })
+    
+    # ==================== Agent API Proxy ====================
+    # 通过 QWebChannel 代理 Agent API 请求，避免 file:// 协议的 CORS 限制
+    
+    @Slot(str, result=str)
+    def agentApiProxy(self, request_json: str) -> str:
+        """代理 Agent API 请求
+        
+        Args:
+            request_json: JSON 字符串，包含 {method, path, body, headers}
+            
+        Returns:
+            JSON 字符串，包含 API 响应
+        """
+        try:
+            request = json.loads(request_json)
+            method = request.get('method', 'GET').upper()
+            path = request.get('path', '')
+            body = request.get('body')
+            
+            print(f"[agentApiProxy] {method} {path}")
+            
+            with CherryStudioAPI._agent_server_lock:
+                if not CherryStudioAPI._agent_server or not CherryStudioAPI._agent_server.is_running():
+                    return json.dumps({'error': 'Agent server not running', 'status': 503})
+            
+            # 获取服务器端口
+            port = CherryStudioAPI._agent_server.get_port()
+            url = f"http://127.0.0.1:{port}{path}"
+            
+            import urllib.request
+            import urllib.error
+            
+            # 创建请求
+            req_data = json.dumps(body).encode('utf-8') if body else None
+            req = urllib.request.Request(url, data=req_data, method=method)
+            req.add_header('Content-Type', 'application/json')
+            req.add_header('Authorization', 'Bearer internal')
+            
+            try:
+                with urllib.request.urlopen(req, timeout=30.0) as resp:
+                    response_data = resp.read().decode('utf-8')
+                    return response_data
+            except urllib.error.HTTPError as e:
+                error_body = e.read().decode('utf-8') if e.fp else ''
+                return json.dumps({'error': error_body or str(e), 'status': e.code})
+            except urllib.error.URLError as e:
+                return json.dumps({'error': str(e.reason), 'status': 503})
+                
+        except Exception as e:
+            import traceback
+            print(f"[agentApiProxy] Error: {e}\n{traceback.format_exc()}")
+            return json.dumps({'error': str(e), 'status': 500})
     
     @Slot(str, result=str)
     def apiServerToggle(self, payload: str) -> str:
@@ -2042,7 +2300,7 @@ class CherryStudioAPI(QObject):
         """
         获取 MCP 安装信息
         返回 uv、bun 的路径和安装目录
-        优先检查 CHERRY_STUDIO_BIN_DIR 环境变量，否则检查 cherrystudio\bin 目录，再检查 PATH
+        优先检查 CHERRY_STUDIO_BIN_DIR 环境变量，否则检查 J:/vfxtools/piplineTD/models/packages/bin 目录，再检查 PATH
         """
         try:
             import shutil
@@ -2055,39 +2313,69 @@ class CherryStudioAPI(QObject):
             if env_bin_dir:
                 bin_dir = Path(env_bin_dir)
             else:
-                # 获取cherrystudio\bin 目录
-                bin_dir = Path(__file__).parent.parent.parent / 'bin'
+                bin_dir = Path('J:/vfxtools/piplineTD/models/packages/bin')
+            
             # 查找 uv 和 bun 可执行文件
             uv_path = ''
             bun_path = ''
+            
+            _log(f"[mcpGetInstallInfo] Checking bin_dir: {bin_dir}")
+            _log(f"[mcpGetInstallInfo] bin_dir exists: {bin_dir.exists()}")
+            
+            # 列出目录内容以便调试
+            if bin_dir.exists():
+                try:
+                    files = list(bin_dir.iterdir())
+                    _log(f"[mcpGetInstallInfo] Files in bin_dir: {[f.name for f in files]}")
+                except Exception as e:
+                    _log(f"[mcpGetInstallInfo] Error listing bin_dir: {e}")
             
             # 优先检查 bin 目录
             if bin_dir.exists():
                 uv_exe = bin_dir / ('uv.exe' if os.name == 'nt' else 'uv')
                 bun_exe = bin_dir / ('bun.exe' if os.name == 'nt' else 'bun')
                 
+                _log(f"[mcpGetInstallInfo] Looking for uv at: {uv_exe}")
+                _log(f"[mcpGetInstallInfo] uv exists: {uv_exe.exists()}, is_file: {uv_exe.is_file() if uv_exe.exists() else 'N/A'}")
+                
                 # 检查 uv
                 if uv_exe.exists() and uv_exe.is_file():
                     # 在 Unix 系统上检查可执行权限
                     if os.name == 'nt' or os.access(uv_exe, os.X_OK):
                         uv_path = str(uv_exe)
+                        _log(f"[mcpGetInstallInfo] Found uv: {uv_path}")
+                    else:
+                        _log(f"[mcpGetInstallInfo] uv exists but not executable")
+                
+                _log(f"[mcpGetInstallInfo] Looking for bun at: {bun_exe}")
                 
                 # 检查 bun
                 if bun_exe.exists() and bun_exe.is_file():
                     # 在 Unix 系统上检查可执行权限
                     if os.name == 'nt' or os.access(bun_exe, os.X_OK):
                         bun_path = str(bun_exe)
+                        _log(f"[mcpGetInstallInfo] Found bun: {bun_path}")
+            else:
+                _log(f"[mcpGetInstallInfo] bin_dir does not exist: {bin_dir}")
             
             # 如果 bin 目录中没有找到，尝试在 PATH 中查找
             if not uv_path:
+                _log(f"[mcpGetInstallInfo] uv not found in bin_dir, searching in PATH")
                 uv_cmd = shutil.which('uv')
                 if uv_cmd:
                     uv_path = uv_cmd
+                    _log(f"[mcpGetInstallInfo] Found uv in PATH: {uv_path}")
+                else:
+                    _log(f"[mcpGetInstallInfo] uv not found in PATH")
             
             if not bun_path:
+                _log(f"[mcpGetInstallInfo] bun not found in bin_dir, searching in PATH")
                 bun_cmd = shutil.which('bun')
                 if bun_cmd:
                     bun_path = bun_cmd
+                    _log(f"[mcpGetInstallInfo] Found bun in PATH: {bun_path}")
+                else:
+                    _log(f"[mcpGetInstallInfo] bun not found in PATH")
             
             result = {
                 'dir': str(bin_dir),
@@ -2095,6 +2383,7 @@ class CherryStudioAPI(QObject):
                 'bunPath': bun_path
             }
             
+            _log(f"[mcpGetInstallInfo] Final result: {result}")
             return json.dumps(result)
         except Exception as e:
             _log(f"mcpGetInstallInfo error: {e}")
@@ -2109,11 +2398,11 @@ class CherryStudioAPI(QObject):
     def installBunBinary(self) -> bool:
         """
         安装 Bun 二进制文件
-        下载并解压到 ~/.cherrystudio/bin 目录
+        下载并解压到'J:/vfxtools/piplineTD/models/packages/bin'目录
         """
         try:
             home_dir = Path.home()
-            bin_dir = home_dir / '.cherrystudio' / 'bin'
+            bin_dir = Path('J:/vfxtools/piplineTD/models/packages/bin')
             bin_dir.mkdir(parents=True, exist_ok=True)
             
             # 确定平台和架构
@@ -2192,11 +2481,11 @@ class CherryStudioAPI(QObject):
     def installUVBinary(self) -> bool:
         """
         安装 UV 二进制文件
-        下载并解压到 ~/.cherrystudio/bin 目录
+        下载并解压到 'J:/vfxtools/piplineTD/models/packages/bin' 目录
         """
         try:
             home_dir = Path.home()
-            bin_dir = home_dir / '.cherrystudio' / 'bin'
+            bin_dir = Path('J:/vfxtools/piplineTD/models/packages/bin')
             bin_dir.mkdir(parents=True, exist_ok=True)
             
             # 确定平台和架构
