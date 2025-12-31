@@ -1,0 +1,121 @@
+{
+  "version": "1.0.0",
+  "lastUpdated": "2023-12-23T12:00:00.000Z",
+    "defaultModels": {
+    "defaultModel": "qwen3:8b",
+    "quickModel": "qwen3:8b",
+    "translateModel": "qwen3:8b"
+  },
+  "providers": [
+    {
+      "id": "centralized-openai",
+      "name": "Coco",
+      "type": "openai",
+      "apiHost": "http://192.168.166.232",
+      "apiKey": "52fc482d-364b-40bc-9589-9918520c9d3e",
+      "icon": "",
+      "models": [
+        {
+          "id": "qwen3-vl:8b",
+          "name": "Qwen3-vl:8b",
+          "modelId": "qwen3-vl:8b",
+          "isCentralized": true,
+          "supported_text_delta": true,
+          "capabilities": [
+            { "type": "text" },
+            { "type": "vision" }
+          ],
+          "endpoint_type": "openai"
+        },
+        {
+          "id": "deepseek-r1:32b",
+          "name": "Deepseek-r1:32b",
+          "modelId": "deepseek-r1:32b",
+          "isCentralized": true,
+          "supported_text_delta": true,
+          "capabilities": [
+            { "type": "text" },
+            { "type": "reasoning" }
+          ],
+          "endpoint_type": "openai"
+        },
+        {
+          "id": "deepseek-r1:14b",
+          "name": "Deepseek-r1:14b",
+          "modelId": "deepseek-r1:14b",
+          "isCentralized": true,
+
+          "supported_text_delta": true
+        },
+        {
+          "id": "olmo-3:32b",
+          "name": "Olmo-3:32b",
+          "modelId": "olmo-3:32b",
+          "isCentralized": true,
+
+          "supported_text_delta": true
+        },
+        {
+          "id": "qwen3:8b",
+          "name": "Qwen3:8b",
+          "modelId": "qwen3:8b",
+          "isCentralized": true,
+
+          "supported_text_delta": true
+        },
+        {
+          "id": "gpt-oss:20b",
+          "name": "GPT-OSS:20b",
+          "modelId": "gpt-oss:20b",
+          "isCentralized": true,
+
+          "supported_text_delta": true
+        },
+        {
+          "id": "huihui_ai/deepseek-r1-abliterated:32b",
+          "name": "Huihui-AI/Deepseek-r1-Abliterated:32b",
+          "modelId": "huihui_ai/deepseek-r1-abliterated:32b",
+          "isCentralized": true,
+
+          "supported_text_delta": true
+        }
+      ]
+    }
+
+  ],
+  "mcpServers": [
+    {
+      "id": "SQiXdpdE2tWalh1EwT8wg",
+      "name": "mcp-tool-set",
+      "type": "streamableHttp",
+      "url": "http://mcp.ccc.net/mcp",
+      "baseUrl": "http://mcp.ccc.net/mcp",
+      "description": "MCP Tool Set",
+      "isCentralized": true,
+      "isActive": true
+    },
+    {
+      "id": "excel-server",
+      "name": "Excel",
+      "type": "stdio",
+      "command": "cmd",
+      "args": ["/c", "npx", "--yes", "@negokaz/excel-mcp-server"],
+      "env": {
+        "EXCEL_MCP_PAGING_CELLS_LIMIT": "4000"
+      },
+      "description": "Excel MCP Server",
+      "isCentralized": true,
+      "isActive": true
+    },
+    {
+      "id": "playwright-server",
+      "name": "Playwright",
+      "type": "stdio",
+      "command": "npx",
+      "args": ["@playwright/mcp@latest"],
+      "description": "Playwright MCP Server",
+      "isCentralized": true,
+      "isActive": true
+    }
+  ]
+}
