@@ -14,15 +14,110 @@ import json
 import os
 import queue
 import threading
+import re
+import html as _html
 import urllib.parse
 import urllib.request
 import urllib.error
+import ssl
 from typing import Any, Dict
 
 from ..server import route
 from ...utils.logger import network_logger
 
 _log = network_logger
+
+# 全局忽略 SSL 证书验证（解决企业内网/代理自签证书问题）
+_ssl_context = ssl._create_unverified_context()
+
+def _patch_gemini3_tool_history(url: str, body_bytes: bytes) -> bytes:
+    """
+    Gemini 3 多轮 function calling 要求 assistant 消息中的 tool_calls 携带
+    thought_signature 字段。通过 OpenAI 兼容代理网关（如 Higress）时该字段
+    在格式转换中丢失，导致 400 错误。
+
+    解决方案：将历史 tool_call + tool 消息对转为纯文本 assistant 消息，
+    彻底绕过 thought_signature 要求。模型仍可在当前轮次发起新的 tool call。
+    """
+    if not body_bytes:
+        return body_bytes
+    if b"/chat/completions" not in url.encode("utf-8", errors="ignore"):
+        return body_bytes
+    try:
+        body = json.loads(body_bytes)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return body_bytes
+
+    model = str(body.get("model", "")).lower()
+    if "gemini-3" not in model and "gemini3" not in model:
+        return body_bytes
+
+    messages = body.get("messages")
+    if not isinstance(messages, list):
+        return body_bytes
+
+    has_tool_calls = any(
+        isinstance(m, dict) and m.get("role") == "assistant" and m.get("tool_calls")
+        for m in messages
+    )
+    if not has_tool_calls:
+        return body_bytes
+
+    # 收集 tool_call_id → tool response content 的映射
+    tool_results = {}
+    for msg in messages:
+        if isinstance(msg, dict) and msg.get("role") == "tool":
+            tid = msg.get("tool_call_id", "")
+            if tid:
+                tool_results[tid] = msg.get("content", "")
+
+    new_messages = []
+    for msg in messages:
+        if not isinstance(msg, dict):
+            new_messages.append(msg)
+            continue
+
+        role = msg.get("role")
+
+        if role == "assistant" and msg.get("tool_calls"):
+            tool_calls = msg["tool_calls"]
+            text_content = msg.get("content") or ""
+
+            call_descriptions = []
+            for tc in tool_calls:
+                fn = tc.get("function", {}) if isinstance(tc, dict) else {}
+                name = fn.get("name", "unknown")
+                args = fn.get("arguments", "")
+                tc_id = tc.get("id", "") if isinstance(tc, dict) else ""
+                call_descriptions.append(
+                    f"[Called function `{name}` with arguments: {args}]"
+                )
+                result = tool_results.get(tc_id, "")
+                if result:
+                    call_descriptions.append(
+                        f"[Function `{name}` returned: {result}]"
+                    )
+
+            combined = text_content
+            if call_descriptions:
+                if combined:
+                    combined += "\n\n"
+                combined += "\n".join(call_descriptions)
+
+            new_messages.append({
+                "role": "assistant",
+                "content": combined,
+            })
+
+        elif role == "tool":
+            # tool 消息已合并到上面的 assistant 消息中，跳过
+            continue
+
+        else:
+            new_messages.append(msg)
+
+    body["messages"] = new_messages
+    return json.dumps(body, ensure_ascii=False).encode("utf-8")
 
 
 def _sanitize_url(url: str) -> str:
@@ -113,13 +208,17 @@ def _should_bypass_proxy(url: str) -> bool:
 
 
 def _build_opener(bypass: bool):
+    handlers = [urllib.request.HTTPSHandler(context=_ssl_context)]
+    
     if bypass:
-        return urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    proxy_url = _proxy_settings.get("proxyUrl", "")
-    if proxy_url:
-        proxies = {"http": proxy_url, "https": proxy_url}
-        return urllib.request.build_opener(urllib.request.ProxyHandler(proxies))
-    return urllib.request.build_opener()
+        handlers.append(urllib.request.ProxyHandler({}))
+    else:
+        proxy_url = _proxy_settings.get("proxyUrl", "")
+        if proxy_url:
+            proxies = {"http": proxy_url, "https": proxy_url}
+            handlers.append(urllib.request.ProxyHandler(proxies))
+            
+    return urllib.request.build_opener(*handlers)
 
 
 # ─── 响应头清理辅助 ─────────────────────────────────────────────────────────────
@@ -241,6 +340,514 @@ def _write_image_cache(url: str, data: bytes, mime: str):
         pass
 
 
+def _strip_html_tags(text: str) -> str:
+    text = re.sub(r"<script[\s\S]*?</script>", " ", text, flags=re.I)
+    text = re.sub(r"<style[\s\S]*?</style>", " ", text, flags=re.I)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = _html.unescape(text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _normalize_search_url(provider: str, url: str, language: str = "") -> str:
+    """Normalize search URL. For Google: add hl/gl/gbv params. For Bing: add setlang."""
+    try:
+        parsed = urllib.parse.urlsplit(url)
+        query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+
+        # Clean up query text: strip residual lang:xx and leading/trailing spaces
+        q = query.get("q", [""])[0]
+        q = re.sub(r'\s+lang:\w+', '', q).strip()
+        query["q"] = [q]
+
+        lang = language or ""
+
+        if provider == "local-google":
+            if lang:
+                query["hl"] = [lang]
+                query["gl"] = [lang]
+            query["nfpr"] = ["1"]
+            query["num"] = [query.get("num", ["10"])[0] or "10"]
+            query.pop("gbv", None)
+
+        elif provider == "local-bing":
+            if lang:
+                query["setlang"] = [lang]
+
+        new_query = urllib.parse.urlencode(query, doseq=True)
+        return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, new_query, parsed.fragment))
+    except Exception:
+        return url
+
+
+_GOOGLE_BLOCKED_DOMAINS = (
+    "google.com/search", "accounts.google.com", "support.google.com",
+    "policies.google.com", "maps.google.com/maps", "play.google.com",
+    "chrome.google.com", "www.google.com/preferences",
+    "www.google.com/webhp", "www.google.com/intl",
+    "google.com/sorry", "consent.google.com",
+)
+
+_BING_BLOCKED_DOMAINS = (
+    "bing.com/search", "bing.com/ck/a", "login.microsoftonline",
+    "bing.com/rewards", "bing.com/maps", "bing.com/news/search",
+    "microsoft.com/en-us/servicesagreement", "go.microsoft.com",
+)
+
+_SEARCH_DEBUG_DIR = os.path.join(os.path.expanduser("~"), ".cherrystudio", "debug")
+
+
+def _dump_search_debug(provider: str, html: str):
+    """Save HTML to debug file when extraction returns 0 results."""
+    try:
+        os.makedirs(_SEARCH_DEBUG_DIR, exist_ok=True)
+        import time as _t
+        ts = _t.strftime("%Y%m%d_%H%M%S")
+        path = os.path.join(_SEARCH_DEBUG_DIR, f"search_{provider}_{ts}.html")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(html)
+        _log(f"[network/search] DEBUG: saved HTML ({len(html)} chars) -> {path}")
+        _log(f"[network/search] DEBUG: first 1500 chars:\n{html[:1500]}")
+    except Exception as e:
+        _log(f"[network/search] DEBUG dump failed: {e}")
+
+
+def _is_google_blocked_page(html: str) -> str:
+    """Detect Google captcha, consent, JS-only, or redirect pages. Returns reason or empty."""
+    sample = html[:10000].lower()
+
+    captcha_indicators = [
+        "support.google.com/websearch", "unusual traffic",
+        "detected unusual traffic", "/sorry/index",
+        "recaptcha", "g-recaptcha", "请完成验证",
+    ]
+    if sum(1 for ind in captcha_indicators if ind in sample) >= 1:
+        return "captcha"
+
+    consent_indicators = [
+        "consent.google.com", "before you continue",
+        "consent-bump", "consent_page",
+    ]
+    if sum(1 for ind in consent_indicators if ind in sample) >= 1:
+        return "consent"
+
+    js_only_indicators = [
+        "/httpservice/retry/enablejs",
+        "如果您在几秒钟内没有被重定向",
+        "if you are not redirected within a few seconds",
+    ]
+    if sum(1 for ind in js_only_indicators if ind in sample) >= 1:
+        return "js-only"
+
+    return ""
+
+
+# Flexible href extraction: handles href="...", href='...', href=...
+_RE_HREF = re.compile(
+    r'''<a\s[^>]*?href\s*=\s*(?:"([^"]*?)"|'([^']*?)'|([^\s>]+))''',
+    re.I
+)
+_RE_A_TAG = re.compile(r"<a\s[^>]*?>([\s\S]*?)</a>", re.I)
+
+
+def _extract_all_links(html: str):
+    """Extract all (href, inner_html) pairs from <a> tags with flexible quote matching."""
+    links = []
+    for m in _RE_HREF.finditer(html):
+        href = m.group(1) or m.group(2) or m.group(3) or ""
+        href = _html.unescape(href.strip())
+        if not href:
+            continue
+        start = m.start()
+        a_end = _RE_A_TAG.search(html, start)
+        inner = ""
+        if a_end and a_end.start() == start:
+            inner = a_end.group(1)
+        else:
+            close_idx = html.find("</a>", start)
+            if close_idx > start:
+                tag_end = html.find(">", start)
+                if tag_end > start:
+                    inner = html[tag_end + 1:close_idx]
+        links.append((href, inner))
+    return links
+
+
+def _is_google_url_blocked(url: str) -> bool:
+    return any(bd in url for bd in _GOOGLE_BLOCKED_DOMAINS)
+
+
+def _google_extract_from_html(html: str):
+    """Strategy A: extract from <a> tags in rendered HTML."""
+    results = []
+    seen = set()
+    for href, inner in _extract_all_links(html):
+        title = _strip_html_tags(inner)
+        if href.startswith("/url?"):
+            try:
+                target = urllib.parse.parse_qs(
+                    urllib.parse.urlsplit(href).query
+                ).get("q", [""])[0]
+            except Exception:
+                target = ""
+        elif href.startswith("http"):
+            target = href
+        else:
+            continue
+        if not target.startswith("http") or _is_google_url_blocked(target):
+            continue
+        if not title or len(title) < 4 or target in seen:
+            continue
+        seen.add(target)
+        results.append({"title": title, "url": target})
+    return results
+
+
+def _google_extract_from_js(html: str):
+    """Strategy B: extract URLs from Google's JS-rendered page data.
+
+    Modern Google embeds search results in JavaScript data structures.
+    We look for URL patterns in the full page content.
+    """
+    results = []
+    seen = set()
+
+    # Pattern 1: /url?q=URL — Google redirect links in JS data
+    for m in re.finditer(r"/url\?q=(https?://[^&\"'\\>\s,\]]+)", html):
+        url = urllib.parse.unquote(m.group(1))
+        if not url.startswith("http") or _is_google_url_blocked(url):
+            continue
+        if url in seen:
+            continue
+        seen.add(url)
+        # Try to find a title near this URL (within ±300 chars)
+        title = _find_nearby_title(html, m.start(), url)
+        results.append({"title": title, "url": url})
+
+    if results:
+        _log(f"[network/search] Google JS strategy: /url?q= found {len(results)}")
+        return results
+
+    # Pattern 2: ["URL","Title",...] or ["URL",null,...,"Title"]
+    for m in re.finditer(r'\["(https?://[^"]{10,})"[,\]]', html):
+        url = m.group(1).replace("\\/", "/").replace("\\u0026", "&")
+        if _is_google_url_blocked(url) or url in seen:
+            continue
+        seen.add(url)
+        title = _find_nearby_title(html, m.start(), url)
+        results.append({"title": title, "url": url})
+
+    if results:
+        _log(f"[network/search] Google JS strategy: [URL,...] found {len(results)}")
+        return results
+
+    # Pattern 3: Escaped URLs https:\/\/... in JS strings
+    for m in re.finditer(r'"(https?:\\/\\/[^"]{10,})"', html):
+        url = m.group(1).replace("\\/", "/").replace("\\u0026", "&")
+        if _is_google_url_blocked(url) or url in seen:
+            continue
+        seen.add(url)
+        title = _find_nearby_title(html, m.start(), url)
+        results.append({"title": title, "url": url})
+
+    if results:
+        _log(f"[network/search] Google JS strategy: escaped URLs found {len(results)}")
+        return results
+
+    # Pattern 4: Any quoted external https URL as last resort
+    for m in re.finditer(
+        r'"(https?://(?!www\.google\.com|google\.com|accounts\.google'
+        r"|googleapis\.com|gstatic\.com|schema\.org|w3\.org"
+        r'|fonts\.g)[^\s"\\]{12,})"',
+        html,
+    ):
+        url = m.group(1).replace("\\/", "/").replace("\\u0026", "&")
+        if _is_google_url_blocked(url) or url in seen:
+            continue
+        if re.search(r"\.(js|css|png|jpg|gif|svg|ico|woff)(\?|$)", url, re.I):
+            continue
+        seen.add(url)
+        title = _find_nearby_title(html, m.start(), url)
+        results.append({"title": title, "url": url})
+
+    if results:
+        _log(f"[network/search] Google JS strategy: generic URLs found {len(results)}")
+
+    return results
+
+
+def _find_nearby_title(html: str, pos: int, url: str) -> str:
+    """Try to find a title string near a URL position in Google JS data."""
+    window = html[max(0, pos - 500):pos + 500]
+
+    # Look for quoted strings ≥4 chars that aren't URLs
+    candidates = re.findall(r'"([^"]{4,80})"', window)
+    best = ""
+    for c in candidates:
+        text = c.replace("\\/", "/").replace("\\u0026", "&")
+        if text.startswith("http") or text.startswith("/"):
+            continue
+        if re.match(r"^[\w\s.\-,;:!?()（）。，、；：！？\u4e00-\u9fff\u3000-\u303f]+$", text):
+            if len(text) > len(best):
+                best = text
+
+    if best:
+        return _html.unescape(best)
+
+    # Fallback: use domain + path
+    try:
+        parsed = urllib.parse.urlsplit(url)
+        path_part = parsed.path.rstrip("/").split("/")[-1] if parsed.path else ""
+        if path_part:
+            return f"{parsed.netloc} - {urllib.parse.unquote(path_part)}"
+        return parsed.netloc
+    except Exception:
+        return url[:60]
+
+
+def _google_extract_results(html: str):
+    blocked = _is_google_blocked_page(html)
+    if blocked:
+        _log(f"[network/search] Google blocked page detected: {blocked}")
+        return []
+
+    # Try HTML extraction first (for rare cases where Google returns real HTML)
+    results = _google_extract_from_html(html)
+    if results:
+        return results
+
+    # Fall back to JS data extraction (modern Google)
+    results = _google_extract_from_js(html)
+    return results
+
+
+def _bing_extract_results(html: str):
+    results = []
+    seen = set()
+
+    # Strategy 1: find <li class="b_algo"> blocks and extract h2 > a
+    algo_pattern = re.compile(
+        r'<li[^>]*class\s*=\s*["\'][^"\']*\bb_algo\b[^"\']*["\'][^>]*>([\s\S]*?)</li>',
+        re.I,
+    )
+    for block_m in algo_pattern.finditer(html):
+        block = block_m.group(1)
+        for href, inner in _extract_all_links(block):
+            if not href.startswith("http"):
+                continue
+            title = _strip_html_tags(inner)
+            if not title or len(title) < 4:
+                continue
+            if any(bd in href for bd in _BING_BLOCKED_DOMAINS):
+                continue
+            if href in seen:
+                continue
+            seen.add(href)
+            results.append({"title": title, "url": href})
+            break
+
+    # Strategy 2: <h2> containing <a href="https://...">
+    if not results:
+        h2_pattern = re.compile(r"<h2[^>]*>([\s\S]*?)</h2>", re.I)
+        for h2_m in h2_pattern.finditer(html):
+            h2_html = h2_m.group(1)
+            for href, inner in _extract_all_links(h2_html):
+                if not href.startswith("http"):
+                    continue
+                title = _strip_html_tags(inner)
+                if not title or len(title) < 4:
+                    continue
+                if any(bd in href for bd in _BING_BLOCKED_DOMAINS):
+                    continue
+                if href in seen:
+                    continue
+                seen.add(href)
+                results.append({"title": title, "url": href})
+
+    # Strategy 3: fallback — any external link with substantial title
+    if not results:
+        for href, inner in _extract_all_links(html):
+            if not href.startswith("http"):
+                continue
+            title = _strip_html_tags(inner)
+            if not title or len(title) < 10:
+                continue
+            if any(bd in href for bd in _BING_BLOCKED_DOMAINS):
+                continue
+            if "bing.com" in href or "microsoft.com" in href:
+                continue
+            if href in seen:
+                continue
+            seen.add(href)
+            results.append({"title": title, "url": href})
+
+    return results
+
+
+def _baidu_extract_results(html: str):
+    results = []
+    seen = set()
+
+    h3_pattern = re.compile(r"<h3[^>]*>([\s\S]*?)</h3>", re.I)
+    for h3_m in h3_pattern.finditer(html):
+        h3_html = h3_m.group(1)
+        for href, inner in _extract_all_links(h3_html):
+            if not href.startswith("http"):
+                continue
+            title = _strip_html_tags(inner)
+            if not title:
+                continue
+            if href in seen:
+                continue
+            seen.add(href)
+            results.append({"title": title, "url": href})
+
+    return results
+
+
+def _decode_ddg_redirect(href: str) -> str:
+    """Decode DuckDuckGo redirect URL to get the actual target URL.
+
+    DDG HTML uses: //duckduckgo.com/l/?uddg=ENCODED_URL&rut=...
+    """
+    href = _html.unescape(href.strip())
+
+    if "duckduckgo.com/l/?" in href or "duckduckgo.com/l/?" in href.replace("//", "/"):
+        try:
+            if href.startswith("//"):
+                href = "https:" + href
+            parsed = urllib.parse.urlsplit(href)
+            params = urllib.parse.parse_qs(parsed.query)
+            uddg = params.get("uddg", [""])[0]
+            if uddg and uddg.startswith("http"):
+                return uddg
+        except Exception:
+            pass
+
+    if href.startswith("http"):
+        return href
+
+    return ""
+
+
+def _duckduckgo_extract_results(html: str):
+    """Extract results from DuckDuckGo HTML version (html.duckduckgo.com/html/)."""
+    results = []
+    seen = set()
+
+    # Strategy 1: Find <a> tags with class="result__a" (href and class in any order)
+    result_a_pattern = re.compile(
+        r'<a\s[^>]*?class\s*=\s*["\']result__a["\'][^>]*>',
+        re.I,
+    )
+    for m in result_a_pattern.finditer(html):
+        tag = m.group(0)
+        # Extract href from this <a> tag
+        href_m = re.search(r'href\s*=\s*["\']([^"\']+)["\']', tag, re.I)
+        if not href_m:
+            href_m = re.search(r'href\s*=\s*([^\s>]+)', tag, re.I)
+        if not href_m:
+            continue
+
+        raw_href = href_m.group(1)
+        url = _decode_ddg_redirect(raw_href)
+        if not url or not url.startswith("http"):
+            continue
+
+        # Extract title (text content of this <a>)
+        a_end = html.find("</a>", m.end())
+        if a_end > m.end():
+            inner = html[m.end():a_end]
+            title = _strip_html_tags(inner)
+        else:
+            title = ""
+
+        if not title or len(title) < 3:
+            continue
+        if "duckduckgo.com" in url:
+            continue
+        if url in seen:
+            continue
+        seen.add(url)
+        results.append({"title": title, "url": url})
+
+    if results:
+        return results
+
+    # Strategy 2: Find result blocks and extract any links with uddg= parameter
+    for m in re.finditer(r'uddg=(https?[^&"\'>\s]+)', html, re.I):
+        url = urllib.parse.unquote(m.group(1))
+        if not url.startswith("http") or "duckduckgo.com" in url:
+            continue
+        if url in seen:
+            continue
+        seen.add(url)
+        title = _find_nearby_title(html, m.start(), url)
+        results.append({"title": title, "url": url})
+
+    if results:
+        return results
+
+    # Strategy 3: Any external link with substantial title (last resort)
+    for href, inner in _extract_all_links(html):
+        url = _decode_ddg_redirect(href) if "duckduckgo.com" in href else href
+        if not url or not url.startswith("http") or "duckduckgo.com" in url:
+            continue
+        title = _strip_html_tags(inner)
+        if not title or len(title) < 4:
+            continue
+        if url in seen:
+            continue
+        seen.add(url)
+        results.append({"title": title, "url": url})
+
+    return results
+
+
+def _fetch_duckduckgo_fallback(query: str, timeout: float) -> list:
+    """Fetch search results from DuckDuckGo HTML as fallback for Google."""
+    ddg_url = "https://html.duckduckgo.com/html/?q=" + urllib.parse.quote(query, safe="")
+    _log(f"[network/search] Google→DuckDuckGo fallback: {ddg_url[:100]}")
+
+    bypass = _should_bypass_proxy(ddg_url)
+    opener = _build_opener(bypass)
+
+    req = urllib.request.Request(ddg_url)
+    req.add_header("User-Agent",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+    req.add_header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+    req.add_header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.7")
+    req.add_header("Accept-Encoding", "identity")
+
+    try:
+        with opener.open(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+            results = _duckduckgo_extract_results(raw)
+            _log(f"[network/search] DuckDuckGo extracted {len(results)} results")
+            if not results:
+                _dump_search_debug("duckduckgo-fallback", raw)
+            return results
+    except Exception as e:
+        _log(f"[network/search] DuckDuckGo fallback failed: {e}")
+        return []
+
+
+def _extract_search_results(provider: str, html: str):
+    if provider == "local-google":
+        results = _google_extract_results(html)
+    elif provider == "local-bing":
+        results = _bing_extract_results(html)
+    elif provider == "local-baidu":
+        results = _baidu_extract_results(html)
+    else:
+        results = []
+
+    if not results:
+        _dump_search_debug(provider, html)
+
+    return results
+
+
 @route("/api/v1/proxy/image", methods=["POST"])
 def proxy_image(ctx: dict) -> Any:
     """
@@ -274,7 +881,16 @@ def proxy_image(ctx: dict) -> Any:
 
     try:
         req = urllib.request.Request(url, method="GET")
-        req.add_header("User-Agent", "CherryStudio-ImageProxy/1.0")
+        req.add_header(
+            "User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36",
+        )
+        parsed = urllib.parse.urlparse(url)
+        referer_origin = f"{parsed.scheme}://{parsed.netloc}/"
+        req.add_header("Referer", referer_origin)
+        req.add_header("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
         opener = _build_opener(bypass=False)
         resp = opener.open(req, timeout=timeout)
         data = resp.read()
@@ -342,6 +958,13 @@ def fetch_proxy(ctx: dict) -> Any:
             body_bytes = body_data.encode("utf-8")
         elif isinstance(body_data, bytes):
             body_bytes = body_data
+
+    # Gemini 3: 将历史 tool_call 消息转为文本以绕过 thought_signature 400 错误
+    if body_bytes and method == "POST":
+        try:
+            body_bytes = _patch_gemini3_tool_history(url, body_bytes)
+        except Exception:
+            pass
 
     # ── 构建请求 ──────────────────────────────────────────────────────────────
     req = urllib.request.Request(url, data=body_bytes, method=method)
@@ -452,7 +1075,8 @@ def fetch_proxy(ctx: dict) -> Any:
         # 代理连接失败时（如 WinError 10061），自动回退直连
         if not bypass and _proxy_settings.get("proxyUrl"):
             _log(f"[network/fetch] 代理失败 ({e})，回退直连: {url[:80]}")
-            direct_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            # direct_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            direct_opener = _build_opener(bypass=True)
             try:
                 return _do_request(direct_opener)
             except urllib.error.HTTPError as e2:
@@ -570,7 +1194,8 @@ def http_get(ctx: dict) -> Any:
         # 代理连接失败时，回退直连
         if not bypass and _proxy_settings.get("proxyUrl"):
             _log(f"[network/http-get] 代理失败 ({e})，回退直连: {url[:80]}")
-            direct_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            # direct_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            direct_opener = _build_opener(bypass=True)
             try:
                 with direct_opener.open(req, timeout=timeout) as resp:
                     data = resp.read().decode("utf-8", errors="replace")
@@ -643,4 +1268,143 @@ def http_post(ctx: dict) -> Any:
         return {"success": False, "error": f"HTTP {e.code}: {err[:200]}", "status": e.code}
     except Exception as e:
         _log(f"[network/http-post] {e}")
+        return {"success": False, "error": str(e)}
+
+
+_GOOGLE_USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+]
+
+
+def _do_search_request(normalized_url: str, provider: str, headers: dict, timeout: float, ua_index: int = 0):
+    """Execute a single search request. Returns (html_str, status_code) or raises."""
+    bypass = _should_bypass_proxy(normalized_url)
+    opener = _build_opener(bypass)
+
+    ua_list = _GOOGLE_USER_AGENTS if provider == "local-google" else _GOOGLE_USER_AGENTS[:1]
+    ua = ua_list[ua_index % len(ua_list)]
+
+    default_headers = {
+        "User-Agent": ua,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Accept-Encoding": "identity",
+        "DNT": "1",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+    }
+    if provider == "local-google":
+        default_headers["Referer"] = "https://www.google.com/"
+    elif provider == "local-bing":
+        default_headers["Referer"] = "https://www.bing.com/"
+
+    merged = {**default_headers, **headers}
+    req = urllib.request.Request(normalized_url)
+    for k, v in merged.items():
+        if v:
+            req.add_header(str(k), str(v))
+
+    with opener.open(req, timeout=timeout) as resp:
+        raw = resp.read().decode("utf-8", errors="replace")
+        return raw, resp.getcode()
+
+
+def _extract_query_from_search_url(url: str) -> str:
+    """Extract the q= parameter from a search engine URL."""
+    try:
+        parsed = urllib.parse.urlsplit(url)
+        q = urllib.parse.parse_qs(parsed.query).get("q", [""])[0]
+        return q.strip()
+    except Exception:
+        return ""
+
+
+@route("/api/v1/network/search", methods=["POST"])
+def search_engine(ctx: dict) -> Any:
+    body = ctx["body"]
+    provider = body.get("provider", "")
+    url = body.get("url", "")
+    language = body.get("language", "")
+    headers = body.get("headers") or {}
+    _raw_timeout = body.get("timeout", 30)
+
+    if isinstance(_raw_timeout, (int, float)) and _raw_timeout > 300:
+        timeout = float(_raw_timeout) / 1000.0
+    else:
+        timeout = float(_raw_timeout) if _raw_timeout else 30.0
+    timeout = max(5.0, min(300.0, timeout))
+
+    if provider not in ("local-google", "local-bing", "local-baidu"):
+        return {"success": False, "error": f"unsupported provider: {provider}"}
+    if not url:
+        return {"success": False, "error": "missing url"}
+
+    normalized_url = _normalize_search_url(provider, url, language)
+    normalized_url = _sanitize_url(normalized_url)
+    if not normalized_url:
+        return {"success": False, "error": "invalid url (non-ASCII or malformed)"}
+
+    _log(f"[network/search] {provider} -> {normalized_url[:120]}")
+
+    # --- Google: try direct fetch, then DuckDuckGo fallback ---
+    if provider == "local-google":
+        # Attempt 1: direct Google fetch
+        try:
+            raw_html, status = _do_search_request(
+                normalized_url, provider, headers, timeout, ua_index=0
+            )
+            blocked = _is_google_blocked_page(raw_html)
+            if not blocked:
+                results = _extract_search_results(provider, raw_html)
+                if results:
+                    _log(f"[network/search] Google direct: {len(results)} results")
+                    return {"success": True, "status": status,
+                            "results": results, "count": len(results)}
+
+            _log(f"[network/search] Google direct failed (blocked={blocked or 'no-results'}), "
+                 f"falling back to DuckDuckGo")
+        except Exception as e:
+            _log(f"[network/search] Google direct error: {e}")
+
+        # Attempt 2: DuckDuckGo HTML fallback
+        query = _extract_query_from_search_url(normalized_url)
+        if query:
+            results = _fetch_duckduckgo_fallback(query, timeout)
+            if results:
+                return {"success": True, "status": 200,
+                        "results": results, "count": len(results),
+                        "fallback": "duckduckgo"}
+
+        return {"success": True, "status": 200, "results": [], "count": 0,
+                "warning": "Google requires JavaScript; DuckDuckGo fallback also failed"}
+
+    # --- Bing / Baidu: direct fetch ---
+    try:
+        raw_html, status = _do_search_request(
+            normalized_url, provider, headers, timeout, ua_index=0
+        )
+        results = _extract_search_results(provider, raw_html)
+        _log(f"[network/search] {provider} extracted {len(results)} results")
+
+        # Bing fallback: if 0 results, try DuckDuckGo
+        if not results and provider == "local-bing":
+            query = _extract_query_from_search_url(normalized_url)
+            if query:
+                _log("[network/search] Bing returned 0, trying DuckDuckGo fallback")
+                results = _fetch_duckduckgo_fallback(query, timeout)
+                if results:
+                    return {"success": True, "status": 200,
+                            "results": results, "count": len(results),
+                            "fallback": "duckduckgo"}
+
+        return {"success": True, "status": status,
+                "results": results, "count": len(results)}
+    except urllib.error.HTTPError as e:
+        err = e.read().decode("utf-8", errors="replace")
+        return {"success": False, "error": f"HTTP {e.code}: {err[:200]}", "status": e.code}
+    except Exception as e:
+        _log(f"[network/search] {provider} error: {e}")
         return {"success": False, "error": str(e)}
