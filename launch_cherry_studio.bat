@@ -3,7 +3,7 @@ echo Starting Cherry Studio for Houdini...
 echo.
 
 REM Check if Houdini 20.5 is installed
-set "HOUDINI_PATH=C:\Program Files\Side Effects Software\Houdini 20.5.613\bin\hython.exe"
+set "HOUDINI_PATH=C:\Program Files\Side Effects Software\Houdini 21.0.512\bin\hython.exe"
 if not exist "%HOUDINI_PATH%" (
     echo Error: Houdini 20.5.613 not found at expected location.
     echo Please update the path in this script or install Houdini 20.5.613

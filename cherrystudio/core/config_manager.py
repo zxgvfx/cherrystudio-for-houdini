@@ -2,7 +2,6 @@ import os
 import json
 import logging
 import datetime
-from PySide6.QtCore import QStandardPaths
 
 # 配置日志
 _log = logging.getLogger('ConfigManager')
@@ -33,7 +32,7 @@ class ConfigManager:
             # 获取当前文件所在目录: cherrystudio/core
             current_dir = os.path.dirname(os.path.abspath(__file__))
             # 项目根目录 (假设结构为 root/cherrystudio/core)
-            project_root = os.path.dirname(os.path.dirname(current_dir))
+            project_root = os.path.dirname(current_dir)
             
             # 使用项目根目录下的 resources 目录
             potential_path = os.path.join(project_root, "resources", "centralized-config.json")
@@ -52,7 +51,7 @@ class ConfigManager:
     def load(self):
         """加载并合并配置"""
         # 1. 加载中心化配置 (只读)
-        centralized = {"models": [], "mcpServers": [], "version": "1.0.0", "providers": []}
+        centralized = {"models": [], "mcpServers": [], "version": "1.0.0", "providers": [], "webSearchProviders": []}
         if self._centralized_config_path and os.path.exists(self._centralized_config_path):
             try:
                 with open(self._centralized_config_path, 'r', encoding='utf-8') as f:
@@ -62,6 +61,8 @@ class ConfigManager:
                         m["isCentralized"] = True
                     for s in centralized.get("mcpServers", []):
                         s["isCentralized"] = True
+                    for w in centralized.get("webSearchProviders", []):
+                        w["isCentralized"] = True
                 _log.info(f"Loaded centralized config from {self._centralized_config_path}")
             except Exception as e:
                 _log.error(f"Failed to load centralized config: {e}")
@@ -112,6 +113,7 @@ class ConfigManager:
             "mcpServers": centralized.get("mcpServers", []),
             "centralizedProviders": centralized.get("providers", []),
             "centralizedMcpServers": centralized.get("mcpServers", []),
+            "centralizedWebSearchProviders": centralized.get("webSearchProviders", []),
             "defaultModels": default_models,  # 添加 defaultModels 支持
             "userModels": [], 
             "userMcpServers": [],

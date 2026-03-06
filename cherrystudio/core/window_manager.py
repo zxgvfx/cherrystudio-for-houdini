@@ -1,18 +1,48 @@
 """
 窗口管理器模块
-负责创建和配置主窗口
+负责创建和配置主窗口，并整合后端服务的启动与会话注册。
 """
 
 import os
 import json
-from PySide6.QtCore import QUrl, QFile, QStandardPaths, Qt, QObject
+from PySide6.QtCore import QUrl, Qt, QObject
+
+# 在 Chromium 引擎初始化之前设置标志（必须在所有 PySide6 Qt 类 import 之前）。
+#
+# 目的：
+#   1. --proxy-bypass-list：防止系统代理拦截 localhost 请求
+#      （代理宕机时 JS fetch('127.0.0.1:9876') 会报 "Failed to fetch"）
+#   2. --disable-web-security：允许 file:// 页面通过 fetch() 访问 http://localhost
+#      （Chromium 默认禁止 file:// → http:// 的跨源请求，即使设置了
+#       LocalContentCanAccessRemoteUrls 也可能不生效）
+#   3. --allow-file-access-from-files：允许 file:// 读取其他 file:// 资源
+_chrome_flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
+_flags_to_add = []
+if "--proxy-bypass-list" not in _chrome_flags:
+    _flags_to_add.append("--proxy-bypass-list=127.0.0.1;localhost;::1;<-loopback>")
+if "--disable-web-security" not in _chrome_flags:
+    _flags_to_add.append("--disable-web-security")
+if "--allow-file-access-from-files" not in _chrome_flags:
+    _flags_to_add.append("--allow-file-access-from-files")
+if _flags_to_add:
+    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
+        _chrome_flags + " " + " ".join(_flags_to_add)
+    ).strip()
 from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtWebEngineCore import QWebEngineScript, QWebEngineProfile, QWebEngineSettings
-from PySide6.QtWebChannel import QWebChannel
+from PySide6.QtWebEngineCore import (
+    QWebEngineScript, QWebEngineProfile, QWebEngineSettings,
+    QWebEnginePage,
+)
 from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
 
-from ..api.cherry_studio_api import CherryStudioAPI
+# 支持两种 API：v2（薄代理）和 v1（原单体），通过环境变量切换
+_USE_V2_API = os.environ.get("CHERRY_API_V2", "1") == "1"
+if _USE_V2_API:
+    from ..api.cherry_studio_api_v2 import CherryStudioAPI
+else:
+    from ..api.cherry_studio_api import CherryStudioAPI
+
 from ..web.electron_injector import (
     get_electron_api_script,
     get_early_logger_fix_script,
@@ -20,9 +50,66 @@ from ..web.electron_injector import (
 )
 
 
+def _ensure_backend_service() -> str:
+    """
+    确保后端服务可用，返回服务的 base URL。
+
+    必须在当前进程内嵌入启动后端，因为 Qt Bridge（qt_bridge.py）需要
+    直接访问 CherryStudioAPI 实例（同进程内的 Python 对象），外部后端
+    进程无法持有 Qt API 引用。
+    """
+    try:
+        from ..backend.service_runner import BackendService
+        svc = BackendService.instance()
+        if not svc.is_running():
+            port = svc.start()
+            print(f"[WindowManager] Backend service started (embedded) on port {port}")
+        return svc.get_base_url()
+    except Exception as e:
+        import traceback
+        print(f"[WindowManager] Failed to start backend service: {e}")
+        print(f"[WindowManager] Full traceback:\n{traceback.format_exc()}")
+        return ""
+
+
+def _register_dcc_session(backend_url: str) -> str:
+    """
+    启动 Houdini MCP Server 并向后端服务注册当前 DCC 会话。
+    返回 session_id（用于注入到前端 URL）。
+    """
+    if not backend_url:
+        return ""
+    try:
+        from ..dcc.session import DCCSession
+        from ..dcc.houdini_mcp import HoudiniMCPServer
+
+        session = DCCSession.instance()
+        session.set_backend_url(backend_url)
+
+        # 启动 Houdini MCP Server（如果尚未启动）
+        if session.mcp_port == 0:
+            mcp_server = HoudiniMCPServer()
+            mcp_port = mcp_server.start()
+            session.set_mcp_port(mcp_port)
+            print(f"[WindowManager] Houdini MCP Server started on port {mcp_port}")
+
+        # 注册到后端
+        session.register_to_backend()
+        return session.session_id
+    except Exception as e:
+        print(f"[WindowManager] DCC session registration failed: {e}")
+        return ""
+
+
 def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, parent=None):
     """
-    创建主窗口
+    创建主窗口。
+    
+    架构步骤：
+    1. 启动后端服务（如未运行）
+    2. 注册 DCC 会话（启动 Houdini MCP Server）
+    3. 将 session_id 和 backend_url 注入到前端加载 URL
+    4. 创建 QWebEngineView，前端通过 HTTP 直连后端（无 QWebChannel）
     
     Args:
         load_url: 要加载的 URL（本地文件路径或 HTTP URL）
@@ -31,6 +118,30 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
     Returns:
         QMainWindow: 创建的主窗口实例
     """
+    try:
+        # ── Step 1: 启动后端服务 ──────────────────────────────────────────────
+        backend_url = _ensure_backend_service()
+        
+        # ── Step 2: 注册 DCC 会话 ────────────────────────────────────────────
+        session_id = _register_dcc_session(backend_url)
+        
+        # ── Step 3: 将会话信息注入到 URL ─────────────────────────────────────
+        if session_id and backend_url and "?" not in load_url:
+            from ..dcc.session import DCCSession
+            query = DCCSession.instance().get_url_params()
+            # 对于本地文件 URL，query 参数需要加在 fragment 之前
+            # 注意：QWebEngine 加载本地文件时 query 参数可能被忽略，
+            # 但我们通过 JS 注入也会传递这些信息
+            load_url_with_params = load_url  # 通过 JS 注入更可靠（见下方注入脚本）
+        else:
+            load_url_with_params = load_url
+
+    except Exception as _setup_err:
+        print(f"[WindowManager] Setup error (non-fatal): {_setup_err}")
+        backend_url = ""
+        session_id = ""
+        load_url_with_params = load_url
+
     try:
         # 在 Houdini 内部尽量挂到主窗口，避免焦点与生命周期问题（可被调用方覆盖）
         if parent is None and not as_widget:
@@ -88,7 +199,7 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
         
         # 使用默认 profile（hython 环境不支持命名 Profile，会崩溃）
         # 虽然 defaultProfile 是 off-the-record 模式，但我们会在 JavaScript 层面手动持久化 IndexedDB
-        profile = QWebEngineProfile.defaultProfile()
+        profile = QWebEngineProfile("CherryStudio")
         profile.setPersistentStoragePath(storage_path)
         cache_path = os.path.join(storage_path, "cache")
         os.makedirs(cache_path, exist_ok=True)
@@ -101,17 +212,13 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
         print(f"缓存路径: {profile.cachePath()}")
         
         # 创建 WebEngine 视图（使用默认 profile）
-        web_view = QWebEngineView()
-        
-        # 启用 IndexedDB 和本地存储的持久化
-        settings = web_view.settings()
-        settings.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.AllowRunningInsecureContent, True)
-        
-        # 打印配置信息用于调试
-        print(f"LocalStorageEnabled: {settings.testAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled)}")
-        print(f"LocalContentCanAccessFileUrls: {settings.testAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls)}")
+        try:
+            web_view = QWebEngineView(profile)
+        except TypeError:
+            # Fallback for PySide6 versions that don't accept profile in constructor
+            web_view = QWebEngineView()
+            page = QWebEnginePage(profile, web_view)
+            web_view.setPage(page)
         
         # 创建支持拖拽的容器
         class WebContainer(QWidget):
@@ -247,45 +354,101 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
         
         # 设置容器
         container = WebContainer(web_view, window)
+        container._profile = profile  # 生命周期
         if window is not None:
             window.setCentralWidget(container)
         
         # 创建并注册 API 对象
-        # 注意：使用合理的父对象，确保生命周期绑定
         api_parent = window if window is not None else container
         api = CherryStudioAPI(api_parent)
-        page = web_view.page()
-        
-        # 使用 QWebChannel 连接 Python API 和 JavaScript
-        # 注意：传入 window 作为父对象，确保生命周期正确
-        channel = QWebChannel(api_parent)
-        channel.registerObject("api", api)
-        # 兼容旧逻辑：直接暴露 network 名称
+
+        # 注入后端服务地址（仅 v2 API 支持）
+        if backend_url and hasattr(api, 'set_backend_url'):
+            api.set_backend_url(backend_url)
+
+        # ── 自定义 Page：过滤 JS console 噪音，只保留有意义的输出 ──────────────
+        class _FilteredPage(QWebEnginePage):
+            # 只要消息包含以下任意子串，就完全过滤（无论日志级别）
+            _SUPPRESS_SUBSTRINGS = (
+                # localStorage / 配置保存
+                "localStorage.setItem called",
+                "localStorage restored",
+                "localStorage saved",
+                "Config changed, saving",
+                # [Qt Proxy] 内存 API 拦截（高频，无用）
+                "[Qt Proxy]",
+                # apiServer 心跳
+                "apiServer.getStatus called",
+                # ipcRenderer 日志转发（覆盖太广，已由后端记录）
+                "ipcRenderer.invoke: app:log-to-main",
+                # 初始化成功通知（只需看到一次）
+                "fetchProxy monitor installed",
+                "apiServer methods overridden successfully",
+                "Agent API proxy installed",
+                "Backend client ready",
+                "早期脚本",
+                "早期LoggerService修复",
+                "memory.setConfig 拦截器",
+                "DOMContentLoaded 事件已手动触发",
+                "qt_bridge",
+                # ProviderConfig / Config 覆盖
+                "ProviderConfig",
+                "[Config:",
+                "[LoggerService]",
+                # fetchProxy 响应详情（调试用，平时不需要）
+                "fetchProxy response",
+                # 重复的 MemoryService 配置警告（models 未定义，非致命）
+                "Failed to update memory config: TypeError: Cannot use 'in' operator",
+            )
+            # 遇到以下关键词则强制输出（即使匹配了上面的过滤规则也不过滤）
+            _FORCE_SHOW_KEYWORDS = (
+                "WinError", "timed out", "Traceback", "Exception",
+            )
+            # info 级别额外要求包含以下关键词才输出
+            _ALWAYS_SHOW_KEYWORDS = (
+                "error", "Error", "failed", "Failed",
+                "Backend", "backend", "MCP",
+                "WinError", "timed out",
+            )
+
+            def javaScriptConsoleMessage(self, level, message, line_number, source_id):
+                # 强制显示关键词（优先级最高）
+                force = any(kw in message for kw in self._FORCE_SHOW_KEYWORDS)
+                if not force:
+                    # 子串过滤
+                    for sub in self._SUPPRESS_SUBSTRINGS:
+                        if sub in message:
+                            return
+                    # info 级别只在包含关键词时打印
+                    if level == QWebEnginePage.JavaScriptConsoleMessageLevel.InfoMessageLevel:
+                        if not any(kw in message for kw in self._ALWAYS_SHOW_KEYWORDS):
+                            return
+                print(f"js: {message}")
+
+        page_parent = window if window is not None else container
+        page = _FilteredPage(profile, page_parent)
+        web_view.setPage(page)
+
+        # ── WebEngine Settings（必须在 setPage 之后设置，否则会被替换掉）──────
+        # setPage() 切换到 _FilteredPage 后，web_view.settings() 返回新 page 的 settings。
+        # LocalContentCanAccessRemoteUrls=True 是关键：允许 file:// 页面通过
+        # fetch() 访问 http://127.0.0.1:9876（后端服务），否则 Chromium 会拒绝请求。
+        _settings = web_view.settings()
+        _settings.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, True)
+        _settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True)
+        _settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
+        _settings.setAttribute(QWebEngineSettings.WebAttribute.AllowRunningInsecureContent, True)
+        _settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptCanAccessClipboard, True)
+        print(f"LocalStorageEnabled: {_settings.testAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled)}")
+        print(f"LocalContentCanAccessRemoteUrls: {_settings.testAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls)}")
+
+        # ── 注册 CherryStudioAPI 到后端 Qt Bridge（替代 QWebChannel） ──────
         try:
-            channel.registerObject("network", api)
-        except Exception:
-            pass
-        page.setWebChannel(channel)
-        
-        # 注入脚本
-        # 0. 内联注入 qwebchannel.js（确保 QWebChannel 可用）
-        try:
-            qwc_file = QFile(":/qtwebchannel/qwebchannel.js")
-            qwc_source = ""
-            if qwc_file.exists() and qwc_file.open(QFile.ReadOnly | QFile.Text):
-                qwc_source = bytes(qwc_file.readAll()).decode("utf-8", errors="ignore")
-                qwc_file.close()
-            if qwc_source:
-                qwc_injection = QWebEngineScript()
-                qwc_injection.setName("inline-qwebchannel-js")
-                qwc_injection.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
-                qwc_injection.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
-                qwc_injection.setRunsOnSubFrames(True)
-                qwc_injection.setSourceCode(qwc_source)
-                page.scripts().insert(qwc_injection)
-                print("QWebChannel.js 已内联注入")
+            from ..backend.routes.qt_bridge import set_qt_api
+            set_qt_api(api)
+            print("[WindowManager] Qt API registered to backend qt_bridge")
         except Exception as e:
-            print(f"QWebChannel.js 注入失败: {e}")
+            print(f"[WindowManager] Failed to register Qt API to qt_bridge: {e}")
         
         # 安装事件过滤器以处理拖拽
         if window:
@@ -320,6 +483,22 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
             # 我们需要在 API 中添加 startDrag 方法，并在前端标题栏 mousedown 时调用
             pass
 
+        # 0.5 注入会话信息（backend_url、session_id），供前端直接使用
+        _backend_url_escaped = (backend_url or "").replace("\\", "\\\\").replace('"', '\\"')
+        _session_id_escaped = (session_id or "").replace('"', '\\"')
+        session_inject_script = QWebEngineScript()
+        session_inject_script.setName("cherry-session-info")
+        session_inject_script.setSourceCode(f"""
+// Cherry Studio 后端服务信息（由 Python 注入）
+window.__CHERRY_BACKEND_URL = "{_backend_url_escaped}";
+window.__CHERRY_SESSION_ID = "{_session_id_escaped}";
+window.__CHERRY_API_V2 = true;
+console.error('[Cherry] Backend URL:', window.__CHERRY_BACKEND_URL, 'Session:', window.__CHERRY_SESSION_ID);
+""")
+        session_inject_script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
+        session_inject_script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
+        session_inject_script.setRunsOnSubFrames(False)
+
         # 1. 早期修复脚本
         early_fix_script = QWebEngineScript()
         early_fix_script.setName("early-logger-fix")
@@ -345,6 +524,8 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
         post_load_script.setRunsOnSubFrames(True)
         
         if page:
+            page.scripts().insert(session_inject_script)
+            print(f"会话信息脚本已注入 (backend={backend_url}, session={session_id[:8] if session_id else 'none'}...)")
             page.scripts().insert(early_fix_script)
             print("早期LoggerService修复脚本已注入")
             page.scripts().insert(electron_api_script)
@@ -367,7 +548,7 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
         def on_load_finished(ok):
             if ok:
                 print("页面加载完成")
-                print(f"当前窗口标题: {window.windowTitle()}")
+                # print(f"当前窗口标题: {window.windowTitle()}")
                 # 注意：page.runJavaScript() 在 hython 环境中不工作
                 # 所有脚本都通过 QWebEngineScript.insert() 注入
             else:
@@ -388,7 +569,6 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
         holder = window if window is not None else container
         holder._webview_ref = web_view
         holder._api_ref = api
-        holder._channel_ref = channel
         
         print("窗口创建成功" if window is not None else "组件创建成功")
         return window if window is not None else container
@@ -396,4 +576,3 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
     except Exception as e:
         print(f"创建窗口失败: {e}")
         raise
-

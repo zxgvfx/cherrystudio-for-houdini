@@ -1,0 +1,148 @@
+import { g as __toESM } from "./chunk-st2fFX3F.js";
+import { c as AntdProvider_default, d as require_lib } from "./LanguageSelect-BVmDji1F.js";
+import { b as require_jsx_runtime, f0 as loggerService } from "./jsx-runtime-CEZJLkjS.js";
+import { c as persistor, cY as getToastUtilities, d as store_default, dq as CodeStyleProvider, dx as ThemeProvider, fO as useSettings, js as StoreSyncService_default, jt as Provider_default } from "./store--vlm3lPp.js";
+import "./dayjs.min-C3TImjef.js";
+import { b as require_react } from "./react-4-AZLvKD.js";
+import "./schemas-DwHFUYcd.js";
+import "./types-1baJBz3q.js";
+import "./ImageViewer-B5veaeY4.js";
+import "./dist-DQWoXkv5.js";
+import "./index-browser-CUxx6q5E.js";
+import "./stylis-CZpjP453.js";
+import "./Component-BBmNhsbN.js";
+import "./createLucideIcon-BDzeED0C.js";
+import "./arrow-up-right-yjeIbjGB.js";
+import "./at-sign-BUktwWWn.js";
+import "./bot-TKpiogzE.js";
+import "./camera-CSrhtep5.js";
+import "./check-BqguC5tf.js";
+import "./chevron-down-6JXQvE1F.js";
+import "./chevron-left-egSJ7HHy.js";
+import "./chevron-right-_JGKB5MF.js";
+import "./chevron-up-P2ANmobW.js";
+import "./chevrons-down-up-Dg3uXUQq.js";
+import "./chevrons-up-down-B7xcts4T.js";
+import "./circle-arrow-left-CVAnPOEc.js";
+import "./circle-check-big-DZ_c7-ev.js";
+import "./circle-play-CF81BnS3.js";
+import "./circle-question-mark-ptzEdT1P.js";
+import "./circle-x-ChDqhDgG.js";
+import "./circle-CwhSr8Z9.js";
+import "./clock-DAPjIrGw.js";
+import "./code-xml-CzL2Xb-g.js";
+import "./code-CDOFgRAt.js";
+import "./copy-B9rCRaBN.js";
+import "./corner-down-left-CV1XRUvs.js";
+import "./download-BdmvWsst.js";
+import "./door-open-TIqFfzv8.js";
+import "./ellipsis-vertical-Dg8wkRJB.js";
+import "./ellipsis-B1XO3jr8.js";
+import "./eye-B7tthjW1.js";
+import "./file-code-GefCp-OT.js";
+import "./file-pen-line-DA50bdA9.js";
+import "./file-pen-C8sXomXu.js";
+import "./file-search-r8IfFMjr.js";
+import "./file-text-BQPWuXTn.js";
+import "./folder-open-D5h6lEtF.js";
+import "./folder-search-BZJe07fO.js";
+import "./forward-CWX6po_5.js";
+import "./globe-DzrUXrYs.js";
+import "./image-6Py-j6ML.js";
+import "./languages--rgPICt4.js";
+import "./lightbulb-Cfzuoke0.js";
+import "./link-CbGtDW8q.js";
+import "./list-checks-DsnXlwnn.js";
+import "./list-todo-BHgjrEe0.js";
+import "./maximize-2-CAHEeCJU.js";
+import "./menu-BJEdGccl.js";
+import "./message-square-ITIr4uiM.js";
+import "./minimize-2-B_cqYSvA.js";
+import "./notebook-pen-CoCCW7j1.js";
+import "./paperclip-C01ZkzDT.js";
+import "./pencil-ruler-DTWfYUuc.js";
+import "./pencil-C9t2AjFK.js";
+import "./pin-q2KeNa0i.js";
+import "./refresh-cw-mSZA5yk6.js";
+import "./rotate-ccw-F4A0Z1iu.js";
+import "./save-Cuz4lzpB.js";
+import "./scan-yr_1xXeK.js";
+import "./search-DpNpmANF.js";
+import "./send-rrKCRX_G.js";
+import "./settings-2-CT4svHwZ.js";
+import "./shield-check-1emk_zZX.js";
+import "./sparkle-DF7JPZ3C.js";
+import "./sparkles-Bx56cZJw.js";
+import "./split-BVgO-Luq.js";
+import "./square-pen-CorKPMkX.js";
+import "./square-split-horizontal-Um9U-Kkf.js";
+import "./square-DX-amPfS.js";
+import "./terminal-m4YuSBhb.js";
+import "./text-CivfyCsr.js";
+import "./thumbs-up-CLq3O35z.js";
+import "./trash-Br8S99Te.js";
+import "./triangle-alert-5x8_IlR0.js";
+import "./upload-_9N9e-Cx.js";
+import "./wrap-text-vCcMjfFW.js";
+import "./wrench-R2lMVSFR.js";
+import "./x-CbXiXQHi.js";
+import "./zoom-in-BqkYBFcy.js";
+import "./zoom-out-BuPEMPXg.js";
+import { b as HomeWindow_default, c as ErrorBoundaryWrapper } from "./HomeWindow-EwppT-Aq.js";
+import "./katex-Cwjminzt.js";
+import "./dist-DP9OFaqC.js";
+import "./markdown-it-D1oN8vPd.js";
+import "./preload-helper-tKu-GDMy.js";
+import "./dist-CMbMCVHL.js";
+import "./dist-B56-rEVE.js";
+import "./purify.es-t-jsSY2O.js";
+import "./internal-BFrhIXu5.js";
+import "./dist-95Dv1psl.js";
+import "./edge-BphrGwxf.js";
+import "./dist-CBi4JlGj.js";
+import "./dist-BJcRJPGu.js";
+import "./edge-Dhz5UnkC.js";
+import { b as require_client } from "./client-BA7CpU6e.js";
+import { b as PersistGate } from "./react-DPNBa0S2.js";
+import "./en_US-U-tbdjPg.js";
+var import_client = /* @__PURE__ */ __toESM(require_client());
+var import_lib = /* @__PURE__ */ __toESM(require_lib());
+var import_react = /* @__PURE__ */ __toESM(require_react());
+var import_jsx_runtime = /* @__PURE__ */ __toESM(require_jsx_runtime());
+function MiniWindowContent() {
+	const { customCss } = useSettings();
+	(0, import_react.useEffect)(() => {
+		let customCssElement = document.getElementById("user-defined-custom-css");
+		if (customCssElement) customCssElement.remove();
+		if (customCss) {
+			customCssElement = document.createElement("style");
+			customCssElement.id = "user-defined-custom-css";
+			customCssElement.textContent = customCss;
+			document.head.appendChild(customCssElement);
+		}
+	}, [customCss]);
+	return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(HomeWindow_default, {});
+}
+function MiniWindow() {
+	(0, import_react.useEffect)(() => {
+		window.toast = getToastUtilities();
+	}, []);
+	return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Provider_default, {
+		store: store_default,
+		children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ThemeProvider, { children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(AntdProvider_default, { children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(CodeStyleProvider, { children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(PersistGate, {
+			loading: null,
+			persistor,
+			children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ErrorBoundaryWrapper, { children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(MiniWindowContent, {}) })
+		}) }) }) })
+	});
+}
+var MiniWindowApp_default = MiniWindow;
+loggerService.initWindowSource("MiniWindow");
+function initKeyv() {
+	window.keyv = new import_lib.default();
+	window.keyv.init();
+}
+initKeyv();
+StoreSyncService_default.subscribe();
+const root = (0, import_client.createRoot)(document.getElementById("root"));
+root.render(/* @__PURE__ */ (0, import_jsx_runtime.jsx)(MiniWindowApp_default, {}));

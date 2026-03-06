@@ -1,0 +1,18 @@
+{
+  "comment": "Cherry Studio PYTHONPATH 配置文件",
+  "packages_root": "\\\\pss01\\Code_Public\\packages",
+  "requirements_lock": "requirements.lock",
+  "python_subdir": "python",
+  "output": {
+    "batch_script": "setup_env.bat",
+    "powershell_script": "setup_env.ps1",
+    "pth_file": "cherrystudio.pth",
+    "path_list": "pythonpath_list.txt"
+  },
+  "options": {
+    "normalize_package_names": true,
+    "check_hash_dirs": true,
+    "verbose": true
+  }
+}
+

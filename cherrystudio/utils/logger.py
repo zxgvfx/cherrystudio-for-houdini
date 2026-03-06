@@ -50,8 +50,10 @@ class Logger:
         """记录日志消息"""
         try:
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            full_msg = f"[{timestamp}] {message}"
+            print(full_msg)  # 输出到控制台以便调试
             with open(self.log_file, 'a', encoding='utf-8') as f:
-                f.write(f"[{timestamp}] {message}\n")
+                f.write(f"{full_msg}\n")
         except Exception:
             # 静默失败，避免日志记录本身导致程序崩溃
             pass

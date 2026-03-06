@@ -15,15 +15,14 @@ def get_electron_api_script(theme: str = 'light') -> str:
     Returns:
         完整的 JavaScript 代码字符串
     """
-    # 注意：这是简化版本，完整版本见 main_old_backup.py 1055-1834 行
-    # 包含核心的 QWebChannel 绑定和基础 API 初始化
+    # 前端通过 HTTP 直连后端，window.qt.api 使用 Proxy 自动路由到 /api/v1/qt/invoke
     
     script = f"""
     //  使用 console.error 因为在 hython 中只有它会输出到终端
     
     // 立即设置环境标记，防止 LoggerService 错误
-    window.houdini = true;
-    window.isHoudini = true;
+    window.__IS_QT = true;
+    window.isQtRuntime = true;
     window.__IS_QT = true;
     window.source = 'qt';
     window.__WINDOW_SOURCE = 'qt';
@@ -85,7 +84,7 @@ def get_electron_api_script(theme: str = 'light') -> str:
                         
                         data['persist:cherry-studio'] = JSON.stringify(reduxState);
                     }} catch (e) {{
-                        console.error('[Houdini] Error filtering centralized config:', e);
+                        console.error('[Qt] Error filtering centralized config:', e);
                     }}
                 }}
                 
@@ -101,19 +100,19 @@ def get_electron_api_script(theme: str = 'light') -> str:
                     // 保存到文件
                     if (window.qt && window.qt.api && window.qt.api.fileWrite) {{
                         window.qt.api.fileWrite('localStorage.json', dataStr).then(function() {{
-                            console.error('[Houdini] ✅ localStorage saved');
+                            console.error('[Qt] ✅ localStorage saved');
                         }});
                     }}
                 }}
             }} catch(e) {{
-                console.error('[Houdini] ❌ Save localStorage error:', e.message || e);
+                console.error('[Qt] ❌ Save localStorage error:', e.message || e);
             }}
         }}
         
         function loadLocalStorage() {{
             try {{
                 if (window.qt && window.qt.api && window.qt.api.fileRead) {{
-                    console.error('[Houdini] 📥 Loading localStorage from file...');
+                    console.error('[Qt] 📥 Loading localStorage from file...');
                     window.qt.api.fileRead('localStorage.json').then(function(content) {{
                         if (content) {{
                             try {{
@@ -123,31 +122,56 @@ def get_electron_api_script(theme: str = 'light') -> str:
                                     localStorage.setItem(key, data[key]);
                                     count++;
                                 }}
-                                console.error('[Houdini] ✅ localStorage restored:', count, 'items');
+                                console.error('[Qt] ✅ localStorage restored:', count, 'items');
                             }} catch(parseError) {{
-                                console.error('[Houdini] ❌ Parse error:', parseError.message);
+                                console.error('[Qt] ❌ Parse error:', parseError.message);
                             }}
                         }} else {{
-                            console.error('[Houdini] ⚠️ localStorage.json is empty');
+                            console.error('[Qt] ⚠️ localStorage.json is empty');
                         }}
                     }}).catch(function(e) {{
-                        console.error('[Houdini] ❌ Load error:', e.message || e);
+                        console.error('[Qt] ❌ Load error:', e.message || e);
                     }});
                 }} else {{
-                    console.error('[Houdini] ⚠️ Qt API not ready for loading localStorage');
+                    console.error('[Qt] ⚠️ Qt API not ready for loading localStorage');
                 }}
             }} catch(e) {{
-                console.error('[Houdini] ❌ Load localStorage error:', e.message || e);
+                console.error('[Qt] ❌ Load localStorage error:', e.message || e);
             }}
         }}
         
         // localStorage 已在早期脚本中恢复，这里不再需要加载
         
-        // 定期保存（每5秒检查一次）
-        setInterval(saveLocalStorage, 5000);
+        // 定期保存（每2秒检查一次，减少延迟）
+        setInterval(saveLocalStorage, 2000);
         
         // 页面卸载时保存
         window.addEventListener('beforeunload', saveLocalStorage);
+        
+        // 覆盖 localStorage.setItem 以检测重要配置变化并立即保存
+        const originalSetItem = localStorage.setItem.bind(localStorage);
+        let saveTimeout = null;
+        localStorage.setItem = function(key, value) {{
+            originalSetItem(key, value);
+            // 对于 persist: 键的修改，延迟 500ms 后保存（合并多次快速修改）
+            if (key && key.includes('persist:')) {{
+                console.error('[Qt] 📝 localStorage.setItem called for key:', key, 'value length:', value?.length || 0);
+                if (saveTimeout) clearTimeout(saveTimeout);
+                saveTimeout = setTimeout(function() {{
+                    console.error('[Qt] 🔄 Config changed, saving immediately...');
+                    saveLocalStorage();
+                }}, 300);  // 减少到 300ms
+            }}
+        }};
+        
+        // 保留 localStorage.getItem 包装仅用于可能的扩展，不再每次读取都打日志（避免循环打印）
+        const originalGetItem = localStorage.getItem.bind(localStorage);
+        localStorage.getItem = function(key) {{
+            return originalGetItem(key);
+        }};
+        
+        // 提供全局函数供手动调用
+        window.__saveLocalStorage = saveLocalStorage;
     }})();
     
     
@@ -163,40 +187,293 @@ def get_electron_api_script(theme: str = 'light') -> str:
     }} catch (e) {{}}
     
     
-    // 确保 QWebChannel 可用并绑定到 window.qt.api
-    (function(){{
+    // Knowledge Base Sync Logic
+    async function syncKnowledgeBases() {{
+        let needsRefresh = false;
+        
         try {{
-            // 若页面中未加载 qwebchannel.js，则从 Qt 资源加载
-            if (typeof QWebChannel === 'undefined') {{
-                var s = document.createElement('script');
-                s.src = 'qrc:///qtwebchannel/qwebchannel.js';
-                if (document.head) {{
-                    document.head.appendChild(s);
+            if (!window.qt || !window.qt.api) return;
+            
+            // Sync from central source (if configured)
+            if (window.qt.api.kbSyncFromCentral) {{
+                const syncResultStr = await window.qt.api.kbSyncFromCentral();
+                const syncResult = JSON.parse(syncResultStr || '{{}}');
+                if (syncResult.synced > 0 || syncResult.updated > 0) {{
+                    needsRefresh = syncResult.needsRefresh;
                 }}
             }}
             
-            // 轮询等待 QWebChannel 与 qt.webChannelTransport
-            var tries = 0;
-            var bindChannel = function(){{
-                tries++;
-                if (typeof QWebChannel === 'function' && window.qt && window.qt.webChannelTransport) {{
-                    try {{
-                        new QWebChannel(window.qt.webChannelTransport, function(channel){{
-                            window.qt = window.qt || {{}};
-                            window.qt.api = channel.objects.api || window.qt.api || {{}};
-                            window.qt.network = channel.objects.network || window.qt.network || channel.objects.api || {{}};
-                            window.qt.electron = channel.objects.electron || window.qt.electron || {{}};
-                        }});
-                        return;
-                    }} catch(e) {{ }}
-                }}
-                if (tries < 200) {{ setTimeout(bindChannel, 50); }}
-            }};
+            // Scan local KBs
+            if (!window.qt.api.kbScan) return;
             
-            // 若 qt 未定义，创建空对象占位
-            window.qt = window.qt || {{}};
-            bindChannel();
-        }} catch(e) {{ }}
+            const kbsStr = await window.qt.api.kbScan();
+            if (!kbsStr || kbsStr === '[]') return;
+            
+            const localKBs = JSON.parse(kbsStr);
+            
+            // Import to Redux if needed
+            const persistKey = 'persist:cherry-studio';
+            const rawState = localStorage.getItem(persistKey);
+            if (!rawState) return;
+            
+            let state = JSON.parse(rawState);
+            
+            if (state.knowledge) {{
+                const knowledgeState = JSON.parse(state.knowledge);
+                const existingKBs = knowledgeState.bases || [];
+                const existingMap = new Map(existingKBs.map(kb => [kb.id, kb]));
+                
+                let changed = false;
+                
+                for (const kb of localKBs) {{
+                    const existingKB = existingMap.get(kb.id);
+                    
+                    if (!existingKB) {{
+                        existingKBs.push(kb);
+                        changed = true;
+                        needsRefresh = true;
+                    }} else if (kb.isCentralized && kb.version > (existingKB.version || 0)) {{
+                        const idx = existingKBs.findIndex(k => k.id === kb.id);
+                        if (idx !== -1) {{
+                            existingKBs[idx] = kb;
+                            changed = true;
+                            needsRefresh = true;
+                        }}
+                    }}
+                }}
+                
+                if (changed) {{
+                    knowledgeState.bases = existingKBs;
+                    state.knowledge = JSON.stringify(knowledgeState);
+                    localStorage.setItem(persistKey, JSON.stringify(state));
+                }}
+            }}
+            
+            // Refresh page if needed
+            if (needsRefresh) {{
+                setTimeout(() => location.reload(), 500);
+            }}
+            
+        }} catch (e) {{
+            // Silent
+        }}
+    }}
+    
+    // Save KB metadata periodically
+    function setupKnowledgeBaseMetadataSaver() {{
+        let lastKnowledgeState = null;
+        let initialSaveDone = false;
+        
+        async function saveAllKBMetadata() {{
+            try {{
+                if (!window.qt || !window.qt.api || !window.qt.api.kbSaveMetadata) return;
+                
+                const persistKey = 'persist:cherry-studio';
+                const rawState = localStorage.getItem(persistKey);
+                if (!rawState) return;
+                
+                const state = JSON.parse(rawState);
+                if (!state.knowledge) return;
+                
+                const knowledgeState = JSON.parse(state.knowledge);
+                const currentBases = knowledgeState.bases || [];
+                
+                if (currentBases.length === 0) return;
+                
+                const currentHash = JSON.stringify(currentBases.map(b => b.id + ':' + (b.updated_at || 0)));
+                if (currentHash === lastKnowledgeState && initialSaveDone) return;
+                lastKnowledgeState = currentHash;
+                
+                for (const kb of currentBases) {{
+                    if (kb && kb.id && kb.name && !kb.isCentralized) {{
+                        await window.qt.api.kbSaveMetadata(JSON.stringify(kb));
+                    }}
+                }}
+                
+                initialSaveDone = true;
+            }} catch (e) {{
+                // Silent
+            }}
+        }}
+        
+        setTimeout(saveAllKBMetadata, 1000);
+        setInterval(saveAllKBMetadata, 10000);
+    }}
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Cherry Backend Client
+    // 提供与后端服务的直连 REST 客户端（window.__cherryBackend）。
+    // 后端 URL 由 Python 通过 window.__CHERRY_BACKEND_URL 注入。
+    // ─────────────────────────────────────────────────────────────────────────
+    (function() {{
+        var _backendUrl = window.__CHERRY_BACKEND_URL || '';
+        var _sessionId  = window.__CHERRY_SESSION_ID  || '';
+
+        /**
+         * 调用后端 REST API。
+         * @param {{string}} endpoint  如 '/api/v1/network/fetch'
+         * @param {{object}} body      POST 请求体（null 则用 GET）
+         * @returns {{Promise<any>}}   解析后的 JSON 响应
+         */
+        async function callBackend(endpoint, body) {{
+            if (!_backendUrl) {{
+                return {{ error: 'backend url not available' }};
+            }}
+            try {{
+                const url = _backendUrl + endpoint;
+                const isGet = body === null || body === undefined;
+                const opts = isGet
+                    ? {{ method: 'GET', headers: {{ 'X-Session-Id': _sessionId }} }}
+                    : {{
+                        method: 'POST',
+                        headers: {{
+                            'Content-Type': 'application/json',
+                            'X-Session-Id': _sessionId
+                        }},
+                        body: JSON.stringify(body)
+                    }};
+                const resp = await fetch(url, opts);
+                return await resp.json();
+            }} catch (e) {{
+                return {{ error: String(e) }};
+            }}
+        }}
+
+        // ── 流式请求辅助（SSE 轮询） ───────────────────────────────────────
+        /**
+         * 以流式方式调用后端，通过轮询 /api/v1/network/stream-read 获取数据块。
+         * @param {{object}} fetchConfig  传给 /api/v1/network/fetch 的参数
+         * @param {{function}} onChunk    每个数据块的回调 (chunk: string) => void
+         * @param {{function}} onDone     流结束回调
+         * @param {{function}} onError    错误回调
+         */
+        async function streamFromBackend(fetchConfig, onChunk, onDone, onError) {{
+            const requestId = fetchConfig.requestId || ('r-' + Math.random().toString(36).slice(2));
+            fetchConfig = {{ ...fetchConfig, stream: true, requestId }};
+
+            // 发起流式请求
+            const startResp = await callBackend('/api/v1/network/fetch', fetchConfig);
+            if (startResp.error || !startResp.streaming) {{
+                if (onError) onError(startResp.error || 'Stream start failed');
+                return;
+            }}
+
+            // 轮询读取
+            let done = false;
+            while (!done) {{
+                const chunk = await callBackend('/api/v1/network/stream-read', {{ requestId }});
+                switch (chunk.type) {{
+                    case 'data':
+                        if (onChunk) onChunk(chunk.data);
+                        break;
+                    case 'end':
+                        done = true;
+                        if (onDone) onDone();
+                        break;
+                    case 'error':
+                        done = true;
+                        if (onError) onError(chunk.error);
+                        break;
+                    case 'empty':
+                        await new Promise(r => setTimeout(r, 30));
+                        break;
+                    default:
+                        break;
+                }}
+            }}
+        }}
+
+        // ── 公开 API 对象 ─────────────────────────────────────────────────
+        window.__cherryBackend = {{
+            // 基础调用
+            call: callBackend,
+            stream: streamFromBackend,
+            backendUrl: _backendUrl,
+            sessionId: _sessionId,
+
+            // 快捷方法（与 window.qt.api 保持接口对应）
+            fileRead:   (path) => callBackend('/api/v1/files/read',  {{ path }}).then(r => r.content || ''),
+            fileWrite:  (path, content) => callBackend('/api/v1/files/write', {{ path, content }}).then(r => !r.error),
+            fileExists: (path) => callBackend('/api/v1/files/exists', {{ path }}).then(r => !!r.exists),
+
+            topicSave:   (topicId, data) => callBackend('/api/v1/topics/save',   {{ topicId, data }}).then(r => !r.error),
+            topicLoad:   (topicId)       => callBackend('/api/v1/topics/load',   {{ topicId }}).then(r => r.data),
+            topicDelete: (topicId)       => callBackend('/api/v1/topics/delete', {{ topicId }}).then(r => !r.error),
+            topicList:   ()              => callBackend('/api/v1/topics/list',   null).then(r => r.topics || []),
+
+            configGet:    ()      => callBackend('/api/v1/config/merged', null),
+            configReload: ()      => callBackend('/api/v1/config/reload', {{}}),
+
+            kbCreate: (p)  => callBackend('/api/v1/kb/create', p),
+            kbAdd:    (p)  => callBackend('/api/v1/kb/add',    p),
+            kbSearch: (p)  => callBackend('/api/v1/kb/search', p),
+            kbList:   ()   => callBackend('/api/v1/kb/list',   null),
+            kbDelete: (id) => callBackend('/api/v1/kb/delete', {{ kbId: id }}),
+
+            // DCC 会话信息
+            getSessions: () => callBackend('/api/v1/sessions/list', null).then(r => r.sessions || {{}}),
+            getSession:  () => {{ return {{ sessionId: _sessionId, backendUrl: _backendUrl }}; }},
+        }};
+
+        if (_backendUrl) {{
+            console.error('[Cherry] Backend client ready:', _backendUrl, '| Session:', _sessionId || 'none');
+        }} else {{
+            console.error('[Cherry] Backend URL not injected — API calls will fail');
+        }}
+    }})();
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // HTTP-based window.qt.api（替代 QWebChannel，所有调用走后端 HTTP）
+    // ─────────────────────────────────────────────────────────────────────────
+    (function(){{
+        var _backendUrl = window.__CHERRY_BACKEND_URL || '';
+        var _sessionId  = window.__CHERRY_SESSION_ID  || '';
+
+        window.qt = window.qt || {{}};
+        window.qt.electron = window.qt.electron || {{}};
+
+        // 创建 Proxy：任何对 window.qt.api.someMethod(args) 的调用
+        // 都会自动转为 POST /api/v1/qt/invoke {{ method, args }} 请求
+        window.qt.api = new Proxy({{}}, {{
+            get: function(_target, method) {{
+                // 防止 Promise resolve、JSON 序列化等探测陷阱
+                if (method === 'then' || method === 'toJSON' || typeof method === 'symbol') {{
+                    return undefined;
+                }}
+                return function() {{
+                    var args = Array.prototype.slice.call(arguments);
+                    if (!_backendUrl) {{
+                        console.warn('[Qt] qt.api.' + method + ': no backend URL');
+                        return Promise.resolve(null);
+                    }}
+                    return fetch(_backendUrl + '/api/v1/qt/invoke', {{
+                        method: 'POST',
+                        headers: {{
+                            'Content-Type': 'application/json',
+                            'X-Session-Id': _sessionId
+                        }},
+                        body: JSON.stringify({{ method: method, args: args }})
+                    }}).then(function(resp) {{
+                        return resp.json();
+                    }}).then(function(data) {{
+                        if (data.error) {{
+                            console.error('[Qt] qt.api.' + method + ' error:', data.error);
+                            return null;
+                        }}
+                        return data.value;
+                    }}).catch(function(e) {{
+                        console.error('[Qt] qt.api.' + method + ' failed:', e);
+                        return null;
+                    }});
+                }};
+            }}
+        }});
+
+        console.error('[Qt] HTTP-based qt.api proxy ready (backend:', _backendUrl || 'none', ')');
+
+        // Trigger KB Sync and metadata saver after init
+        setTimeout(syncKnowledgeBases, 2000);
+        setTimeout(setupKnowledgeBaseMetadataSaver, 3000);
     }})();
     
     // 注入基础 window.api
@@ -216,10 +493,73 @@ def get_electron_api_script(theme: str = 'light') -> str:
                     return {{ version: '{APP_VERSION}', platform: '{APP_PLATFORM}', arch: '{APP_ARCH}' }} 
                 }} 
             }},
+            fs: {{
+                read: async (pathOrUrl, encoding) => {{
+                    try {{
+                        const content = await window.qt?.api?.fileRead?.(pathOrUrl);
+                        return content || '';
+                    }} catch(e) {{
+                        console.error('[Qt] fs.read error:', e);
+                        return '';
+                    }}
+                }},
+                readText: async (pathOrUrl) => {{
+                    try {{
+                        const content = await window.qt?.api?.fileRead?.(pathOrUrl);
+                        return content || '';
+                    }} catch(e) {{
+                        console.error('[Qt] fs.readText error:', e);
+                        return '';
+                    }}
+                }},
+            }},
             setLanguage: (lang) => {{
                 try {{
                     localStorage.setItem('language', lang);
                 }} catch(e) {{}}
+            }},
+            codeTools: {{
+                getAvailableTerminals: async () => {{
+                    try {{
+                        const result = await window.qt?.api?.codeToolsGetAvailableTerminals?.();
+                        return result ? JSON.parse(result) : [];
+                    }} catch(e) {{
+                        console.error('[Qt] codeTools.getAvailableTerminals error:', e);
+                        return [];
+                    }}
+                }},
+                run: async (tool, model, directory, env, options) => {{
+                    try {{
+                        const envStr = JSON.stringify(env || {{}});
+                        const optionsStr = JSON.stringify(options || {{}});
+                        const resultStr = await window.qt?.api?.codeToolsRun?.(tool, model, directory, envStr, optionsStr);
+                        return resultStr ? JSON.parse(resultStr) : {{ success: false, message: 'Unknown error' }};
+                    }} catch(e) {{
+                        console.error('[Qt] codeTools.run error:', e);
+                        return {{ success: false, message: e.message || String(e) }};
+                    }}
+                }},
+                setCustomTerminalPath: async (terminalId, path) => {{
+                    try {{
+                        return await window.qt?.api?.codeToolsSetCustomTerminalPath?.(terminalId, path);
+                    }} catch(e) {{
+                        return false;
+                    }}
+                }},
+                getCustomTerminalPath: async (terminalId) => {{
+                    try {{
+                        return await window.qt?.api?.codeToolsGetCustomTerminalPath?.(terminalId);
+                    }} catch(e) {{
+                        return "";
+                    }}
+                }},
+                removeCustomTerminalPath: async (terminalId) => {{
+                    try {{
+                        return await window.qt?.api?.codeToolsRemoveCustomTerminalPath?.(terminalId);
+                    }} catch(e) {{
+                        return false;
+                    }}
+                }}
             }},
             trace: {{
                 saveData: async (topicId) => {{ return true; }},
@@ -245,9 +585,16 @@ def get_electron_api_script(theme: str = 'light') -> str:
             file: {{
                 read: async (fileId, detectEncoding) => {{
                     try {{
+                        if (fileId && fileId.endsWith('.pdf')) {{
+                            console.log('[Qt] file.read PDF:', fileId);
+                        }}
                         const content = await window.qt?.api?.fileRead?.(fileId);
+                        if (fileId && fileId.endsWith('.pdf')) {{
+                            console.log('[Qt] file.read PDF result:', (content || '').length, 'chars');
+                        }}
                         return content || '';
                     }} catch(e) {{
+                        console.error('[Qt] file.read error:', fileId, e);
                         return '';
                     }}
                 }},
@@ -269,14 +616,141 @@ def get_electron_api_script(theme: str = 'light') -> str:
                 base64Image: async (fileId) => {{
                     try {{
                         const result = await window.qt?.api?.binaryImage?.(fileId);
-                        const parsed = JSON.parse(result || '{{}}');
-                        return {{
-                            mime: parsed.mime || 'image/png',
-                            base64: parsed.base64 || '',
-                            data: parsed.data || ''
-                        }};
+                        if (!result || result === 'null') {{
+                            console.error('[Qt] base64Image: binaryImage returned null for', fileId);
+                            return {{ mime: 'image/png', base64: '', data: '' }};
+                        }}
+                        const parsed = JSON.parse(result);
+                        // 后端已返回正确的 {{mime, base64, data}} 格式
+                        // 兼容旧格式: 如果后端还是返回 {{data, format}}，则做映射
+                        const mime = parsed.mime || ('image/' + (parsed.format || 'png'));
+                        const base64 = parsed.base64 || parsed.data || '';
+                        const dataUrl = parsed.data && parsed.data.startsWith('data:')
+                            ? parsed.data
+                            : ('data:' + mime + ';base64,' + base64);
+                        return {{ mime, base64, data: dataUrl }};
                     }} catch(e) {{
+                        console.error('[Qt] base64Image error:', e);
                         return {{ mime: 'image/png', base64: '', data: '' }};
+                    }}
+                }},
+                base64File: async (fileId) => {{
+                    try {{
+                        const _bu = window.__CHERRY_BACKEND_URL || '';
+                        const _sid = window.__CHERRY_SESSION_ID || '';
+                        const resp = await fetch(_bu + '/api/v1/files/base64-file', {{
+                            method: 'POST',
+                            headers: {{ 'Content-Type': 'application/json', 'X-Session-Id': _sid }},
+                            body: JSON.stringify({{ path: fileId }})
+                        }});
+                        const result = await resp.json();
+                        if (result.error) {{
+                            console.error('[Qt] base64File error:', result.error);
+                            return {{ data: '', mime: 'application/octet-stream' }};
+                        }}
+                        return {{ data: result.data || '', mime: result.mime || 'application/octet-stream' }};
+                    }} catch(e) {{
+                        console.error('[Qt] base64File error:', e);
+                        return {{ data: '', mime: 'application/octet-stream' }};
+                    }}
+                }},
+                pdfToImages: async (fileId, options) => {{
+                    try {{
+                        console.log('[Qt] pdfToImages called:', fileId);
+                        const _bu = window.__CHERRY_BACKEND_URL || '';
+                        const _sid = window.__CHERRY_SESSION_ID || '';
+                        const resp = await fetch(_bu + '/api/v1/files/pdf-to-images', {{
+                            method: 'POST',
+                            headers: {{ 'Content-Type': 'application/json', 'X-Session-Id': _sid }},
+                            body: JSON.stringify({{ path: fileId, dpi: options?.dpi || 150, maxPages: options?.maxPages || 20 }})
+                        }});
+                        const result = await resp.json();
+                        if (result.error) {{
+                            console.error('[Qt] pdfToImages error:', result.error);
+                            return {{ images: [], hasText: false }};
+                        }}
+                        return {{ images: result.images || [], hasText: !!result.hasText }};
+                    }} catch(e) {{
+                        console.error('[Qt] pdfToImages error:', e);
+                        return {{ images: [], hasText: false }};
+                    }}
+                }},
+                pdfOcr: async (fileId, options) => {{
+                    try {{
+                        console.log('[Qt] pdfOcr called:', fileId);
+                        const _bu = window.__CHERRY_BACKEND_URL || '';
+                        const _sid = window.__CHERRY_SESSION_ID || '';
+                        const resp = await fetch(_bu + '/api/v1/files/pdf-ocr', {{
+                            method: 'POST',
+                            headers: {{ 'Content-Type': 'application/json', 'X-Session-Id': _sid }},
+                            body: JSON.stringify({{
+                                path: fileId,
+                                model: options?.model,
+                                dpi: options?.dpi || 100,
+                                maxPages: options?.maxPages || 10,
+                                batchSize: options?.batchSize || 1
+                            }})
+                        }});
+                        const result = await resp.json();
+                        if (result.error) {{
+                            console.error('[Qt] pdfOcr error:', result.error);
+                            return {{ content: '', pages: 0, method: 'error' }};
+                        }}
+                        return result;
+                    }} catch(e) {{
+                        console.error('[Qt] pdfOcr error:', e);
+                        return {{ content: '', pages: 0, method: 'error' }};
+                    }}
+                }},
+                saveImage: async (name, data) => {{
+                    try {{
+                        const result = await window.qt?.api?.saveImage?.(name || 'image', data || '');
+                        return result ? JSON.parse(result) : null;
+                    }} catch(e) {{
+                        console.error('[Qt] saveImage error:', e);
+                        return null;
+                    }}
+                }},
+                saveBase64Image: async (base64Data) => {{
+                    try {{
+                        const result = await window.qt?.api?.saveBase64Image?.(base64Data || '');
+                        if (!result || result === 'null') return null;
+                        const parsed = JSON.parse(result);
+                        if (parsed.error) {{
+                            console.error('[Qt] saveBase64Image error:', parsed.error);
+                            return null;
+                        }}
+                        return parsed;
+                    }} catch(e) {{
+                        console.error('[Qt] saveBase64Image error:', e);
+                        return null;
+                    }}
+                }},
+                savePastedImage: async (imageData, extension) => {{
+                    try {{
+                        // imageData 是 Uint8Array，需要转为 base64 传输
+                        let base64Str = '';
+                        if (imageData instanceof Uint8Array || imageData instanceof ArrayBuffer) {{
+                            const bytes = new Uint8Array(imageData);
+                            let binary = '';
+                            for (let i = 0; i < bytes.length; i++) {{
+                                binary += String.fromCharCode(bytes[i]);
+                            }}
+                            base64Str = btoa(binary);
+                        }} else if (typeof imageData === 'string') {{
+                            base64Str = imageData;
+                        }}
+                        const result = await window.qt?.api?.savePastedImage?.(base64Str, extension || '.png');
+                        if (!result || result === 'null') return null;
+                        const parsed = JSON.parse(result);
+                        if (parsed.error) {{
+                            console.error('[Qt] savePastedImage error:', parsed.error);
+                            return null;
+                        }}
+                        return parsed;
+                    }} catch(e) {{
+                        console.error('[Qt] savePastedImage error:', e);
+                        return null;
                     }}
                 }},
                 getPathForFile: (file) => {{
@@ -343,7 +817,7 @@ def get_electron_api_script(theme: str = 'light') -> str:
                     }});
                     window.qt?.api?.logToMain?.(payload);
                 }} catch(e) {{
-                    console.error('[Houdini] logToMain error:', e);
+                    console.error('[Qt] logToMain error:', e);
                 }} 
             }},
             setTheme: (theme) => {{ 
@@ -408,7 +882,7 @@ def get_electron_api_script(theme: str = 'light') -> str:
                 try {{ 
                     return await window.qt?.api?.openPath?.(path) 
                 }} catch(e) {{ 
-                    console.error('[Houdini] openPath error:', e);
+                    console.error('[Qt] openPath error:', e);
                     return false;
                 }} 
             }},
@@ -416,7 +890,7 @@ def get_electron_api_script(theme: str = 'light') -> str:
                 try {{ 
                     return await window.qt?.api?.installBunBinary?.() 
                 }} catch(e) {{ 
-                    console.error('[Houdini] installBunBinary error:', e);
+                    console.error('[Qt] installBunBinary error:', e);
                     throw new Error('Failed to install bun: ' + (e.message || String(e)));
                 }} 
             }},
@@ -424,7 +898,7 @@ def get_electron_api_script(theme: str = 'light') -> str:
                 try {{ 
                     return await window.qt?.api?.installUVBinary?.() 
                 }} catch(e) {{ 
-                    console.error('[Houdini] installUVBinary error:', e);
+                    console.error('[Qt] installUVBinary error:', e);
                     throw new Error('Failed to install uv: ' + (e.message || String(e)));
                 }} 
             }},
@@ -471,12 +945,27 @@ def get_electron_api_script(theme: str = 'light') -> str:
                     return '{APP_VERSION}' 
                 }} 
             }},
-            setProxy: async (config) => {{ 
+            setProxy: async (proxyUrl, bypassRules) => {{ 
                 try {{ 
+                    const config = JSON.stringify({{ proxyUrl: proxyUrl || '', bypassRules: bypassRules || '' }});
                     return await window.qt?.api?.setProxy?.(config) 
                 }} catch(e) {{ 
+                    console.warn('[setProxy] Error:', e);
                     return true 
                 }} 
+            }},
+            isProxyManaged: async () => {{ 
+                // 检查代理是否由系统托管（硬编码配置）
+                try {{ 
+                    const proxy = await window.qt?.api?.getProxy?.();
+                    if (proxy) {{
+                        const config = JSON.parse(proxy);
+                        return config._managed === true;
+                    }}
+                }} catch(e) {{ 
+                    console.warn('[isProxyManaged] Error:', e);
+                }} 
+                return false;
             }},
             getPlatform: async () => {{ 
                 try {{ 
@@ -507,7 +996,7 @@ def get_electron_api_script(theme: str = 'light') -> str:
                     }}
                     return result ?? 1.0;
                 }} catch (e) {{
-                    console.error('[Houdini] handleZoomFactor error:', e);
+                    console.error('[Qt] handleZoomFactor error:', e);
                     return 1.0;
                 }}
             }},
@@ -516,7 +1005,7 @@ def get_electron_api_script(theme: str = 'light') -> str:
                     const r = await window.qt?.api?.getGitBashPathInfo?.();
                     return (typeof r==='string')? JSON.parse(r): (r||{{path: null, source: null}});
                 }} catch(e) {{
-                    console.error('[Houdini] getGitBashPathInfo error:', e);
+                    console.error('[Qt] getGitBashPathInfo error:', e);
                     return {{path: null, source: null}};
                 }}
             }},
@@ -538,7 +1027,7 @@ def get_electron_api_script(theme: str = 'light') -> str:
                         const result = await window.qt?.api?.configGetMergedConfig?.();
                         return result ? JSON.parse(result) : null;
                     }} catch(e) {{
-                        console.error('[Houdini] config.getMergedConfig error:', e);
+                        console.error('[Qt] config.getMergedConfig error:', e);
                         return null;
                     }}
                 }},
@@ -547,7 +1036,7 @@ def get_electron_api_script(theme: str = 'light') -> str:
                         const result = await window.qt?.api?.configReload?.();
                         return result ? JSON.parse(result) : null;
                     }} catch(e) {{
-                        console.error('[Houdini] config.reload error:', e);
+                        console.error('[Qt] config.reload error:', e);
                         return null;
                     }}
                 }},
@@ -556,7 +1045,7 @@ def get_electron_api_script(theme: str = 'light') -> str:
                         const result = await window.qt?.api?.configUpdateUserModels?.(JSON.stringify(models));
                         return result ? JSON.parse(result) : null;
                     }} catch(e) {{
-                        console.error('[Houdini] config.updateUserModels error:', e);
+                        console.error('[Qt] config.updateUserModels error:', e);
                         return null;
                     }}
                 }},
@@ -565,7 +1054,7 @@ def get_electron_api_script(theme: str = 'light') -> str:
                         const result = await window.qt?.api?.configUpdateUserMcpServers?.(JSON.stringify(servers));
                         return result ? JSON.parse(result) : null;
                     }} catch(e) {{
-                        console.error('[Houdini] config.updateUserMcpServers error:', e);
+                        console.error('[Qt] config.updateUserMcpServers error:', e);
                         return null;
                     }}
                 }}
@@ -604,6 +1093,17 @@ def get_electron_api_script(theme: str = 'light') -> str:
         }});
     }}
     
+    // ========== DEBUG: 全局错误捕获 ==========
+    window.addEventListener('error', function(e) {{
+        console.error('[Qt] Global error:', e.message, e.filename, e.lineno);
+    }});
+    
+    // ========== DEBUG: 检查 Qt Bridge 状态 ==========
+    console.log('[Qt] ============ INJECTION LOADED ============');
+    if (window.qt && window.qt.api) {{
+        // console.log('[Qt] Available API methods:', Object.keys(window.qt.api));
+    }}
+
     // 提供 window.api.file 接口
     window.api.file = window.api.file || {{}};
     
@@ -620,10 +1120,23 @@ def get_electron_api_script(theme: str = 'light') -> str:
     if (!window.api.file.select) {{
         window.api.file.select = async function(options) {{ 
             try {{ 
-                const result = await window.qt?.api?.fileSelect?.(JSON.stringify(options||{{}}))
-                return (typeof result==='string')? JSON.parse(result): (result||[])
+                const result = await window.qt?.api?.fileSelect?.(JSON.stringify(options||{{}}));
+                return (typeof result==='string')? JSON.parse(result): (result||[]);
             }} catch(e) {{ 
-                return [] 
+                console.error('[Qt] file.select error:', e);
+                return [];
+            }} 
+        }};
+    }}
+
+    if (!window.api.file.selectFolder) {{
+        window.api.file.selectFolder = async function() {{ 
+            try {{ 
+                const result = await window.qt?.api?.selectFolder?.()
+                return (typeof result==='string' && result) ? result : null
+            }} catch(e) {{ 
+                console.error('[Qt] selectFolder error:', e);
+                return null 
             }} 
         }};
     }}
@@ -639,31 +1152,236 @@ def get_electron_api_script(theme: str = 'light') -> str:
         }};
     }}
 
+    // 图片代理：下载外部 URL 图片 → base64 data URL（前端无外网时使用）
+    if (!window.api.proxyImage) {{
+        window.api.proxyImage = async function(url) {{
+            try {{
+                const backendUrl = window.__CHERRY_BACKEND_URL || '';
+                if (!backendUrl) return null;
+                const resp = await fetch(backendUrl + '/api/v1/proxy/image', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify({{ url }})
+                }});
+                const data = await resp.json();
+                if (data.error) {{
+                    console.error('[proxyImage] backend error:', data.error);
+                    return null;
+                }}
+                return data.dataUrl || null;
+            }} catch(e) {{
+                console.error('[proxyImage] error:', e);
+                return null;
+            }}
+        }};
+    }}
+
     if (!window.api.file.openPath) {{
-        window.api.file.openPath = async function(path) {{ 
-            try {{ 
-                return await window.qt?.api?.openPath?.(path) 
-            }} catch(e) {{ 
-                console.error('[Houdini] file.openPath error:', e);
+        window.api.file.openPath = async function(path) {{
+            try {{
+                return await window.qt?.api?.openPath?.(path)
+            }} catch(e) {{
+                console.error('[Qt] file.openPath error:', e);
                 return false;
             }} 
         }};
     }}
+
+    if (!window.api.file.openFileWithRelativePath) {{
+        window.api.file.openFileWithRelativePath = async function(relativePath, basePath) {{ 
+            try {{ 
+                // 如果提供了 basePath，则拼接路径
+                let fullPath = relativePath;
+                if (basePath) {{
+                    fullPath = basePath + '/' + relativePath;
+                }}
+                return await window.qt?.api?.openPath?.(fullPath) 
+            }} catch(e) {{ 
+                console.error('[Qt] file.openFileWithRelativePath error:', e);
+                return false;
+            }} 
+        }};
+    }}
+
+    if (!window.api.file.upload) {{
+        window.api.file.upload = async function(fileMetadata) {{ 
+            try {{ 
+                const result = await window.qt?.api?.fileUpload?.(JSON.stringify(fileMetadata||{{}}));
+                if (typeof result === 'string') {{
+                    const parsed = JSON.parse(result);
+                    if (parsed.error) {{
+                        console.error('[Qt] file.upload error:', parsed.error);
+                        throw new Error(parsed.error);
+                    }}
+                    return parsed;
+                }}
+                return result || fileMetadata;
+            }} catch(e) {{ 
+                console.error('[Qt] file.upload error:', e);
+                throw e;
+            }} 
+        }};
+    }}
+
+    if (!window.api.file.delete) {{
+        window.api.file.delete = async function(filename) {{ 
+            try {{ 
+                return await window.qt?.api?.fileDelete?.(filename);
+            }} catch(e) {{ 
+                console.error('[Qt] file.delete error:', e);
+                return false;
+            }} 
+        }};
+    }}
+
+    if (!window.api.file.saveImage) {{
+        window.api.file.saveImage = async function(name, data) {{
+            try {{
+                const result = await window.qt?.api?.saveImage?.(name || 'image', data || '');
+                return result ? JSON.parse(result) : null;
+            }} catch(e) {{
+                console.error('[Qt] file.saveImage error:', e);
+                return null;
+            }}
+        }};
+    }}
+
+    if (!window.api.file.saveBase64Image) {{
+        window.api.file.saveBase64Image = async function(base64Data) {{
+            try {{
+                const result = await window.qt?.api?.saveBase64Image?.(base64Data || '');
+                if (!result || result === 'null') return null;
+                const parsed = JSON.parse(result);
+                if (parsed.error) {{
+                    console.error('[Qt] file.saveBase64Image error:', parsed.error);
+                    return null;
+                }}
+                return parsed;
+            }} catch(e) {{
+                console.error('[Qt] file.saveBase64Image error:', e);
+                return null;
+            }}
+        }};
+    }}
+
+    if (!window.api.file.savePastedImage) {{
+        window.api.file.savePastedImage = async function(imageData, extension) {{
+            try {{
+                let base64Str = '';
+                if (imageData instanceof Uint8Array || imageData instanceof ArrayBuffer) {{
+                    const bytes = new Uint8Array(imageData);
+                    let binary = '';
+                    for (let i = 0; i < bytes.length; i++) {{
+                        binary += String.fromCharCode(bytes[i]);
+                    }}
+                    base64Str = btoa(binary);
+                }} else if (typeof imageData === 'string') {{
+                    base64Str = imageData;
+                }}
+                const result = await window.qt?.api?.savePastedImage?.(base64Str, extension || '.png');
+                if (!result || result === 'null') return null;
+                const parsed = JSON.parse(result);
+                if (parsed.error) {{
+                    console.error('[Qt] file.savePastedImage error:', parsed.error);
+                    return null;
+                }}
+                return parsed;
+            }} catch(e) {{
+                console.error('[Qt] file.savePastedImage error:', e);
+                return null;
+            }}
+        }};
+    }}
+
+    // 提供 window.api.knowledgeBase 知识库 API
+    window.api.knowledgeBase = window.api.knowledgeBase || {{
+        create: async function(params) {{
+            try {{
+                const r = await window.qt?.api?.knowledgeBaseCreate?.(JSON.stringify(params||{{}}));
+                return (typeof r === 'string') ? JSON.parse(r) : r;
+            }} catch(e) {{
+                console.error('[Qt] knowledgeBase.create error:', e);
+                throw e;
+            }}
+        }},
+        add: async function(payload) {{
+            try {{
+                const r = await window.qt?.api?.knowledgeBaseAdd?.(JSON.stringify(payload||{{}}));
+                return (typeof r === 'string') ? JSON.parse(r) : r;
+            }} catch(e) {{
+                console.error('[Qt] knowledgeBase.add error:', e);
+                throw e;
+            }}
+        }},
+        remove: async function(params) {{
+            try {{
+                const r = await window.qt?.api?.knowledgeBaseRemove?.(JSON.stringify(params||{{}}));
+                return (typeof r === 'string') ? JSON.parse(r) : r;
+            }} catch(e) {{
+                console.error('[Qt] knowledgeBase.remove error:', e);
+                return {{ success: false }};
+            }}
+        }},
+        search: async function(params) {{
+            try {{
+                const r = await window.qt?.api?.knowledgeBaseSearch?.(JSON.stringify(params||{{}}));
+                return (typeof r === 'string') ? JSON.parse(r) : (r || []);
+            }} catch(e) {{
+                console.error('[Qt] knowledgeBase.search error:', e);
+                return [];
+            }}
+        }},
+        rerank: async function(params) {{
+            try {{
+                const r = await window.qt?.api?.knowledgeBaseRerank?.(JSON.stringify(params||{{}}));
+                return (typeof r === 'string') ? JSON.parse(r) : (r || []);
+            }} catch(e) {{
+                console.error('[Qt] knowledgeBase.rerank error:', e);
+                return [];
+            }}
+        }},
+        delete: async function(kbId) {{
+            try {{
+                return await window.qt?.api?.knowledgeBaseDelete?.(kbId);
+            }} catch(e) {{
+                console.error('[Qt] knowledgeBase.delete error:', e);
+                return false;
+            }}
+        }},
+        reset: async function(params) {{
+            try {{
+                const r = await window.qt?.api?.knowledgeBaseReset?.(JSON.stringify(params||{{}}));
+                return (typeof r === 'string') ? JSON.parse(r) : r;
+            }} catch(e) {{
+                console.error('[Qt] knowledgeBase.reset error:', e);
+                return {{ success: false }};
+            }}
+        }},
+        checkQuota: async function(params) {{
+            try {{
+                const r = await window.qt?.api?.knowledgeBaseCheckQuota?.(JSON.stringify(params||{{}}));
+                return (typeof r === 'string') ? JSON.parse(r) : (r || {{ withinQuota: true }});
+            }} catch(e) {{
+                console.error('[Qt] knowledgeBase.checkQuota error:', e);
+                return {{ withinQuota: true }};
+            }}
+        }}
+    }};
     
     // 提供 window.api.ollama 快捷接口（兼容 Cherry Studio）
     window.api.ollama = window.api.ollama || {{
         list: async function(options) {{
-            console.log('[Houdini] window.api.ollama.list called');
+            console.log('[Qt] window.api.ollama.list called');
             try {{
                 const r = await window.qt?.api?.ollamaListModels?.(JSON.stringify(options||{{}}));
                 return (typeof r==='string')? JSON.parse(r): (r||{{object: 'list', data: []}});
             }} catch(e) {{
-                console.error('[Houdini] ollama.list error:', e);
+                console.error('[Qt] ollama.list error:', e);
                 return {{ object: 'list', data: [] }};
             }}
         }},
         listModels: async function(options) {{
-            console.log('[Houdini] window.api.ollama.listModels called');
+            console.log('[Qt] window.api.ollama.listModels called');
             return window.api.ollama.list(options);
         }}
     }};
@@ -694,173 +1412,303 @@ def get_electron_api_script(theme: str = 'light') -> str:
         }}
     }};
     
-    // 提供 window.api.memory
-    window.api.memory = window.api.memory || {{
+    // ========== 关键修复：使用 Proxy 拦截 window.api.memory ==========
+    console.log('[Qt] Setting up memory API with Proxy...');
+    
+    // 创建 memory API 的实现
+    const __qtMemoryImpl = {{
         list: async (config) => {{
+            console.log('[Qt Proxy] memory.list called');
             try {{
                 const r = await window.qt?.api?.memoryList?.(JSON.stringify(config||{{}}));
                 return (typeof r==='string')? JSON.parse(r): (r||{{memories: []}});
-            }} catch(e) {{ return {{memories: []}}; }}
+            }} catch(e) {{ 
+                console.error('[Qt Proxy] memory.list error:', e);
+                return {{memories: []}}; 
+            }}
         }},
-        add: async (payload) => {{
+        add: async (messages, options) => {{
+            console.log('[Qt Proxy] memory.add called');
             try {{
+                const payload = {{ messages, options }};
                 const r = await window.qt?.api?.memoryAdd?.(JSON.stringify(payload||{{}}));
                 return (typeof r==='string')? JSON.parse(r): (r||{{memories: []}});
-            }} catch(e) {{ return {{memories: []}}; }}
+            }} catch(e) {{ 
+                console.error('[Qt Proxy] memory.add error:', e);
+                return {{memories: []}}; 
+            }}
         }},
-        search: async (payload) => {{
+        search: async (query, options) => {{
+            console.log('[Qt Proxy] memory.search called');
             try {{
+                const payload = {{ query, options }};
                 const r = await window.qt?.api?.memorySearch?.(JSON.stringify(payload||{{}}));
                 return (typeof r==='string')? JSON.parse(r): (r||{{memories: []}});
-            }} catch(e) {{ return {{memories: []}}; }}
+            }} catch(e) {{ 
+                console.error('[Qt Proxy] memory.search error:', e);
+                return {{memories: []}}; 
+            }}
         }},
         delete: async (id) => {{
-            try {{
-                return await window.qt?.api?.memoryDelete?.(id);
-            }} catch(e) {{ return false; }}
+            console.log('[Qt Proxy] memory.delete called');
+            return true;
         }},
-        update: async (payload) => {{
-            try {{
-                return await window.qt?.api?.memoryUpdate?.(JSON.stringify(payload||{{}}));
-            }} catch(e) {{ return false; }}
+        update: async (id, memory, metadata) => {{
+            console.log('[Qt Proxy] memory.update called');
+            return true;
+        }},
+        get: async (id) => {{
+            console.log('[Qt Proxy] memory.get called');
+            return null;
+        }},
+        setConfig: (config) => {{
+            // 关键：完全同步，立即返回
+            console.log('[Qt Proxy] memory.setConfig called - IMMEDIATE RETURN');
+            // 异步保存但不等待
+            setTimeout(() => {{
+                try {{
+                    if (window.qt?.api?.memorySetConfig) {{
+                        window.qt.api.memorySetConfig(JSON.stringify(config || {{}}));
+                    }}
+                }} catch(e) {{}}
+            }}, 0);
+            return Promise.resolve(true);
+        }},
+        deleteUser: async (userId) => {{
+            console.log('[Qt Proxy] memory.deleteUser called');
+            return true;
+        }},
+        deleteAllMemoriesForUser: async (userId) => {{
+            console.log('[Qt Proxy] memory.deleteAllMemoriesForUser called');
+            return true;
+        }},
+        getUsersList: async () => {{
+            console.log('[Qt Proxy] memory.getUsersList called');
+            return [];
         }}
     }};
-
-    // 提供 window.api.network 接口
+    
+    // 使用 Proxy 拦截对 memory 属性的访问
+    const memoryProxy = new Proxy(__qtMemoryImpl, {{
+        get(target, prop) {{
+            console.log('[Qt Proxy] memory.' + String(prop) + ' accessed');
+            return target[prop];
+        }},
+        set(target, prop, value) {{
+            console.log('[Qt Proxy] Attempted to set memory.' + String(prop) + ' - BLOCKED');
+            return true; // 阻止设置，返回 true 表示成功（但实际没有设置）
+        }}
+    }});
+    
+    // 直接设置 window.api.memory
+    window.api.memory = memoryProxy;
+    
+    // 尝试用 Object.defineProperty 锁定
+    try {{
+        Object.defineProperty(window.api, 'memory', {{
+            value: memoryProxy,
+            writable: false,
+            configurable: false
+        }});
+        console.log('[Qt] window.api.memory locked with Proxy');
+    }} catch(e) {{
+        console.warn('[Qt] Could not lock window.api.memory:', e);
+    }}
+    
+    console.log('[Qt] Memory API Proxy installed');
+    
+    // 添加可见的调试标记
+    document.title = '[Qt] ' + (document.title || 'Cherry Studio');
+    
+    // 定期重新应用 Proxy，防止被覆盖
+    const __reapplyMemoryProxy = () => {{
+        if (!window.api) window.api = {{}};
+        if (window.api.memory !== memoryProxy) {{
+            console.warn('[Qt] window.api.memory was replaced, reapplying Proxy...');
+            try {{
+                Object.defineProperty(window.api, 'memory', {{
+                    value: memoryProxy,
+                    writable: false,
+                    configurable: true
+                }});
+            }} catch(e) {{
+                window.api.memory = memoryProxy;
+            }}
+        }}
+    }};
+    setInterval(__reapplyMemoryProxy, 50);
+    
+    // 页面加载完成后再次应用
+    if (document.readyState === 'complete') {{
+        __reapplyMemoryProxy();
+    }} else {{
+        window.addEventListener('load', __reapplyMemoryProxy);
+    }}
+    
+    // 提供 window.api.network 接口（全部直连后端 HTTP）
     window.api.network = window.api.network || {{
         fetchProxy: async function(config) {{ 
-            try {{ 
-                const r = await window.qt?.api?.fetchProxy?.(JSON.stringify(config||{{}}))
-                return (typeof r==='string')? JSON.parse(r): (r||{{error: 'Network error'}})
+            try {{
+                const _bu = window.__CHERRY_BACKEND_URL || '';
+                if (!_bu) return {{ error: 'No backend URL' }};
+                const resp = await fetch(_bu + '/api/v1/network/fetch', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json', 'X-Session-Id': window.__CHERRY_SESSION_ID || '' }},
+                    body: JSON.stringify(config || {{}})
+                }});
+                return await resp.json();
             }} catch(e) {{ 
                 return {{ error: String(e) }} 
             }} 
         }},
         ollamaListModels: async function(options) {{ 
             try {{ 
-                console.log('[Houdini] ollamaListModels called with:', options);
-                if (!window.qt?.api?.ollamaListModels) {{
-                    console.error('[Houdini] window.qt.api.ollamaListModels not available');
-                    return {{object: 'list', data: []}};
-                }}
-                const r = await window.qt.api.ollamaListModels(JSON.stringify(options||{{}}));
-                console.log('[Houdini] ollamaListModels raw response:', r);
-                const parsed = (typeof r==='string')? JSON.parse(r): (r||{{object: 'list', data: []}});
-                console.log('[Houdini] ollamaListModels parsed:', parsed);
-                return parsed;
+                const _bu = window.__CHERRY_BACKEND_URL || '';
+                if (!_bu) return {{ object: 'list', data: [] }};
+                const resp = await fetch(_bu + '/api/v1/models/ollama-list', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json', 'X-Session-Id': window.__CHERRY_SESSION_ID || '' }},
+                    body: JSON.stringify(options || {{}})
+                }});
+                return await resp.json();
             }} catch(e) {{ 
-                console.error('[Houdini] ollamaListModels error:', e);
+                console.error('[Qt] ollamaListModels error:', e);
                 return {{ object: 'list', data: [] }} 
             }} 
         }},
         ollamaPullModel: async function(options) {{ 
             try {{ 
-                const r = await window.qt?.api?.ollamaPullModel?.(JSON.stringify(options||{{}}))
-                return (typeof r==='string')? JSON.parse(r): (r||{{success: false, error: 'Pull failed'}})
+                const _bu = window.__CHERRY_BACKEND_URL || '';
+                if (!_bu) return {{ success: false, error: 'No backend URL' }};
+                const resp = await fetch(_bu + '/api/v1/models/ollama-pull', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json', 'X-Session-Id': window.__CHERRY_SESSION_ID || '' }},
+                    body: JSON.stringify(options || {{}})
+                }});
+                return await resp.json();
             }} catch(e) {{ 
                 return {{ success: false, error: String(e) }} 
             }} 
         }},
         modelList: async function(config) {{ 
             try {{ 
-                const r = await window.qt?.api?.modelList?.(JSON.stringify(config||{{}}))
-                return (typeof r==='string')? JSON.parse(r): (r||{{object: 'list', data: []}})
+                const _bu = window.__CHERRY_BACKEND_URL || '';
+                if (!_bu) return {{ object: 'list', data: [] }};
+                const resp = await fetch(_bu + '/api/v1/models/list', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json', 'X-Session-Id': window.__CHERRY_SESSION_ID || '' }},
+                    body: JSON.stringify(config || {{}})
+                }});
+                return await resp.json();
             }} catch(e) {{ 
                 return {{ object: 'list', data: [] }} 
             }} 
         }}
     }};
     
-    // 兼容 window.qt.network.fetchProxy - 支持流式响应
+    // ── window.qt.network.fetchProxy ───────────────────────────────────────────
+    // 使用直连后端的 fetch()（非阻塞）。
+    // 流式请求：发起后通过轮询 /api/v1/network/stream-read 收集分片，汇总后返回。
     window.qt = window.qt || {{}};
     window.qt.network = window.qt.network || {{}};
-    if (!window.qt.network.fetchProxy) {{
-        window.qt.network.fetchProxy = async function(configJson){{
+    window.qt.network.fetchProxy = async function(configJson) {{
+        const backendUrl = window.__CHERRY_BACKEND_URL || '';
+        const sessionId  = window.__CHERRY_SESSION_ID  || '';
+        const _headers   = {{ 'Content-Type': 'application/json', 'X-Session-Id': sessionId }};
+
+        if (!backendUrl) {{
+            return JSON.stringify({{ error: 'No backend URL available' }});
+        }}
+
+        // ── 解析配置 ──────────────────────────────────────────────────────────
+        let config;
+        try {{
+            config = typeof configJson === 'string' ? JSON.parse(configJson) : configJson;
+        }} catch(e) {{
+            return JSON.stringify({{ error: 'invalid config json: ' + e }});
+        }}
+
+        // 检测是否流式（config.stream 或 body.stream）
+        let isStream = config.stream === true;
+        if (!isStream && config.body) {{
             try {{
-                console.log('[Houdini] 🔵 qt.network.fetchProxy called');
-                const config = typeof configJson === 'string' ? JSON.parse(configJson) : configJson;
-                console.log('[Houdini] 🔵 Config:', config);
-                
-                // 检测是否需要流式响应
-                let requestBody;
-                try {{
-                    requestBody = config.body ? (typeof config.body === 'string' ? JSON.parse(config.body) : config.body) : {{}};
-                }} catch(e) {{
-                    requestBody = {{}};
+                const b = typeof config.body === 'string' ? JSON.parse(config.body) : config.body;
+                isStream = b.stream === true;
+            }} catch(_) {{}}
+        }}
+
+        try {{
+            if (isStream) {{
+                // ── 流式：启动 + 轮询 stream-read ─────────────────────────────
+                const requestId = config.requestId
+                    || ('r' + Date.now() + '_' + Math.random().toString(36).slice(2));
+                const streamCfg = {{ ...config, stream: true, requestId }};
+
+                // 启动流（立即返回 {{streaming: true, requestId}}）
+                const startResp = await fetch(backendUrl + '/api/v1/network/fetch', {{
+                    method: 'POST', headers: _headers, body: JSON.stringify(streamCfg)
+                }});
+                const startData = await startResp.json();
+
+                if (!startData.streaming) {{
+                    // 后端直接同步返回（无需轮询）
+                    return JSON.stringify(startData);
                 }}
-                const isStream = requestBody.stream === true;
-                console.log('[Houdini] 🔵 isStream:', isStream, 'requestBody.stream:', requestBody.stream);
-                
-                if (isStream) {{
-                    // 返回流式响应（模拟 SSE 格式）
-                    const requestId = 'stream_' + Date.now() + '_' + Math.random();
-                    config.stream = true;
-                    config.requestId = requestId;
-                    
-                    console.log('[Houdini] 🔵 Creating stream response for:', requestId);
-                    
-                    // 等待 qt.api 就绪
-                    let retries = 0;
-                    while (!window.qt?.api?.fetchProxy && retries < 100) {{
-                        await new Promise(r => setTimeout(r, 50));
-                        retries++;
-                    }}
-                    
-                    if (!window.qt?.api?.fetchProxy) {{
-                        console.error('[Houdini] ❌ qt.api.fetchProxy not available');
-                        return JSON.stringify({{error: 'QWebChannel not ready'}});
-                    }}
-                    
-                    // 创建一个 Promise，它会在流完成时 resolve
-                    return new Promise((resolve, reject) => {{
-                        let chunks = [];
-                        let headers = {{}};
-                        let status = 200;
-                        
-                        // 注册流处理器
-                        window.__streamHandlers = window.__streamHandlers || {{}};
-                        window.__streamHandlers[requestId] = {{
-                            onChunk: (chunk) => {{
-                                console.log('[Houdini] 🔵 Received chunk:', chunk.length, 'bytes');
-                                if (chunk.startsWith('__HEADERS__:')) {{
-                                    const headerInfo = JSON.parse(chunk.substring(12));
-                                    headers = headerInfo.headers || {{}};
-                                    status = headerInfo.status || 200;
-                                }} else {{
-                                    chunks.push(chunk);
-                                }}
-                            }},
-                            onEnd: () => {{
-                                console.log('[Houdini] 🔵 Stream ended, total chunks:', chunks.length);
-                                const fullBody = chunks.join('');
-                                resolve(JSON.stringify({{
-                                    status: status,
-                                    statusText: 'OK',
-                                    headers: headers,
-                                    body: fullBody
-                                }}));
-                            }},
-                            onError: (error) => {{
-                                console.error('[Houdini] 🔵 Stream error:', error);
-                                reject(new Error(error));
-                            }}
-                        }};
-                        
-                        // 启动流式请求
-                        window.qt.api.fetchProxy(JSON.stringify(config)).then(result => {{
-                            console.log('[Houdini] 🔵 Stream started:', result);
-                        }}).catch(reject);
+
+                // 轮询收集分片
+                const chunks  = [];
+                let respHeaders = {{}};
+                let status      = 200;
+                let done        = false;
+
+                while (!done) {{
+                    const pollResp = await fetch(backendUrl + '/api/v1/network/stream-read', {{
+                        method: 'POST', headers: _headers,
+                        body: JSON.stringify({{ requestId }})
                     }});
+                    const chunk = await pollResp.json();
+
+                    switch (chunk.type) {{
+                        case 'headers':
+                            respHeaders = chunk.headers || {{}};
+                            status      = chunk.status  || 200;
+                            break;
+                        case 'data':
+                            chunks.push(chunk.data);
+                            break;
+                        case 'end':
+                            done = true;
+                            break;
+                        case 'error':
+                            return JSON.stringify({{
+                                status: chunk.status || 500, statusText: 'Error',
+                                headers: {{}}, body: chunk.error || '', error: chunk.error
+                            }});
+                        case 'empty':
+                        default:
+                            await new Promise(r => setTimeout(r, 30));
+                    }}
                 }}
-                
-                // 非流式请求
-                return await window.qt?.api?.fetchProxy?.(configJson) 
-            }} catch(e){{ 
-                console.error('[Houdini] ❌ qt.network.fetchProxy error:', e);
-                return JSON.stringify({{ error: String(e) }}) 
+
+                return JSON.stringify({{
+                    status: status, statusText: 'OK',
+                    headers: respHeaders, body: chunks.join('')
+                }});
+
+            }} else {{
+                // ── 非流式：单次 fetch 直连后端 ───────────────────────────────
+                const resp = await fetch(backendUrl + '/api/v1/network/fetch', {{
+                    method: 'POST', headers: _headers,
+                    body: typeof configJson === 'string' ? configJson : JSON.stringify(config)
+                }});
+                return JSON.stringify(await resp.json());
             }}
-        }};
-    }}
+
+        }} catch(e) {{
+            console.error('[Qt] ❌ fetchProxy error:', e);
+            return JSON.stringify({{ error: String(e) }});
+        }}
+    }};
     
     // 确保 window.electron.ipcRenderer 存在（防止前端报错）
     window.electron = window.electron || {{}};
@@ -876,7 +1724,7 @@ def get_electron_api_script(theme: str = 'light') -> str:
     window.electron.ipcRenderer = window.electron.ipcRenderer || {{}};
     if (typeof window.electron.ipcRenderer.invoke !== 'function') {{
         window.electron.ipcRenderer.invoke = async function(channel, ...args) {{
-            console.log('[Houdini] 📡 ipcRenderer.invoke:', channel, args);
+            console.log('[Qt] 📡 ipcRenderer.invoke:', channel, args);
             
             if (channel === 'agent-message:get-history') {{
                 try {{
@@ -884,7 +1732,7 @@ def get_electron_api_script(theme: str = 'light') -> str:
                     const result = await window.qt.api.agentMessageGetHistory(JSON.stringify(payload));
                     return (typeof result === 'string') ? JSON.parse(result) : (result || []);
                 }} catch (e) {{
-                    console.error('[Houdini] agentMessageGetHistory error:', e);
+                    console.error('[Qt] agentMessageGetHistory error:', e);
                     return [];
                 }}
             }}
@@ -894,25 +1742,72 @@ def get_electron_api_script(theme: str = 'light') -> str:
                     const payload = args[0] || {{}};
                     return await window.qt.api.agentMessagePersistExchange(JSON.stringify(payload));
                 }} catch (e) {{
-                    console.error('[Houdini] agentMessagePersistExchange error:', e);
+                    console.error('[Qt] agentMessagePersistExchange error:', e);
                     return false;
                 }}
             }}
             
             if (channel.startsWith('mcp:')) {{
+                // ── MCP IPC 辅助：直连后端 HTTP ──
+                async function _mcpIpcCall(endpoint, body, qtMethod, defaultVal) {{
+                    if (!window.__CHERRY_BACKEND_URL || !window.__cherryBackend) {{
+                        console.warn('[Qt] MCP IPC: no backend URL for:', endpoint);
+                        return defaultVal;
+                    }}
+                    try {{
+                        const result = await window.__cherryBackend.call(endpoint, body || {{}});
+                        return result;
+                    }} catch (e) {{
+                        console.error('[Qt] MCP IPC failed (' + endpoint + '):', e.message);
+                        return defaultVal;
+                    }}
+                }}
+
                 if (channel === 'mcp:list-tools') {{
                     try {{
                         const server = args[0] || {{}};
-                        const result = await window.qt.api.mcpListTools(JSON.stringify(server));
-                        return (typeof result === 'string') ? JSON.parse(result) : (result || []);
+                        const data = await _mcpIpcCall('/api/v1/mcp/list-tools', server, 'mcpListTools', []);
+                        return Array.isArray(data) ? data : (data.tools || []);
                     }} catch (e) {{ return []; }}
                 }}
                 if (channel === 'mcp:call-tool') {{
                     try {{
                         const payload = args[0] || {{}};
-                        const result = await window.qt.api.mcpCallTool(JSON.stringify(payload));
-                        return (typeof result === 'string') ? JSON.parse(result) : (result || {{ isError: true, content: [] }});
+                        return await _mcpIpcCall('/api/v1/mcp/call', payload, 'mcpCallTool',
+                            {{ isError: true, content: [] }});
                     }} catch (e) {{ return {{ isError: true, content: [] }}; }}
+                }}
+                if (channel === 'mcp:start-server') {{
+                    try {{
+                        const server = args[0] || {{}};
+                        return await _mcpIpcCall('/api/v1/mcp/start', server, 'mcpStartServer', {{ ok: false }});
+                    }} catch (e) {{ return {{ ok: false, error: String(e) }}; }}
+                }}
+                if (channel === 'mcp:stop-server') {{
+                    try {{
+                        const server = args[0] || {{}};
+                        return await _mcpIpcCall('/api/v1/mcp/stop', server, 'mcpStopServer', false);
+                    }} catch (e) {{ return false; }}
+                }}
+                if (channel === 'mcp:remove-server') {{
+                    try {{
+                        const server = args[0] || {{}};
+                        return await _mcpIpcCall('/api/v1/mcp/remove', server, 'mcpRemoveServer', true);
+                    }} catch (e) {{ return false; }}
+                }}
+                if (channel === 'mcp:restart-server') {{
+                    try {{
+                        const server = args[0] || {{}};
+                        return await _mcpIpcCall('/api/v1/mcp/restart', server, 'mcpRestartServer', {{ ok: false }});
+                    }} catch (e) {{ return {{ ok: false, error: String(e) }}; }}
+                }}
+                if (channel === 'mcp:check-connectivity') {{
+                    try {{
+                        const server = args[0] || {{}};
+                        const r = await _mcpIpcCall('/api/v1/mcp/check-connectivity', server,
+                            'mcpCheckMcpConnectivity', {{ ok: false }});
+                        return !!(r && r.ok);
+                    }} catch (e) {{ return false; }}
                 }}
             }}
 
@@ -953,45 +1848,133 @@ def get_electron_api_script(theme: str = 'light') -> str:
     }}
     
     // 全局监控：拦截所有可能的 API 调用
-    console.log('[Houdini] 🔍 Monitoring all window.api calls...');
+    console.log('[Qt] 🔍 Monitoring all window.api calls...');
     setTimeout(function() {{
         if (window.api) {{
             ['fetch', 'fetchProxy', 'post', 'get', 'request'].forEach(function(method) {{
                 if (window.api[method]) {{
                     const original = window.api[method];
                     window.api[method] = function(...args) {{
-                        console.log('[Houdini] 🔍 window.api.' + method + ' called:', args[0]);
+                        console.log('[Qt] 🔍 window.api.' + method + ' called:', args[0]);
                         return original.apply(this, args);
                     }};
                 }}
             }});
-            console.log('[Houdini] 🔍 window.api monitor installed');
+            console.log('[Qt] 🔍 window.api monitor installed');
         }}
         
-        if (window.qt && window.qt.api) {{
-            const originalFetchProxy = window.qt.api.fetchProxy;
-            if (originalFetchProxy) {{
-                window.qt.api.fetchProxy = function(...args) {{
-                    console.log('[Houdini] 🔍 window.qt.api.fetchProxy called:', args[0]);
-                    return originalFetchProxy.apply(this, args);
-                }};
-                console.log('[Houdini] 🔍 window.qt.api.fetchProxy monitor installed');
-            }}
-        }}
-        
-        if (window.qt && window.qt.network) {{
-            const originalNetworkProxy = window.qt.network.fetchProxy;
-            if (originalNetworkProxy) {{
-                window.qt.network.fetchProxy = function(...args) {{
-                    console.log('[Houdini] 🔍 window.qt.network.fetchProxy called:', args[0]);
-                    return originalNetworkProxy.apply(this, args);
-                }};
-                console.log('[Houdini] 🔍 window.qt.network.fetchProxy monitor installed');
-            }}
-        }}
+        // fetchProxy monitor 已移除（调试用途，生产环境无需打印完整请求 payload）
     }}, 100);
     
-    console.log('[Houdini] Electron API 注入完成');
+    // 强制隐藏代理设置 UI（代理完全由代码配置）
+    (function hideProxySettings() {{
+        try {{
+                
+                // 注入 CSS 隐藏代理设置相关的 UI 元素
+                const style = document.createElement('style');
+                style.id = 'cherry-hide-proxy-settings';
+                style.textContent = `
+                    /* 隐藏代理设置区域 - 通过多种选择器确保覆盖 */
+                    /* 设置页面中的代理设置部分 */
+                    [class*="proxy" i],
+                    [data-testid*="proxy" i],
+                    div:has(> [class*="proxy" i]),
+                    /* 包含代理模式选择的容器 */
+                    .ant-form-item:has([name*="proxy" i]),
+                    .ant-form-item:has([id*="proxy" i]),
+                    /* 直接匹配代理相关的表单项 */
+                    .ant-form-item:has(label:contains("代理")),
+                    .ant-form-item:has(label:contains("Proxy")),
+                    .ant-form-item:has(label:contains("proxy")),
+                    /* 隐藏代理绕过规则 */
+                    [class*="bypass" i],
+                    [data-testid*="bypass" i] {{
+                        display: none !important;
+                        visibility: hidden !important;
+                        height: 0 !important;
+                        overflow: hidden !important;
+                        opacity: 0 !important;
+                        pointer-events: none !important;
+                    }}
+                `;
+                
+                // 等待 DOM 加载完成后注入
+                if (document.head) {{
+                    document.head.appendChild(style);
+                }} else {{
+                    document.addEventListener('DOMContentLoaded', () => {{
+                        document.head.appendChild(style);
+                    }});
+                }}
+                
+                // 使用 MutationObserver 动态隐藏新添加的代理设置元素
+                const observer = new MutationObserver((mutations) => {{
+                    mutations.forEach((mutation) => {{
+                        mutation.addedNodes.forEach((node) => {{
+                            if (node.nodeType === Node.ELEMENT_NODE) {{
+                                // 检查是否包含代理相关的文本或属性
+                                const html = node.outerHTML || '';
+                                const text = node.textContent || '';
+                                if (
+                                    (html.toLowerCase().includes('proxy') || 
+                                     html.toLowerCase().includes('代理') ||
+                                     html.toLowerCase().includes('bypass') ||
+                                     html.toLowerCase().includes('绕过')) &&
+                                    !html.includes('cherry-hide-proxy-settings')
+                                ) {{
+                                    // 检查是否是设置面板中的代理设置
+                                    if (node.classList && (
+                                        node.className.toLowerCase().includes('proxy') ||
+                                        node.className.toLowerCase().includes('bypass') ||
+                                        node.className.toLowerCase().includes('settings')
+                                    )) {{
+                                        node.style.display = 'none';
+                                        node.style.visibility = 'hidden';
+                                    }}
+                                }}
+                            }}
+                        }});
+                    }});
+                }});
+                
+                function startObserving() {{
+                    const target = document.body || document.documentElement;
+                    if (target) {{
+                        observer.observe(target, {{ childList: true, subtree: true }});
+                    }} else {{
+                        document.addEventListener('DOMContentLoaded', () => {{
+                            observer.observe(document.body, {{ childList: true, subtree: true }});
+                        }});
+                    }}
+                }}
+                startObserving();
+                
+                // 定期检查并隐藏代理设置（作为备用方案）
+                setInterval(() => {{
+                    // 隐藏包含"代理"或"proxy"文本的设置项
+                    document.querySelectorAll('label, span, div').forEach(el => {{
+                        const text = el.textContent || '';
+                        if (
+                            (text.includes('代理') || text.toLowerCase().includes('proxy') ||
+                             text.includes('绕过') || text.toLowerCase().includes('bypass')) &&
+                            !el.closest('#cherry-hide-proxy-settings')
+                        ) {{
+                            // 找到最近的表单项容器
+                            const formItem = el.closest('.ant-form-item, .setting-item, .form-group, [class*="setting"]');
+                            if (formItem) {{
+                                formItem.style.display = 'none';
+                            }}
+                        }}
+                    }});
+                }}, 2000);
+                
+                console.log('[Qt] Proxy settings UI hidden');
+        }} catch(e) {{
+            console.warn('[Qt] Error hiding proxy settings:', e);
+        }}
+    }})();
+    
+    console.log('[Qt] Electron API 注入完成');
     """
     
     polyfill_js = """
@@ -1063,7 +2046,7 @@ def get_electron_api_script(theme: str = 'light') -> str:
                 }
             }
         } catch(e) {
-            console.error('[Houdini] Polyfill injection failed:', e);
+            console.error('[Qt] Polyfill injection failed:', e);
         }
     })();
     """.strip("\n")
@@ -1093,7 +2076,7 @@ def get_electron_api_script(theme: str = 'light') -> str:
             var warned = false;
             return function () {
                 if (!warned) {
-                    console.warn('[Houdini] window.api.' + path + ' is not available in Qt runtime, returning default value.');
+                    console.warn('[Qt] window.api.' + path + ' is not available in Qt runtime, returning default value.');
                     warned = true;
                 }
                 return resolved(defaultValue);
@@ -1117,47 +2100,47 @@ def get_electron_api_script(theme: str = 'light') -> str:
             try {
                 return JSON.stringify(payload || {});
             } catch (err) {
-                console.error('[Houdini] normalizePayload error:', err);
+                console.error('[Qt] normalizePayload error:', err);
                 return '{}';
             }
         }
 
-        function qtInvokeJson(methodName, payload, fallback) {
+        function qtInvokeJson(methodName, payload, fallback, timeoutMs) {
             try {
                 var fn = window.qt && window.qt.api && window.qt.api[methodName];
                 if (!fn) {
                     return resolved(fallback);
                 }
                 var arg = normalizePayload(payload);
-                var result = arg === undefined ? fn() : fn(arg);
-                return Promise.resolve(result).then(function (value) {
-                    if (value === undefined || value === null || value === '') {
+                var _timeout = (typeof timeoutMs === 'number' && timeoutMs > 0) ? timeoutMs : 30000;
+
+                var callPromise = (arg === undefined) ? fn() : fn(arg);
+                if (!callPromise || typeof callPromise.then !== 'function') {
+                    callPromise = resolved(callPromise);
+                }
+
+                return Promise.race([
+                    callPromise.then(function(r) {
+                        if (r === undefined || r === null || r === '') return fallback;
+                        if (typeof r === 'string') {
+                            if (r === 'true') return true;
+                            if (r === 'false') return false;
+                            try { return JSON.parse(r); } catch(e) { return r; }
+                        }
+                        return r;
+                    }).catch(function(e) {
+                        console.error('[Qt] ' + methodName + ' call error:', e.message || e);
                         return fallback;
-                    }
-                    if (typeof value === 'string') {
-                        if (value === 'true') {
-                            return true;
-                        }
-                        if (value === 'false') {
-                            return false;
-                        }
-                        try {
-                            var parsed = JSON.parse(value);
-                            if (parsed === undefined || parsed === null) {
-                                return fallback;
-                            }
-                            return parsed;
-                        } catch (e) {
-                            return value;
-                        }
-                    }
-                    return value;
-                }).catch(function (err) {
-                    console.error('[Houdini] ' + methodName + ' error:', err);
-                    return fallback;
-                });
+                    }),
+                    new Promise(function(resolve) {
+                        setTimeout(function() {
+                            console.warn('[Qt] qtInvokeJson timeout:', methodName);
+                            resolve(fallback);
+                        }, _timeout);
+                    })
+                ]);
             } catch (err) {
-                console.error('[Houdini] ' + methodName + ' invoke failed:', err);
+                console.error('[Qt] ' + methodName + ' invoke failed:', err);
                 return resolved(fallback);
             }
         }
@@ -1176,7 +2159,7 @@ def get_electron_api_script(theme: str = 'light') -> str:
         baseApi.isNotEmptyDir = baseApi.isNotEmptyDir || asyncFalse;
         baseApi.relaunchApp = baseApi.relaunchApp || asyncFalse;
         baseApi.quit = baseApi.quit || function () {
-            console.warn('[Houdini] window.api.quit is ignored in Qt runtime.');
+            console.warn('[Qt] window.api.quit is ignored in Qt runtime.');
         };
         baseApi.quitAndInstall = baseApi.quitAndInstall || asyncFalse;
         baseApi.select = baseApi.select || function (options) {
@@ -1233,14 +2216,14 @@ def get_electron_api_script(theme: str = 'light') -> str:
         var devToolsApi = ensureNamespace('devTools');
         devToolsApi.toggle = devToolsApi.toggle || function () {
             try {
-                console.info('[Houdini] DevTools toggle requested from UI');
+                console.info('[Qt] DevTools toggle requested from UI');
                 if (typeof alert === 'function') {
-                    alert('Houdini 版本当前嵌入的是 Qt WebEngine，暂不支持原版浏览器 DevTools（F12）窗口。\\n\\n请改用 Houdini Python 控制台 / 终端日志进行调试。');
+                    alert('当前嵌入的是 Qt WebEngine，暂不支持原版浏览器 DevTools（F12）窗口。\\n\\n请改用终端日志进行调试。');
                 } else {
-                    console.warn('[Houdini] DevTools not available in Qt runtime. Please use Houdini console logs instead.');
+                    console.warn('[Qt] DevTools not available in Qt runtime. Please use console logs instead.');
                 }
             } catch (e) {
-                console.error('[Houdini] DevTools toggle handler error:', e);
+                console.error('[Qt] DevTools toggle handler error:', e);
             }
             return resolved(false);
         };
@@ -1250,7 +2233,7 @@ def get_electron_api_script(theme: str = 'light') -> str:
             try {
                 return resolved(window.btoa(unescape(encodeURIComponent(String(text || '')))));
             } catch (e) {
-                console.error('[Houdini] zip.compress fallback failed:', e);
+                console.error('[Qt] zip.compress fallback failed:', e);
                 return resolved(String(text || ''));
             }
         };
@@ -1258,7 +2241,7 @@ def get_electron_api_script(theme: str = 'light') -> str:
             try {
                 return resolved(decodeURIComponent(escape(window.atob(String(payload || '')))));
             } catch (e) {
-                console.error('[Houdini] zip.decompress fallback failed:', e);
+                console.error('[Qt] zip.decompress fallback failed:', e);
                 return resolved(String(payload || ''));
             }
         };
@@ -1292,7 +2275,7 @@ def get_electron_api_script(theme: str = 'light') -> str:
                     return fetch(pathOrUrl).then(function (resp) { return resp.text(); }).catch(function () { return ''; });
                 }
             } catch (e) {
-                console.error('[Houdini] fs.read fallback error:', e);
+                console.error('[Qt] fs.read fallback error:', e);
             }
             return resolved('');
         };
@@ -1309,38 +2292,197 @@ def get_electron_api_script(theme: str = 'light') -> str:
             try {
                 localStorage.setItem('houdini.shortcuts', JSON.stringify(payload || []));
             } catch (e) {
-                console.error('[Houdini] shortcuts.update error:', e);
+                console.error('[Qt] shortcuts.update error:', e);
             }
             return resolved(true);
         };
         
         var knowledgeApi = ensureNamespace('knowledgeBase');
-        knowledgeApi.create = knowledgeApi.create || asyncTrue;
-        knowledgeApi.reset = knowledgeApi.reset || asyncTrue;
-        knowledgeApi.delete = knowledgeApi.delete || asyncTrue;
-        knowledgeApi.add = knowledgeApi.add || asyncTrue;
-        knowledgeApi.remove = knowledgeApi.remove || asyncTrue;
-        knowledgeApi.search = knowledgeApi.search || asyncList;
-        knowledgeApi.rerank = knowledgeApi.rerank || asyncList;
-        knowledgeApi.checkQuota = knowledgeApi.checkQuota || asyncTrue;
+        knowledgeApi.create = function(params) {
+            return qtInvokeJson('knowledgeBaseCreate', params, {});
+        };
+        knowledgeApi.reset = asyncTrue;
+        knowledgeApi.delete = function(kbId) {
+             return qtInvokeJson('knowledgeBaseDelete', kbId, false);
+        };
+        knowledgeApi.add = function(payload) {
+             return qtInvokeJson('knowledgeBaseAdd', payload, {status: 'failed', message: 'Unknown error'});
+        };
+        knowledgeApi.remove = asyncTrue;
+        knowledgeApi.search = function(params, spanContext) {
+             return qtInvokeJson('knowledgeBaseSearch', params, []);
+        };
+        knowledgeApi.rerank = asyncList;
+        knowledgeApi.checkQuota = asyncTrue;
         
+        // 强制覆盖 memory API - 确保在 post-load 阶段也正确设置
         var memoryApi = ensureNamespace('memory');
-        memoryApi.add = memoryApi.add || function (messages) {
+        console.log('[Qt postLoad] Setting up memory API...');
+        
+        // 强制覆盖所有方法 - 不使用 ||
+        memoryApi.add = async function (messages, options) {
+            console.log('[Qt postLoad] memory.add called');
+            try {
+                if (window.qt && window.qt.api && window.qt.api.memoryAdd) {
+                    var payload = { messages: messages, options: options };
+                    var r = await window.qt.api.memoryAdd(JSON.stringify(payload));
+                    return (typeof r === 'string') ? JSON.parse(r) : (r || { memories: [] });
+                }
+            } catch(e) {
+                console.error('[Qt postLoad] memory.add error:', e);
+            }
             memoryStore.entries.push({ id: 'local-' + Date.now() + '-' + Math.random(), messages: messages, ts: Date.now() });
-            return resolved(true);
+            return { memories: memoryStore.entries };
         };
-        memoryApi.search = memoryApi.search || function () { return resolved(memoryStore.entries.slice()); };
-        memoryApi.list = memoryApi.list || function () { return resolved(memoryStore.entries.slice()); };
-        memoryApi.delete = memoryApi.delete || asyncTrue;
-        memoryApi.update = memoryApi.update || asyncTrue;
-        memoryApi.get = memoryApi.get || asyncNull;
-        memoryApi.setConfig = memoryApi.setConfig || function (config) {
+        
+        memoryApi.search = async function (query, options) {
+            console.log('[Qt postLoad] memory.search called');
+            try {
+                if (window.qt && window.qt.api && window.qt.api.memorySearch) {
+                    var payload = { query: query, options: options };
+                    var r = await window.qt.api.memorySearch(JSON.stringify(payload));
+                    return (typeof r === 'string') ? JSON.parse(r) : (r || { memories: [] });
+                }
+            } catch(e) {
+                console.error('[Qt postLoad] memory.search error:', e);
+            }
+            return { memories: memoryStore.entries.slice() };
+        };
+        
+        memoryApi.list = async function (options) {
+            console.log('[Qt postLoad] memory.list called');
+            try {
+                if (window.qt && window.qt.api && window.qt.api.memoryList) {
+                    var r = await window.qt.api.memoryList(JSON.stringify(options || {}));
+                    return (typeof r === 'string') ? JSON.parse(r) : (r || { memories: [] });
+                }
+            } catch(e) {
+                console.error('[Qt postLoad] memory.list error:', e);
+            }
+            return { memories: memoryStore.entries.slice() };
+        };
+        
+        memoryApi.delete = async function (id) {
+            console.log('[Qt postLoad] memory.delete called');
+            try {
+                if (window.qt && window.qt.api && window.qt.api.memoryDelete) {
+                    return await window.qt.api.memoryDelete(id);
+                }
+            } catch(e) {
+                console.error('[Qt postLoad] memory.delete error:', e);
+            }
+            return true;
+        };
+        
+        memoryApi.update = async function (id, memory, metadata) {
+            console.log('[Qt postLoad] memory.update called');
+            try {
+                if (window.qt && window.qt.api && window.qt.api.memoryUpdate) {
+                    var payload = { id: id, memory: memory, metadata: metadata };
+                    return await window.qt.api.memoryUpdate(JSON.stringify(payload));
+                }
+            } catch(e) {
+                console.error('[Qt postLoad] memory.update error:', e);
+            }
+            return true;
+        };
+        
+        memoryApi.get = async function (id) {
+            console.log('[Qt postLoad] memory.get called');
+            try {
+                if (window.qt && window.qt.api && window.qt.api.memoryGet) {
+                    var r = await window.qt.api.memoryGet(id);
+                    return (typeof r === 'string') ? JSON.parse(r) : r;
+                }
+            } catch(e) {
+                console.error('[Qt postLoad] memory.get error:', e);
+            }
+            return null;
+        };
+        
+        memoryApi.setConfig = function (config) {
+            // 完全同步版本 - 立即返回 Promise.resolve(true)，避免任何阻塞
+            console.log('[Qt postLoad] memory.setConfig called - returning immediately');
+            // 保存到本地存储
             memoryStore.config = config || memoryStore.config || {};
-            return resolved(true);
+            // 异步保存到后端，但不等待结果
+            setTimeout(function() {
+                try {
+                    if (window.qt && window.qt.api && window.qt.api.memorySetConfig) {
+                        var configStr = JSON.stringify(config || {});
+                        console.log('[Qt postLoad] Async saving memoryConfig...');
+                        window.qt.api.memorySetConfig(configStr).then(function(r) {
+                            console.log('[Qt postLoad] memorySetConfig completed:', r);
+                        }).catch(function(err) {
+                            console.error('[Qt postLoad] memorySetConfig async error:', err);
+                        });
+                    }
+                } catch(e) {
+                    console.error('[Qt postLoad] memorySetConfig setTimeout error:', e);
+                }
+            }, 0);
+            return Promise.resolve(true);
         };
-        memoryApi.deleteUser = memoryApi.deleteUser || asyncTrue;
-        memoryApi.deleteAllMemoriesForUser = memoryApi.deleteAllMemoriesForUser || asyncTrue;
-        memoryApi.getUsersList = memoryApi.getUsersList || asyncList;
+        
+        memoryApi.deleteUser = async function (userId) {
+            console.log('[Qt postLoad] memory.deleteUser called');
+            try {
+                if (window.qt && window.qt.api && window.qt.api.memoryDeleteUser) {
+                    return await window.qt.api.memoryDeleteUser(userId);
+                }
+            } catch(e) {
+                console.error('[Qt postLoad] memory.deleteUser error:', e);
+            }
+            return true;
+        };
+        
+        memoryApi.deleteAllMemoriesForUser = async function (userId) {
+            console.log('[Qt postLoad] memory.deleteAllMemoriesForUser called');
+            try {
+                if (window.qt && window.qt.api && window.qt.api.memoryDeleteAllMemoriesForUser) {
+                    return await window.qt.api.memoryDeleteAllMemoriesForUser(userId);
+                }
+            } catch(e) {
+                console.error('[Qt postLoad] memory.deleteAllMemoriesForUser error:', e);
+            }
+            return true;
+        };
+        
+        memoryApi.getUsersList = async function () {
+            console.log('[Qt postLoad] memory.getUsersList called');
+            try {
+                if (window.qt && window.qt.api && window.qt.api.memoryGetUsersList) {
+                    var r = await window.qt.api.memoryGetUsersList();
+                    return (typeof r === 'string') ? JSON.parse(r) : (r || []);
+                }
+            } catch(e) {
+                console.error('[Qt postLoad] memory.getUsersList error:', e);
+            }
+            return [];
+        };
+        
+        console.log('[Qt postLoad] memory API setup complete');
+        
+        // 创建一个简单的 setConfig 备用实现
+        var __simpleSetConfig = function(config) {
+            console.log('[Qt postLoad FALLBACK] memory.setConfig called');
+            return Promise.resolve(true);
+        };
+        
+        // 定期检查并确保 setConfig 能快速返回
+        setInterval(function() {
+            try {
+                if (window.api && window.api.memory) {
+                    // 直接替换 setConfig
+                    window.api.memory.setConfig = __simpleSetConfig;
+                }
+            } catch(e) {}
+        }, 100);
+        
+        // 添加调试标记到标题
+        if (document.title.indexOf('[Qt]') === -1) {
+            document.title = '[Qt] ' + document.title;
+        }
         
         var fileServiceApi = ensureNamespace('fileService');
         fileServiceApi.upload = fileServiceApi.upload || asyncStub('fileService.upload', { success: false });
@@ -1349,32 +2491,100 @@ def get_electron_api_script(theme: str = 'light') -> str:
         fileServiceApi.retrieve = fileServiceApi.retrieve || asyncNull;
 
         var mcpApi = ensureNamespace('mcp');
-        mcpApi.removeServer = mcpApi.removeServer || function (server) {
-            return qtInvokeJson('mcpRemoveServer', server, true);
-        };
-        mcpApi.restartServer = mcpApi.restartServer || function (server) {
-            return qtInvokeJson('mcpRestartServer', server, true);
+
+        // ── MCP 辅助函数（直连后端 HTTP） ─────────────────────────────────────
+        function _mcpBackendCall(endpoint, body, qtMethod, defaultValue) {
+            if (window.__CHERRY_BACKEND_URL && window.__cherryBackend) {
+                return window.__cherryBackend.call(endpoint, body || {})
+                    .catch(function(e) {
+                        console.error('[Qt] MCP backend call failed (' + endpoint + '):', e.message);
+                        return defaultValue;
+                    });
+            }
+            console.warn('[Qt] MCP: no backend URL for:', endpoint);
+            return resolved(defaultValue);
+        }
+
+        // ── Cherry Studio 内置虚拟服务器判断 ──────────────────────────────────
+        // @cherry/hub 是 Cherry Studio "自动" 模式的核心：提供 search / exec 工具。
+        // 后端已实现完整的 hub 逻辑，因此 listTools / callTool 需要走后端。
+        // start/stop/remove/restart 仍为无操作，直接返回成功。
+
+        // hub 服务器 ID / type 列表（后端会处理这些）
+        var _CHERRY_HUB_IDS   = ['hub', '@cherry/hub', 'cherry-hub'];
+        // 其他纯虚拟内置（不支持工具调用，直接返回空 / 错误）
+        var _CHERRY_OTHER_BUILTIN_IDS = ['in-memory', 'memory', 'thinking'];
+        var _CHERRY_BUILTIN_IDS = _CHERRY_HUB_IDS.concat(_CHERRY_OTHER_BUILTIN_IDS);
+
+        function _isHubServer(server) {
+            if (!server) return false;
+            var id   = (typeof server === 'string') ? server : (server.id || server.serverId || '');
+            var type = (typeof server === 'object') ? (server.type || '') : '';
+            var idLower = String(id).toLowerCase();
+            if (_CHERRY_HUB_IDS.indexOf(idLower) !== -1) return true;
+            if (idLower.indexOf('@cherry/') === 0) return true;
+            if (['hub', 'inmemory'].indexOf(type.toLowerCase().replace('-','')) !== -1) return true;
+            return false;
+        }
+
+        function _isCherryBuiltin(server) {
+            if (!server) return false;
+            var id   = (typeof server === 'string') ? server : (server.id || server.serverId || '');
+            var type = (typeof server === 'object') ? (server.type || '') : '';
+            var idLower = String(id).toLowerCase();
+            if (_CHERRY_BUILTIN_IDS.indexOf(idLower) !== -1) return true;
+            if (idLower.indexOf('@cherry/') === 0) return true;
+            if (['builtin', 'in-memory', 'memory'].indexOf(type.toLowerCase()) !== -1) return true;
+            return false;
+        }
+
+        mcpApi.startServer = mcpApi.startServer || function (server) {
+            // hub 和其他内置服务器：无操作，直接返回成功
+            if (_isCherryBuiltin(server)) return resolved({ ok: true, tools: [] });
+            return _mcpBackendCall('/api/v1/mcp/start', server, 'mcpStartServer', { ok: false });
         };
         mcpApi.stopServer = mcpApi.stopServer || function (server) {
-            return qtInvokeJson('mcpStopServer', server, true);
+            if (_isCherryBuiltin(server)) return resolved(true);
+            return _mcpBackendCall('/api/v1/mcp/stop', server, 'mcpStopServer', false);
         };
-        mcpApi.startServer = mcpApi.startServer || function (server) {
-            return qtInvokeJson('mcpStartServer', server, true);
+        mcpApi.removeServer = mcpApi.removeServer || function (server) {
+            if (_isCherryBuiltin(server)) return resolved(true);
+            return _mcpBackendCall('/api/v1/mcp/remove', server, 'mcpRemoveServer', true);
         };
-        mcpApi.listTools = mcpApi.listTools || function (server) {
-            return qtInvokeJson('mcpListTools', server, []);
+        mcpApi.restartServer = mcpApi.restartServer || function (server) {
+            if (_isCherryBuiltin(server)) return resolved({ ok: true, tools: [] });
+            return _mcpBackendCall('/api/v1/mcp/restart', server, 'mcpRestartServer', { ok: false });
         };
-        mcpApi.listPrompts = mcpApi.listPrompts || function (server) {
-            return qtInvokeJson('mcpListPrompts', server, []);
+        // 强制覆盖 listTools（不用 || 保护），确保始终使用我们的后端实现
+        mcpApi.listTools = function (server) {
+            var body = (server && typeof server === 'object') ? server : { id: server };
+
+            // hub 服务器：走后端，后端会返回 search / exec 工具定义
+            // 其他内置虚拟服务器：直接返回空列表
+            if (!_isHubServer(server) && _isCherryBuiltin(server)) {
+                return resolved([]);
+            }
+
+            return _mcpBackendCall('/api/v1/mcp/list-tools', body, 'mcpListTools', [])
+                .then(function(data) {
+                    if (data && typeof data === 'object' && !Array.isArray(data) && data.error) {
+                        throw new Error(data.error);
+                    }
+                    return Array.isArray(data) ? data : (data && data.tools) ? data.tools : [];
+                });
         };
-        mcpApi.listResources = mcpApi.listResources || function (server) {
-            return qtInvokeJson('mcpListResources', server, []);
-        };
+        mcpApi.listPrompts = mcpApi.listPrompts || function () { return resolved([]); };
+        mcpApi.listResources = mcpApi.listResources || function () { return resolved([]); };
         mcpApi.getServerVersion = mcpApi.getServerVersion || function (server) {
-            return qtInvokeJson('mcpGetServerVersion', server, null);
+            // Cherry Studio 直接把返回值渲染为 React child（<VersionBadge count={version}>），
+            // 必须是字符串或 null，不能是对象。
+            // 实际版本号未知时返回 null（React 会跳过渲染），避免 "Objects are not valid as a React child" 错误。
+            return resolved(null);
         };
         mcpApi.checkMcpConnectivity = mcpApi.checkMcpConnectivity || function (server) {
-            return qtInvokeJson('mcpCheckMcpConnectivity', server, false);
+            var body = (server && typeof server === 'object') ? server : { id: server };
+            return _mcpBackendCall('/api/v1/mcp/check-connectivity', body, 'mcpCheckMcpConnectivity', false)
+                .then(function(r) { return !!(r && r.ok); });
         };
         mcpApi.getInstallInfo = mcpApi.getInstallInfo || function () {
             return qtInvokeJson('mcpGetInstallInfo', undefined, { dir: '', uvPath: '', bunPath: '' });
@@ -1382,81 +2592,209 @@ def get_electron_api_script(theme: str = 'light') -> str:
         mcpApi.getPrompt = mcpApi.getPrompt || asyncStub('mcp.getPrompt', null);
         mcpApi.getResource = mcpApi.getResource || asyncStub('mcp.getResource', null);
         mcpApi.callTool = mcpApi.callTool || function (payload) {
-            console.log('[Houdini] mcpApi.callTool called with payload:', payload);
-            try {
-                // 将 payload 转换为 JSON 字符串，确保传给 Python 的是字符串
-                var payloadStr = typeof payload === 'string' ? payload : JSON.stringify(payload);
-                var result = qtInvokeJson('mcpCallTool', payloadStr, { isError: true, content: [{ type: 'text', text: 'MCP callTool not available' }] });
-                console.log('[Houdini] mcpApi.callTool result:', result);
-                return result;
-            } catch (e) {
-                console.error('[Houdini] mcpApi.callTool error:', e);
-                return Promise.resolve({ isError: true, content: [{ type: 'text', text: 'MCP callTool error: ' + String(e) }] });
+            // Cherry Studio 传入格式：{ server: {...}, name: "tool", args: {...}, callId }
+            // 后端 /api/v1/mcp/call 已同时支持该格式和旧格式
+            var body = (typeof payload === 'string') ? JSON.parse(payload) : payload;
+            var _callServer = body && (body.server || {});
+
+            // hub 服务器（@cherry/hub）：走后端执行 search / exec
+            // 其他内置虚拟服务器：直接返回错误（不支持工具调用）
+            if (!_isHubServer(_callServer) && _isCherryBuiltin(_callServer)) {
+                var _toolName = body && body.name || 'unknown';
+                var _sid = (typeof _callServer === 'string') ? _callServer : (_callServer.id || '');
+                return resolved({
+                    isError: true,
+                    content: [{ type: 'text', text: (
+                        'Tool "' + _toolName + '" on server "' + _sid + '" is not available ' +
+                        'in the Qt runtime (built-in virtual server).'
+                    )}]
+                });
             }
+
+            return _mcpBackendCall('/api/v1/mcp/call', body, 'mcpCallTool',
+                { isError: true, content: [{ type: 'text', text: 'MCP callTool not available' }] })
+                .catch(function(e) {
+                    console.error('[Qt] mcpApi.callTool error:', e);
+                    return { isError: true, content: [{ type: 'text', text: String(e) }] };
+                });
         };
         mcpApi.uploadDxt = mcpApi.uploadDxt || asyncStub('mcp.uploadDxt', { success: false, error: 'Not supported in Qt runtime' });
         mcpApi.abortTool = mcpApi.abortTool || asyncStub('mcp.abortTool', false);
-        mcpApi.onServerLog = mcpApi.onServerLog || function (callback) {
-            // 在 Qt 运行时中，我们暂时不实现实时日志推送
-            // 或者可以通过 QWebChannel 的信号来实现
-            // 这里返回一个空的 unsubscribe 函数
+        mcpApi.onServerLog = mcpApi.onServerLog || function () {
             return function() {};
         };
         mcpApi.getServerLogs = mcpApi.getServerLogs || asyncList;
 
-        var apiServerApi = ensureNamespace('apiServer');
-        apiServerApi.getStatus = apiServerApi.getStatus || function () {
+        // ========== HTTP Proxy API (for CORS bypass in Qt WebEngine) ==========
+        var httpProxyApi = ensureNamespace('httpProxy');
+
+        // 将毫秒超时统一转换为秒（Cherry Studio 传入 ms，后端使用 s）
+        function _normalizeTimeoutToSec(config) {
+            var cfg = Object.assign({}, config);
+            if (cfg.timeout && cfg.timeout > 300) {
+                // 大于 300 视为毫秒，转为秒（最小 5s，最大 300s）
+                cfg.timeout = Math.min(300, Math.max(5, Math.ceil(cfg.timeout / 1000)));
+            }
+            return cfg;
+        }
+
+        httpProxyApi.get = async function(config) {
+            var _bu = window.__CHERRY_BACKEND_URL || '';
+            if (!_bu) return { success: false, error: 'No backend URL' };
             try {
-                var statusStr = window.qt?.api?.apiServerStatus?.();
-                if (typeof statusStr === 'string') {
+                var normalizedConfig = _normalizeTimeoutToSec(config || {});
+                var resp = await fetch(_bu + '/api/v1/network/http-get', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Session-Id': window.__CHERRY_SESSION_ID || ''
+                    },
+                    body: JSON.stringify(normalizedConfig)
+                });
+                return await resp.json();
+            } catch (e) {
+                console.error('[Qt] httpProxy.get error:', e);
+                return { success: false, error: String(e) };
+            }
+        };
+
+        httpProxyApi.post = async function(config) {
+            var _bu = window.__CHERRY_BACKEND_URL || '';
+            if (!_bu) return { success: false, error: 'No backend URL' };
+            try {
+                var normalizedConfig = _normalizeTimeoutToSec(config || {});
+                var resp = await fetch(_bu + '/api/v1/network/http-post', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Session-Id': window.__CHERRY_SESSION_ID || ''
+                    },
+                    body: JSON.stringify(normalizedConfig)
+                });
+                return await resp.json();
+            } catch (e) {
+                console.error('[Qt] httpProxy.post error:', e);
+                return { success: false, error: String(e) };
+            }
+        };
+
+        // ========== Search Service API (for Local Search Providers) ==========
+        var searchServiceApi = ensureNamespace('searchService');
+        
+        // In Qt environment, we simulate the search window by using HTTP proxy
+        var _searchWindowStates = {};
+        
+        searchServiceApi.openSearchWindow = async function(uid, show) {
+            // In Qt, we don't actually create a window, just track state
+            _searchWindowStates[uid] = { opened: true, show: show || false };
+            return true;
+        };
+        
+        searchServiceApi.closeSearchWindow = async function(uid) {
+            delete _searchWindowStates[uid];
+            return true;
+        };
+        
+        searchServiceApi.openUrlInSearchWindow = async function(uid, url) {
+            // Use HTTP proxy to fetch the URL content instead of creating a window
+            console.log('[Qt] searchService.openUrlInSearchWindow:', url);
+            try {
+                var response = await httpProxyApi.get({
+                    url: url,
+                    timeout: 30000,
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                        'Accept-Language': 'en-US,en;q=0.5'
+                    }
+                });
+                
+                if (response.success && response.data) {
+                    // Return HTML content like Electron does
+                    if (typeof response.data === 'string') {
+                        return response.data;
+                    }
+                    return JSON.stringify(response.data);
+                }
+                
+                console.error('[Qt] searchService.openUrlInSearchWindow failed:', response.error);
+                return '<html><body>Error: ' + (response.error || 'Failed to fetch URL') + '</body></html>';
+            } catch (e) {
+                console.error('[Qt] searchService.openUrlInSearchWindow error:', e);
+                return '<html><body>Error: ' + String(e) + '</body></html>';
+            }
+        };
+
+        var apiServerApi = ensureNamespace('apiServer');
+        
+        // 强制覆盖 apiServer 方法 - Qt 环境中使用 Python 后端
+        console.log('[Qt] Overriding apiServer methods with Python backend...');
+        
+        apiServerApi.getStatus = async function () {
+            try {
+                var statusStr = await window.qt?.api?.apiServerStatus?.();
+                
+                if (typeof statusStr === 'string' && statusStr) {
                     var status = JSON.parse(statusStr);
-                    console.log('[Houdini] apiServer.getStatus result:', status);
+                    console.log('[Qt] apiServer.getStatus result:', status);
                     // 直接返回后端格式 { running: boolean, config: ApiServerConfig | null }
                     return {
                         running: status.running || false,
                         config: status.config || null
                     };
+                } else {
+                    console.error('[Qt] apiServerStatus returned invalid result:', statusStr);
                 }
             } catch (e) {
-                console.error('[Houdini] apiServer.getStatus error:', e);
+                console.error('[Qt] apiServer.getStatus error:', e);
             }
             return { running: false, config: null };
         };
-        apiServerApi.start = apiServerApi.start || function () {
+        apiServerApi.start = async function () {
             try {
-                var resultStr = window.qt?.api?.apiServerStart?.();
-                if (typeof resultStr === 'string') {
+                var resultStr = await window.qt?.api?.apiServerStart?.();
+                
+                if (typeof resultStr === 'string' && resultStr) {
                     var result = JSON.parse(resultStr);
-                    // 转换为前端期望的格式 { success: boolean, error?: string }
+                    console.log('[Qt] Parsed result:', result);
+                    // 转换为前端期望的格式 { success: boolean, error?: string, port?: number }
+                    return {
+                        success: result.running || false,
+                        error: result.error || null,
+                        port: result.port || null,
+                        url: result.url || null
+                    };
+                } else {
+                    console.error('[Qt] apiServerStart returned invalid result:', resultStr);
+                }
+            } catch (e) {
+                console.error('[Qt] apiServer.start error:', e);
+                return { success: false, error: String(e), port: null };
+            }
+            return { success: false, error: 'Backend API not available or returned empty result', port: null };
+        };
+        apiServerApi.restart = async function () {
+            try {
+                var resultStr = await window.qt?.api?.apiServerRestart?.();
+                
+                if (typeof resultStr === 'string' && resultStr) {
+                    var result = JSON.parse(resultStr);
                     return {
                         success: result.running || false,
                         error: result.error || null
                     };
                 }
             } catch (e) {
-                console.error('[Houdini] apiServer.start error:', e);
+                console.error('[Qt] apiServer.restart error:', e);
+                return { success: false, error: String(e) };
             }
-            return { success: false, error: 'Not available' };
+            return { success: false, error: 'Backend API not available or returned empty result' };
         };
-        apiServerApi.restart = apiServerApi.restart || function () {
+        apiServerApi.stop = async function () {
             try {
-                var resultStr = window.qt?.api?.apiServerRestart?.();
-                if (typeof resultStr === 'string') {
-                    var result = JSON.parse(resultStr);
-                    return {
-                        success: result.running || false,
-                        error: result.error || null
-                    };
-                }
-            } catch (e) {
-                console.error('[Houdini] apiServer.restart error:', e);
-            }
-            return { success: false, error: 'Not available' };
-        };
-        apiServerApi.stop = apiServerApi.stop || function () {
-            try {
-                var resultStr = window.qt?.api?.apiServerStop?.();
-                if (typeof resultStr === 'string') {
+                var resultStr = await window.qt?.api?.apiServerStop?.();
+                
+                if (typeof resultStr === 'string' && resultStr) {
                     var result = JSON.parse(resultStr);
                     return {
                         success: !result.running,
@@ -1464,9 +2802,10 @@ def get_electron_api_script(theme: str = 'light') -> str:
                     };
                 }
             } catch (e) {
-                console.error('[Houdini] apiServer.stop error:', e);
+                console.error('[Qt] apiServer.stop error:', e);
+                return { success: false, error: String(e) };
             }
-            return { success: false, error: 'Not available' };
+            return { success: false, error: 'Backend API not available or returned empty result' };
         };
         apiServerApi.onReady = apiServerApi.onReady || function (callback) {
             var cancelled = false;
@@ -1517,6 +2856,7 @@ def get_electron_api_script(theme: str = 'light') -> str:
         vertexApi.clearAuthCache = vertexApi.clearAuthCache || asyncTrue;
         
         var ovmsApi = ensureNamespace('ovms');
+        ovmsApi.isSupported = ovmsApi.isSupported || asyncFalse;
         ovmsApi.addModel = ovmsApi.addModel || asyncTrue;
         ovmsApi.stopAddModel = ovmsApi.stopAddModel || asyncTrue;
         ovmsApi.getModels = ovmsApi.getModels || asyncList;
@@ -1530,7 +2870,7 @@ def get_electron_api_script(theme: str = 'light') -> str:
             try {
                 localStorage.setItem('houdini.config.' + key, JSON.stringify({ value: value, notify: notify }));
             } catch (e) {
-                console.error('[Houdini] config.set error:', e);
+                console.error('[Qt] config.set error:', e);
             }
             return resolved(true);
         };
@@ -1560,13 +2900,30 @@ def get_electron_api_script(theme: str = 'light') -> str:
         
         var shellApi = ensureNamespace('shell');
         shellApi.openExternal = shellApi.openExternal || function (url) {
+            // 优先通过 Qt Slot 打开（直接调用 webbrowser.open，不阻塞主线程）
+            // 次选：直连后端；兜底：window.open
             try {
-                if (window.qt && window.qt.api && typeof window.qt.api.openWebsite === 'function') {
-                    window.qt.api.openWebsite(url);
+                if (window.qt && window.qt.api && typeof window.qt.api.openExternal === 'function') {
+                    window.qt.api.openExternal(url);
+                    return resolved(true);
                 }
             } catch (e) {
-                console.warn('[Houdini] shell.openExternal fallback error:', e);
+                console.warn('[Qt] shell.openExternal qt slot error:', e);
             }
+            // 后端直连（后端调用 os.startfile / subprocess）
+            const backendUrl = window.__CHERRY_BACKEND_URL || '';
+            if (backendUrl) {
+                fetch(backendUrl + '/api/v1/files/open-external', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url })
+                }).catch(function(e) {
+                    console.warn('[Qt] shell.openExternal backend error:', e);
+                });
+                return resolved(true);
+            }
+            // 最终降级：在当前标签页打开
+            try { window.open(url, '_blank'); } catch(_) {}
             return resolved(true);
         };
         
@@ -1605,13 +2962,13 @@ def get_electron_api_script(theme: str = 'light') -> str:
                                             var currentWindow = instance.window;
                                             if (!currentWindow || currentWindow === '') {
                                                 instance.initWindowSource('mainWindow');
-                                                console.info('[Houdini] LoggerService auto-initialized via getInstance interceptor');
+                                                console.info('[Qt] LoggerService auto-initialized via getInstance interceptor');
                                             }
                                         } catch(e) {
                                             // 如果无法访问 window 属性，直接尝试初始化
                                             try {
                                                 instance.initWindowSource('mainWindow');
-                                                console.info('[Houdini] LoggerService auto-initialized via getInstance interceptor (fallback)');
+                                                console.info('[Qt] LoggerService auto-initialized via getInstance interceptor (fallback)');
                                             } catch(e2) {
                                                 // 初始化失败，忽略
                                             }
@@ -1620,7 +2977,7 @@ def get_electron_api_script(theme: str = 'light') -> str:
                                     return instance;
                                 };
                                 LoggerServiceClass.__houdiniIntercepted = true;
-                                console.info('[Houdini] LoggerService.getInstance intercepted');
+                                console.info('[Qt] LoggerService.getInstance intercepted');
                             }
                         } catch(e) {
                             // 忽略错误，继续尝试
@@ -1634,7 +2991,7 @@ def get_electron_api_script(theme: str = 'light') -> str:
                     setTimeout(checkLoggerService, 1000);
                     setTimeout(checkLoggerService, 2000);
                 } catch(e) {
-                    console.error('[Houdini] LoggerService interception setup error:', e);
+                    console.error('[Qt] LoggerService interception setup error:', e);
                 }
             }
             
@@ -1693,7 +3050,7 @@ def get_electron_api_script(theme: str = 'light') -> str:
                                                     logger.initWindowSource('mainWindow');
                                                     logger.__houdiniWindowInitialized = true;
                                                     initialized = true;
-                                                    console.info('[Houdini] LoggerService auto-initialized via error interceptor');
+                                                    console.info('[Qt] LoggerService auto-initialized via error interceptor');
                                                 }
                                             } catch(e) {
                                                 // 如果无法访问 window 属性，直接尝试初始化
@@ -1701,7 +3058,7 @@ def get_electron_api_script(theme: str = 'light') -> str:
                                                     logger.initWindowSource('mainWindow');
                                                     logger.__houdiniWindowInitialized = true;
                                                     initialized = true;
-                                                    console.info('[Houdini] LoggerService auto-initialized via error interceptor (fallback)');
+                                                    console.info('[Qt] LoggerService auto-initialized via error interceptor (fallback)');
                                                 } catch(e2) {}
                                             }
                                         }
@@ -1721,7 +3078,7 @@ def get_electron_api_script(theme: str = 'light') -> str:
                                                             try {
                                                                 this.initWindowSource('mainWindow');
                                                                 this.__houdiniWindowInitialized = true;
-                                                                console.info('[Houdini] LoggerService auto-initialized via processLog interceptor');
+                                                                console.info('[Qt] LoggerService auto-initialized via processLog interceptor');
                                                             } catch(e) {}
                                                         }
                                                         return originalProcessLog.apply(this, arguments);
@@ -1791,7 +3148,7 @@ def get_electron_api_script(theme: str = 'light') -> str:
                                 try {
                                     logger.initWindowSource('mainWindow');
                                     logger.__houdiniWindowInitialized = true;
-                                    console.info('[Houdini] LoggerService window source initialized via bridge');
+                                    console.info('[Qt] LoggerService window source initialized via bridge');
                                     return; // 成功初始化，退出
                                 } catch(e) {
                                     // 初始化失败，继续尝试其他候选
@@ -1807,7 +3164,7 @@ def get_electron_api_script(theme: str = 'light') -> str:
                         // 只在最后一次尝试时输出一次警告，避免刷屏
                         if (!window.__houdiniLoggerServiceWarningShown) {
                             window.__houdiniLoggerServiceWarningShown = true;
-                            console.warn('[Houdini] LoggerService not found after ' + maxTries + ' attempts. This warning is harmless and does not affect functionality.');
+                            console.warn('[Qt] LoggerService not found after ' + maxTries + ' attempts. This warning is harmless and does not affect functionality.');
                         }
                     }
                 } catch (e) {
@@ -1825,9 +3182,9 @@ def get_electron_api_script(theme: str = 'light') -> str:
             setTimeout(attempt, 2000);
         })();
         
-        console.info('[Houdini] Extra Cherry Studio APIs initialized for Qt runtime');
+        console.info('[Qt] Extra Cherry Studio APIs initialized for Qt runtime');
     } catch (err) {
-        console.error('[Houdini] Failed to initialize extra APIs:', err);
+        console.error('[Qt] Failed to initialize extra APIs:', err);
     }
 })();
 """
@@ -1847,14 +3204,17 @@ def get_early_logger_fix_script() -> str:
     return """
     // 最早期的 LoggerService 修复 - 必须在页面加载的最早期执行
     (function() {
+        // 立即输出调试信息，确认脚本已执行
+        console.error('[Qt] 🚀 早期脚本开始执行 - readyState:', document.readyState);
+        
         // 立即设置，防止任何早期代码访问时未定义
         if (!window.source) { window.source = 'qt'; }
         if (!window.__WINDOW_SOURCE) { window.__WINDOW_SOURCE = 'qt'; }
         if (!window.__LOGGER_SOURCE) { window.__LOGGER_SOURCE = 'qt'; }
         if (!window.__WINDOW_SOURCE_INITIALIZED) { window.__WINDOW_SOURCE_INITIALIZED = true; }
         
-        window.houdini = true;
-        window.isHoudini = true;
+        window.__IS_QT = true;
+        window.isQtRuntime = true;
         window.__IS_QT = true;
         
         // 提前尝试初始化 LoggerService（如果已加载）
@@ -1870,7 +3230,7 @@ def get_early_logger_fix_script() -> str:
                     if (logger && typeof logger.initWindowSource === 'function') {
                         if (!logger.window || logger.window === '') {
                             logger.initWindowSource('mainWindow');
-                            console.log('[Houdini] LoggerService initialized early');
+                            console.log('[Qt] LoggerService initialized early');
                         }
                     }
                 }
@@ -1879,45 +3239,107 @@ def get_early_logger_fix_script() -> str:
             }
         })();
         
-        // 延迟所有脚本执行，直到 localStorage 恢复完成
-        // 通过劫持 document.readyState 来阻止 React 初始化
-        window.__localStorageReady = false;
+        // 立即设置 localStorageReady 为 true，避免阻塞应用初始化
+        // localStorage 恢复将在后台异步进行，不影响应用启动
+        window.__localStorageReady = true;
         window.__pendingScripts = [];
         
-        // 立即开始加载 localStorage
-        function restoreLocalStorage() {
-            if (window.qt && window.qt.api && window.qt.api.fileRead) {
-                window.qt.api.fileRead('localStorage.json').then(function(content) {
-                    if (content) {
-                        try {
-                            const data = JSON.parse(content);
-                            for (const key in data) {
-                                localStorage.setItem(key, data[key]);
-                            }
-                            console.error('[Houdini] 🎯 localStorage restored BEFORE app init:', Object.keys(data).length, 'items');
-                            window.__localStorageReady = true;
-                            // 触发 DOMContentLoaded 让应用继续初始化
-                            document.dispatchEvent(new Event('DOMContentLoaded'));
-                        } catch(e) {
-                            console.error('[Houdini] Restore error:', e.message);
-                            window.__localStorageReady = true;
-                        }
-                    } else {
-                        console.error('[Houdini] No localStorage file found');
-                        window.__localStorageReady = true;
+        console.error('[Qt] ✅ 早期脚本执行 - __localStorageReady 已设置为 true');
+        
+        // ========== 关键：在最早期拦截 window.api.memory.setConfig ==========
+        // 创建一个立即返回的 setConfig 函数
+        window.__qtFastSetConfig = function(config) {
+            console.log('[Qt EARLY] memory.setConfig called - FAST RETURN');
+            return Promise.resolve(true);
+        };
+        
+        // 拦截对 window.api 的定义
+        var __originalApi = null;
+        try {
+            Object.defineProperty(window, 'api', {
+                get: function() {
+                    return __originalApi;
+                },
+                set: function(newApi) {
+                    console.log('[Qt EARLY] window.api being set');
+                    __originalApi = newApi;
+                    // 每当 api 被设置，立即覆盖 memory.setConfig
+                    if (newApi && newApi.memory) {
+                        console.log('[Qt EARLY] Overriding memory.setConfig');
+                        newApi.memory.setConfig = window.__qtFastSetConfig;
                     }
-                }).catch(function(e) {
-                    console.error('[Houdini] FileRead error:', e.message || e);
-                    window.__localStorageReady = true;
-                });
-            } else {
-                // QWebChannel 还没准备好，100ms 后重试
-                setTimeout(restoreLocalStorage, 100);
-            }
+                },
+                configurable: true
+            });
+            console.log('[Qt EARLY] window.api interceptor installed');
+        } catch(e) {
+            console.error('[Qt EARLY] Could not install window.api interceptor:', e);
         }
         
-        // 立即开始尝试恢复
-        restoreLocalStorage();
+        // 定期检查并覆盖 setConfig
+        setInterval(function() {
+            try {
+                if (window.api && window.api.memory && window.api.memory.setConfig !== window.__qtFastSetConfig) {
+                    window.api.memory.setConfig = window.__qtFastSetConfig;
+                }
+            } catch(e) {}
+        }, 10);
+        
+        console.error('[Qt] ✅ memory.setConfig 拦截器已安装');
+        
+        // 异步恢复 localStorage（不阻塞应用启动）
+        (function() {
+            var startTime = Date.now();
+            var maxWaitTime = 5000; // 最多等待 5 秒
+            var retryCount = 0;
+            var maxRetries = 50; // 最多重试 50 次（5 秒）
+            
+            function restoreLocalStorage() {
+                // 检查超时
+                if (Date.now() - startTime > maxWaitTime || retryCount >= maxRetries) {
+                    console.error('[Qt] ⚠️ localStorage restore timeout - continuing without restore');
+                    return;
+                }
+                
+                if (window.qt && window.qt.api && window.qt.api.fileRead) {
+                    window.qt.api.fileRead('localStorage.json').then(function(content) {
+                        if (content) {
+                            try {
+                                const data = JSON.parse(content);
+                                for (const key in data) {
+                                    localStorage.setItem(key, data[key]);
+                                }
+                                console.error('[Qt] 🎯 localStorage restored (async):', Object.keys(data).length, 'items');
+                            } catch(e) {
+                                console.error('[Qt] Restore error:', e.message);
+                            }
+                        } else {
+                            console.error('[Qt] No localStorage file found');
+                        }
+                    }).catch(function(e) {
+                        console.error('[Qt] FileRead error:', e.message || e);
+                    });
+                } else {
+                    // qt.api 还没准备好，100ms 后重试
+                    retryCount++;
+                    setTimeout(restoreLocalStorage, 100);
+                }
+            }
+            
+            // 延迟 100ms 后开始尝试恢复，确保不阻塞主线程
+            setTimeout(restoreLocalStorage, 100);
+        })();
+        
+        // 确保 DOMContentLoaded 事件已触发（如果还没触发）
+        if (document.readyState === 'loading') {
+            // 使用 setTimeout 确保在下一个事件循环中触发
+            setTimeout(function() {
+                if (document.readyState === 'loading') {
+                    document.dispatchEvent(new Event('DOMContentLoaded'));
+                    console.error('[Qt] ✅ DOMContentLoaded 事件已手动触发');
+                }
+            }, 0);
+        }
         
         // IndexedDB 手动持久化机制
         setTimeout(function() {
@@ -2069,7 +3491,9 @@ def get_early_logger_fix_script() -> str:
             }, 100);
         }
         
-        console.log('[Houdini] 早期LoggerService修复完成 - source:', window.source, '__WINDOW_SOURCE:', window.__WINDOW_SOURCE);
+        console.error('[Qt] ✅ 早期LoggerService修复完成 - source:', window.source, '__WINDOW_SOURCE:', window.__WINDOW_SOURCE);
+        console.error('[Qt] ✅ __localStorageReady:', window.__localStorageReady);
+        console.error('[Qt] ✅ document.readyState:', document.readyState);
     })();
     """
 
@@ -2090,13 +3514,571 @@ def get_post_load_fix_script() -> str:
     window.__WINDOW_SOURCE = 'qt';
     window.__LOGGER_SOURCE = 'qt';
     window.__WINDOW_SOURCE_INITIALIZED = true;
-    window.houdini = true;
-    window.isHoudini = true;
+    window.__IS_QT = true;
+    window.isQtRuntime = true;
     window.__IS_QT = true;
     
     console.log('[Cherry Studio] LoggerService修复完成');
     
-    // 延迟安装 fetch 拦截器，确保 QWebChannel 已完全就绪
+    // 强制覆盖 apiServer 方法 - 确保使用 Python 后端
+    (function() {
+        console.error('[Qt] Overriding apiServer methods with Python backend...');
+        
+        // 确保 window.api.apiServer 存在
+        window.api = window.api || {};
+        window.api.apiServer = window.api.apiServer || {};
+        
+        // 强制覆盖 start 方法
+        window.api.apiServer.start = async function() {
+            console.error('[Qt] apiServer.start called - using Python backend');
+            try {
+                if (!window.qt || !window.qt.api || !window.qt.api.apiServerStart) {
+                    console.error('[Qt] window.qt.api.apiServerStart not available');
+                    return { success: false, error: 'Python backend not available' };
+                }
+                console.error('[Qt] Calling window.qt.api.apiServerStart()...');
+                var resultStr = await window.qt.api.apiServerStart();
+                console.error('[Qt] apiServerStart returned:', resultStr);
+                
+                if (typeof resultStr === 'string' && resultStr) {
+                    var result = JSON.parse(resultStr);
+                    
+                    // 如果启动成功且有端口，更新 Redux store
+                    if (result.running && result.port && window.store) {
+                        console.error('[Qt] Updating Redux store with port:', result.port);
+                        try {
+                            // 直接 dispatch action 更新端口
+                            window.store.dispatch({
+                                type: 'settings/setApiServerPort',
+                                payload: result.port
+                            });
+                            // 同时更新 host
+                            window.store.dispatch({
+                                type: 'settings/setApiServerHost',
+                                payload: '127.0.0.1'
+                            });
+                            // 标记为已启用
+                            window.store.dispatch({
+                                type: 'settings/setApiServerEnabled',
+                                payload: true
+                            });
+                            console.error('[Qt] Redux store updated successfully!');
+                            
+                            // 验证更新
+                            var state = window.store.getState();
+                            console.error('[Qt] Current apiServer config:', JSON.stringify(state.settings.apiServer));
+                        } catch (storeErr) {
+                            console.error('[Qt] Failed to update Redux store:', storeErr);
+                        }
+                    }
+                    
+                    return {
+                        success: result.running || false,
+                        error: result.error || null,
+                        port: result.port || null,
+                        url: result.url || null
+                    };
+                }
+            } catch (e) {
+                console.error('[Qt] apiServer.start error:', e);
+                return { success: false, error: String(e), port: null };
+            }
+            return { success: false, error: 'Backend API not available or returned empty result', port: null };
+        };
+        
+        // 强制覆盖 stop 方法
+        window.api.apiServer.stop = async function() {
+            console.error('[Qt] apiServer.stop called - using Python backend');
+            try {
+                if (!window.qt || !window.qt.api || !window.qt.api.apiServerStop) {
+                    return { success: false, error: 'Python backend not available' };
+                }
+                var resultStr = await window.qt.api.apiServerStop();
+                if (typeof resultStr === 'string' && resultStr) {
+                    var result = JSON.parse(resultStr);
+                    return {
+                        success: !result.running,
+                        error: result.error || null
+                    };
+                }
+            } catch (e) {
+                console.error('[Qt] apiServer.stop error:', e);
+                return { success: false, error: String(e) };
+            }
+            return { success: false, error: 'Backend API not available' };
+        };
+        
+        // 强制覆盖 restart 方法
+        window.api.apiServer.restart = async function() {
+            console.error('[Qt] apiServer.restart called - using Python backend');
+            try {
+                if (!window.qt || !window.qt.api || !window.qt.api.apiServerRestart) {
+                    return { success: false, error: 'Python backend not available' };
+                }
+                var resultStr = await window.qt.api.apiServerRestart();
+                if (typeof resultStr === 'string' && resultStr) {
+                    var result = JSON.parse(resultStr);
+                    return {
+                        success: result.running || false,
+                        error: result.error || null
+                    };
+                }
+            } catch (e) {
+                console.error('[Qt] apiServer.restart error:', e);
+                return { success: false, error: String(e) };
+            }
+            return { success: false, error: 'Backend API not available' };
+        };
+        
+        // 强制覆盖 getStatus 方法
+        window.api.apiServer.getStatus = async function() {
+            console.error('[Qt] apiServer.getStatus called - using Python backend');
+            try {
+                if (!window.qt || !window.qt.api || !window.qt.api.apiServerStatus) {
+                    return { running: false, config: null };
+                }
+                var statusStr = await window.qt.api.apiServerStatus();
+                if (typeof statusStr === 'string' && statusStr) {
+                    var status = JSON.parse(statusStr);
+                    return {
+                        running: status.running || false,
+                        config: status.config || null
+                    };
+                }
+            } catch (e) {
+                console.error('[Qt] apiServer.getStatus error:', e);
+            }
+            return { running: false, config: null };
+        };
+        
+        console.error('[Qt] apiServer methods overridden successfully!');
+        
+        // 添加全局变量来跟踪实际的 API 服务器端口
+        window.__houdiniApiServerPort = null;
+    })();
+    
+    // 拦截 Axios 请求，通过后端 HTTP 代理 Agent API
+    (function() {
+        console.error('[Qt] Installing Agent API proxy...');
+        
+        // 创建代理版本的 XMLHttpRequest
+        const OriginalXHR = window.XMLHttpRequest;
+        
+        window.XMLHttpRequest = function() {
+            const xhr = new OriginalXHR();
+            const originalOpen = xhr.open.bind(xhr);
+            const originalSend = xhr.send.bind(xhr);
+            
+            let isAgentApiRequest = false;
+            let requestMethod = 'GET';
+            let requestUrl = '';
+            
+            xhr.open = function(method, url, async, user, password) {
+                requestMethod = method;
+                requestUrl = url;
+                
+                // 检查是否是 Agent API 请求
+                if (typeof url === 'string' && (url.includes('/v1/agents') || url.includes('/v1/models'))) {
+                    isAgentApiRequest = true;
+                    console.error('[XHR]', method, url);
+                }
+                
+                return originalOpen(method, url, async, user, password);
+            };
+            
+            xhr.send = function(body) {
+                if (isAgentApiRequest) {
+                    let urlObj;
+                    try {
+                        urlObj = new URL(requestUrl, window.location.origin);
+                    } catch(e) {
+                        console.error('[XHR] Invalid URL:', requestUrl, e);
+                        return originalSend.call(this, body);
+                    }
+
+                    const path = urlObj.pathname + urlObj.search;
+                    
+                    // 对 /v1/models 请求，直接从 Redux store 获取模型
+                    if (path.includes('/v1/models')) {
+                        console.error('[XHR] Getting models from Redux store');
+                        
+                        const state = window.store?.getState?.();
+                        const providers = state?.llm?.providers || [];
+                        const params = new URLSearchParams(urlObj.search);
+                        const providerType = params.get('providerType');
+                        
+                        console.error('[XHR] Filter providerType:', providerType, '(will be ignored, returning all models)');
+                        console.error('[XHR] Total providers:', providers.length);
+                        
+                        // 从 providers 获取模型
+                        let allModels = [];
+                        for (const provider of providers) {
+                            console.error('[XHR] Checking provider:', provider.id, 'type:', provider.type, 'hasKey:', !!provider.apiKey, 'models:', provider.models?.length);
+                            
+                            // 跳过没有 API key 的 provider（ollama 除外）
+                            if (!provider.apiKey && provider.type !== 'ollama') {
+                                console.error('[XHR] Skipping provider (no key):', provider.id);
+                                continue;
+                            }
+                            
+                            // 忽略 providerType 过滤，返回所有模型
+                            console.error('[XHR] Including provider:', provider.id);
+                            
+                            const models = provider.models || [];
+                            for (const model of models) {
+                                allModels.push({
+                                    id: model.id,
+                                    name: model.name || model.id,
+                                    provider: provider.id,
+                                    provider_id: provider.id,
+                                    provider_name: provider.name,
+                                    provider_type: provider.type,
+                                    created: Math.floor(Date.now() / 1000),
+                                    object: 'model',
+                                    owned_by: 'system'
+                                });
+                            }
+                        }
+                        
+                        // DEBUG: Force modify first two models to test provider filtering
+                        if (allModels.length >= 2) {
+                            console.error('[Debug] Modifying first model to provider=openai');
+                            allModels[0].provider = 'openai';
+                            allModels[0].provider_name = 'OpenAI Test';
+                            allModels[0].name = 'TEST: OpenAI Provider';
+                            
+                            console.error('[Debug] Modifying second model to provider=cherryin');
+                            allModels[1].provider = 'cherryin';
+                            allModels[1].provider_name = 'CherryIN Test';
+                            allModels[1].name = 'TEST: CherryIN Provider';
+                        }
+                        
+                        // SUPER DEBUG: Inject a fake Anthropic model with TAGS
+                        allModels.unshift({
+                            id: "claude-3-opus-debug-vision-reasoning",
+                            name: "SUPER DEBUG CLAUDE (Vision Reasoning Free)",
+                            provider: "anthropic",
+                            provider_name: "Anthropic Debug",
+                            provider_type: "anthropic",
+                            created: 1234567890,
+                            object: "model",
+                            owned_by: "system",
+                            provider_model_id: "claude-3-opus-debug-vision-reasoning"
+                        });
+                        
+                        console.error('[XHR] Total models collected:', allModels.length);
+                        if (allModels.length > 0) {
+                            console.error('[XHR] First model sample:', JSON.stringify(allModels[0]));
+                        }
+                        
+                        const responseData = {
+                            object: 'list',
+                            data: allModels,
+                            total: allModels.length,
+                            offset: 0,
+                            limit: 100
+                        };
+                        
+                        const responseStr = JSON.stringify(responseData);
+                        console.error('[XHR] Models from Redux:', allModels.length, 'models');
+                        
+                        // Clear any localStorage tag filter cache that might be filtering models
+                        try {
+                            const storageKeys = Object.keys(localStorage);
+                            const tagFilterKeys = storageKeys.filter(k => k.includes('tag') || k.includes('filter') || k.includes('model'));
+                            console.error('[Debug] Found localStorage keys related to filters:', tagFilterKeys);
+                            tagFilterKeys.forEach(key => {
+                                const oldValue = localStorage.getItem(key);
+                                console.error('[Debug] Clearing localStorage key:', key, 'old value:', oldValue);
+                                localStorage.removeItem(key);
+                            });
+                        } catch (e) {
+                            console.error('[Debug] Failed to clear localStorage:', e);
+                        }
+                        
+                        // CRITICAL: Clear SWR cache! This is likely the culprit!
+                        try {
+                            console.error('[Debug] Attempting to clear SWR cache...');
+                            // SWR stores cache in a Map, we need to clear it
+                            // The cache key is the path returned by getModelsPath()
+                            // We'll clear ALL SWR caches to be safe
+                            if (window.localStorage) {
+                                // Clear any SWR-related keys
+                                const allKeys = Object.keys(localStorage);
+                                const swrKeys = allKeys.filter(k => k.includes('swr') || k.includes('$swr$'));
+                                console.error('[Debug] Found SWR cache keys:', swrKeys.length);
+                                swrKeys.forEach(key => {
+                                    console.error('[Debug] Clearing SWR key:', key);
+                                    localStorage.removeItem(key);
+                                });
+                            }
+                            // Also try to mutate SWR cache programmatically if possible
+                            if (window.useSWRConfig) {
+                                console.error('[Debug] Found useSWRConfig, attempting to clear...');
+                                const { mutate } = window.useSWRConfig();
+                                // Clear all SWR caches
+                                mutate(() => true, undefined, { revalidate: false });
+                            }
+                        } catch (e) {
+                            console.error('[Debug] Failed to clear SWR cache:', e);
+                        }
+                        
+                        // CRITICAL: Hook Zod schema validation to catch parsing errors
+                        setTimeout(() => {
+                            try {
+                                console.error('[Debug] Attempting to hook Zod parse...');
+                                // This is a hack to intercept schema validation errors
+                                const originalConsoleError = console.error;
+                                const errorBuffer = [];
+                                console.error = function(...args) {
+                                    const msg = args.join(' ');
+                                    if (msg.includes('ZodError') || msg.includes('ApiModelsResponse') || msg.includes('Invalid') || msg.includes('validation')) {
+                                        errorBuffer.push(args);
+                                        console.error('[Debug] 🚨 Zod validation error detected!', ...args);
+                                    }
+                                    originalConsoleError.apply(console, args);
+                                };
+                                
+                                // Also hook window.onerror
+                                const originalOnError = window.onerror;
+                                window.onerror = function(message, source, lineno, colno, error) {
+                                    if (message && (message.includes('ApiModelsResponse') || message.includes('validation') || message.includes('Zod'))) {
+                                        console.error('[Debug] 🚨 Global error related to model validation:', message, error);
+                                    }
+                                    if (originalOnError) return originalOnError(message, source, lineno, colno, error);
+                                };
+                            } catch (e) {
+                                console.error('[Debug] Failed to hook error handlers:', e);
+                            }
+                        }, 0);
+                        
+                        // DIAGNOSTIC: Check DOM rendering after response
+                        setTimeout(() => {
+                            console.error('[Diag] Checking UI after 500ms...');
+                            const modalElement = document.querySelector('.ant-modal');
+                            const emptyElement = document.querySelector('.ant-empty');
+                            const modelItemElements = document.querySelectorAll('[class*="ModelItem"]');
+                            console.error('[Diag] Modal exists:', !!modalElement);
+                            console.error('[Diag] Empty state shown:', !!emptyElement);
+                            console.error('[Diag] Model items in DOM:', modelItemElements.length);
+                            if (emptyElement) {
+                                console.error('[Diag] ⚠️ EMPTY STATE DETECTED - Models were filtered out by frontend!');
+                                console.error('[Diag] This means frontend filtering is too strict.');
+                                console.error('[Diag] Check: 1) Tag filters 2) modelFilter 3) apiFilter');
+                                
+                                // Try to diagnose the filtering issue
+                                try {
+                                    const store = window.store;
+                                    if (store) {
+                                        const state = store.getState();
+                                        const providers = state?.llm?.providers || [];
+                                        console.error('[Diag] Redux providers count:', providers.length);
+                                        
+                                        // Check if our debug model exists in providers
+                                        const hasDebugModel = providers.some(p => 
+                                            p.models && p.models.some(m => m.id && m.id.includes('debug'))
+                                        );
+                                        console.error('[Diag] Debug model in Redux:', hasDebugModel);
+                                        
+                                        // CRITICAL: Try to directly inspect what data the component received
+                                        // This is a hack: try to find React fiber and inspect props/state
+                                        try {
+                                            const reactFiberKey = Object.keys(modalElement || {}).find(k => k.startsWith('__reactFiber'));
+                                            if (reactFiberKey && modalElement) {
+                                                console.error('[Diag] Found React fiber, attempting to inspect...');
+                                                const fiber = modalElement[reactFiberKey];
+                                                // Navigate up to find the PopupContainer
+                                                let currentFiber = fiber;
+                                                let depth = 0;
+                                                while (currentFiber && depth < 20) {
+                                                    if (currentFiber.pendingProps?.models || currentFiber.memoizedProps?.models) {
+                                                        const models = currentFiber.pendingProps?.models || currentFiber.memoizedProps?.models;
+                                                        console.error('[Diag] 🔍 Found models prop in React component!', {
+                                                            modelsCount: models?.length || 0,
+                                                            isArray: Array.isArray(models),
+                                                            firstModel: models?.[0]?.id
+                                                        });
+                                                        break;
+                                                    }
+                                                    currentFiber = currentFiber.return;
+                                                    depth++;
+                                                }
+                                            }
+                                        } catch (e) {
+                                            console.error('[Diag] Failed to inspect React fiber:', e);
+                                        }
+                                    }
+                                } catch (e) {
+                                    console.error('[Diag] Failed to check Redux:', e);
+                                }
+                            }
+                        }, 500);
+                        
+                        // 模拟 XHR 响应
+                        setTimeout(() => {
+                            Object.defineProperty(xhr, 'status', { value: 200, writable: false });
+                            Object.defineProperty(xhr, 'statusText', { value: 'OK', writable: false });
+                            Object.defineProperty(xhr, 'responseURL', { value: urlObj.href, writable: false });
+                            
+                            // 模拟 headers 方法
+                            xhr.getAllResponseHeaders = function() {
+                                return 'Content-Type: application/json\\r\\n';
+                            };
+                            xhr.getResponseHeader = function(name) {
+                                if (name && name.toLowerCase() === 'content-type') return 'application/json';
+                                return null;
+                            };
+                            
+                            // 根据 responseType 正确设置响应
+                            console.error('[Debug] XHR responseType:', xhr.responseType);
+                            
+                            // 强制使用 JSON 对象返回，规避前端解析问题
+                            console.error('[Debug] Forcing responseType to json');
+                            Object.defineProperty(xhr, 'responseType', { value: 'json', writable: false });
+                            Object.defineProperty(xhr, 'response', { value: responseData, writable: false });
+                            
+                            /*
+                            if (xhr.responseType === 'json') {
+                                // ...
+                            } else {
+                                // ...
+                            }
+                            */
+                            
+                            Object.defineProperty(xhr, 'readyState', { value: 4, writable: false });
+                            
+                            // Wrap handlers for diagnostic logging
+                            const originalOnload = xhr.onload;
+                            xhr.onload = function(e) {
+                                console.error('[Debug] ✅ XHR onload fired for /v1/models');
+                                console.error('[Debug] Response data count:', xhr.response?.data?.length || 0);
+                                console.error('[Debug] Response structure:', JSON.stringify({
+                                    object: xhr.response?.object,
+                                    dataLength: xhr.response?.data?.length,
+                                    total: xhr.response?.total,
+                                    firstModelId: xhr.response?.data?.[0]?.id,
+                                    firstModelProvider: xhr.response?.data?.[0]?.provider
+                                }));
+                                
+                                // CRITICAL: Also add Axios response interceptor logging
+                                setTimeout(() => {
+                                    try {
+                                        // Check if models actually made it to the component
+                                        console.error('[Debug] Checking if Axios interceptors exist...');
+                                        // We can't directly access Axios instance, but we can check the result after a delay
+                                    } catch (e) {
+                                        console.error('[Debug] Failed to check Axios:', e);
+                                    }
+                                }, 100);
+                                
+                                if (originalOnload) originalOnload.call(xhr, e || new Event('load'));
+                            };
+                            
+                            const originalOnerror = xhr.onerror;
+                            xhr.onerror = function(e) {
+                                console.error('[Debug] ⚠️ XHR onerror fired for /v1/models!', e);
+                                if (originalOnerror) originalOnerror.call(xhr, e || new Event('error'));
+                            };
+                            
+                            if (xhr.onreadystatechange) xhr.onreadystatechange();
+                            if (xhr.onload) xhr.onload();
+                            xhr.dispatchEvent(new Event('load'));
+                            xhr.dispatchEvent(new Event('readystatechange'));
+                        }, 0);
+                        
+                        return;
+                    }
+                    
+                    // 其他 Agent API 请求通过后端 HTTP 代理
+                    if (window.qt?.api?.agentApiProxy) {
+                        console.error('[XHR] Proxying via backend:', requestMethod, path);
+                        
+                        const request = {
+                            method: requestMethod,
+                            path: path,
+                            body: body ? JSON.parse(body) : null
+                        };
+                        
+                        // 异步调用 Python 代理
+                        window.qt.api.agentApiProxy(JSON.stringify(request)).then(responseStr => {
+                            console.error('[XHR] Response:', responseStr?.substring?.(0, 200) || responseStr);
+                            
+                            // 模拟 XHR 响应
+                            Object.defineProperty(xhr, 'status', { value: 200, writable: false });
+                            Object.defineProperty(xhr, 'statusText', { value: 'OK', writable: false });
+                            
+                            const fullUrl = path.startsWith('http') ? path : window.location.origin + path;
+                            Object.defineProperty(xhr, 'responseURL', { value: fullUrl, writable: false });
+
+                            // 模拟 headers 方法
+                            xhr.getAllResponseHeaders = function() {
+                                return 'Content-Type: application/json\\r\\n';
+                            };
+                            xhr.getResponseHeader = function(name) {
+                                if (name && name.toLowerCase() === 'content-type') return 'application/json';
+                                return null;
+                            };
+                            
+                            // 根据 responseType 正确设置响应
+                            console.error('[Debug] XHR responseType:', xhr.responseType);
+                            
+                            // 强制使用 JSON 对象返回
+                            console.error('[Debug] Forcing responseType to json');
+                            Object.defineProperty(xhr, 'responseType', { value: 'json', writable: false });
+                            
+                            try {
+                                const jsonResponse = typeof responseStr === 'string' ? JSON.parse(responseStr) : responseStr;
+                                Object.defineProperty(xhr, 'response', { value: jsonResponse, writable: false });
+                            } catch (e) {
+                                console.error('[XHR] Failed to parse JSON response:', e);
+                                // 如果解析失败，回退到字符串（虽然 responseType 是 json，可能会报错）
+                                Object.defineProperty(xhr, 'response', { value: responseStr, writable: false });
+                            }
+                            
+                            /*
+                            if (xhr.responseType === 'json') {
+                                // ...
+                            }
+                            */
+
+                            Object.defineProperty(xhr, 'readyState', { value: 4, writable: false });
+                            
+                            // 触发事件
+                            if (xhr.onreadystatechange) xhr.onreadystatechange();
+                            if (xhr.onload) xhr.onload();
+                            
+                            const loadEvent = new Event('load');
+                            xhr.dispatchEvent(loadEvent);
+                            
+                            const readyStateEvent = new Event('readystatechange');
+                            xhr.dispatchEvent(readyStateEvent);
+                        }).catch(err => {
+                            console.error('[XHR] Error:', err);
+                            if (xhr.onerror) xhr.onerror(err);
+                            xhr.dispatchEvent(new Event('error'));
+                        });
+                        
+                        return;  // 不调用原始 send
+                    }
+                }
+                
+                return originalSend(body);
+            };
+            
+            return xhr;
+        };
+        
+        // 复制静态属性
+        window.XMLHttpRequest.UNSENT = 0;
+        window.XMLHttpRequest.OPENED = 1;
+        window.XMLHttpRequest.HEADERS_RECEIVED = 2;
+        window.XMLHttpRequest.LOADING = 3;
+        window.XMLHttpRequest.DONE = 4;
+        
+        console.error('[Qt] Agent API proxy installed!');
+    })();
+    
+    // 延迟安装 fetch 拦截器，确保后端连接已就绪
     setTimeout(function() {
         if (window.__fetchInterceptorInstalled) {
             console.log('[Cherry Studio] fetch interceptor already installed');
@@ -2133,6 +4115,23 @@ def get_post_load_fix_script() -> str:
         };
         console.log('[Cherry Studio] ✅ XMLHttpRequest interceptor installed');
         
+        // 注入 JSON.parse 钩子用于调试
+        const originalJSONParse = JSON.parse;
+        JSON.parse = function(text, reviver) {
+            try {
+                const result = originalJSONParse(text, reviver);
+                if (result && typeof result === 'object' && result.object === 'list' && Array.isArray(result.data)) {
+                     console.error('[Debug] JSON.parse parsed a list:', result.data.length, 'items');
+                     if (result.data.length > 0 && result.data[0].id === 'deepseek-chat-corp') {
+                         console.error('[Debug] TARGET MODEL FOUND in JSON.parse!');
+                     }
+                }
+                return result;
+            } catch (e) {
+                throw e;
+            }
+        };
+        
         const originalFetch = window.fetch;
         window.fetch = async function(input, init) {
             try {
@@ -2141,7 +4140,6 @@ def get_post_load_fix_script() -> str:
                 
                 // 检测是否是 HTTP/HTTPS 请求（需要代理）
                 if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
-                    console.log('[Cherry Studio] Intercepted HTTP request:', url);
 
                     // 对本地服务（localhost, 127.0.0.1）直接使用原始 fetch，不走 Python 代理
                     // 这些服务不需要认证，也不应该通过 Python 代理
@@ -2204,25 +4202,19 @@ def get_post_load_fix_script() -> str:
                         if (shouldBypass) {
                             console.log('[Cherry Studio] 🏠 Bypass fetchProxy for local service (' + bypassReason + '):', url);
                             return originalFetch.call(this, input, init);
-                        } else {
-                            // 记录非本地请求，用于调试
-                            console.log('[Cherry Studio] 📡 Non-local request, using fetchProxy:', url);
                         }
                     } catch (e) {
                         console.error('[Cherry Studio] Local service bypass check error:', e, 'URL:', url);
                         // 如果检查出错，为了安全起见，不 bypass（让请求走代理）
                     }
                     
-                    // 等待 QWebChannel 就绪
-                    let retries = 0;
-                    while (!window.qt?.api?.fetchProxy && retries < 100) {
-                        await new Promise(r => setTimeout(r, 50));
-                        retries++;
-                    }
-                    
-                    if (window.qt?.api?.fetchProxy) {
+                    // ── 直连后端 HTTP ──────────────────────────────────────────────────
+                    const _backendUrl = window.__CHERRY_BACKEND_URL || '';
+                    const _sessionId  = window.__CHERRY_SESSION_ID  || '';
+                    const _apiHdrs    = { 'Content-Type': 'application/json', 'X-Session-Id': _sessionId };
+
+                    if (_backendUrl) {
                         try {
-                            console.log('[Cherry Studio] Using Python fetchProxy for:', url);
                             
                             // 收集请求头
                             const headers = {};
@@ -2278,32 +4270,75 @@ def get_post_load_fix_script() -> str:
                                 requestBody = {};
                             }
                             const isStream = requestBody.stream === true;
-                            
-                            console.log('[Cherry Studio] 🔍 Request body:', body ? body.substring(0, 200) : 'empty');
-                            console.log('[Cherry Studio] 🔍 Parsed requestBody.stream:', requestBody.stream);
-                            console.log('[Cherry Studio] 🔍 isStream:', isStream);
+
+                            // 如果是 chat/completions 请求，尝试注入 webSearchProviderId
+                            if (url.includes('/chat/completions') || url.includes('/v1/chat') || url.includes('/messages')) {
+                                
+                                try {
+                                    // 尝试从 Redux store 获取当前 assistant 的 webSearchProviderId
+                                    let webSearchProviderId = null;
+                                    
+                                    // 方法1: 从 window.__CHERRY_CURRENT_ASSISTANT__ 获取（如果前端设置了）
+                                    if (window.__CHERRY_CURRENT_ASSISTANT__?.webSearchProviderId) {
+                                        webSearchProviderId = window.__CHERRY_CURRENT_ASSISTANT__.webSearchProviderId;
+                                    }
+                                    
+                                    // 方法2: 从 localStorage 的 Redux persist 状态获取当前 assistant
+                                    if (!webSearchProviderId) {
+                                        try {
+                                            const persistRoot = localStorage.getItem('persist:cherry-studio');
+                                            if (persistRoot) {
+                                                const rootState = JSON.parse(persistRoot);
+                                                if (rootState.assistants) {
+                                                    const assistantsState = JSON.parse(rootState.assistants);
+                                                    const defaultAssistant = assistantsState.defaultAssistant;
+                                                    if (defaultAssistant?.webSearchProviderId) {
+                                                        webSearchProviderId = defaultAssistant.webSearchProviderId;
+                                                    }
+                                                }
+                                                if (!webSearchProviderId && rootState.websearch) {
+                                                    const websearchState = JSON.parse(rootState.websearch);
+                                                    if (websearchState.defaultProvider) {
+                                                        webSearchProviderId = websearchState.defaultProvider;
+                                                    }
+                                                }
+                                            }
+                                        } catch(e) {
+                                            // ignore
+                                        }
+                                    }
+                                    
+                                    if (webSearchProviderId && !requestBody.webSearchProviderId) {
+                                        requestBody.webSearchProviderId = webSearchProviderId;
+                                        body = JSON.stringify(requestBody);
+                                    }
+                                } catch(e) {
+                                    console.warn('[Cherry Studio] Failed to inject webSearchProviderId:', e);
+                                }
+                            }
 
                             // 如果是 Ollama 的 generate 接口，处理可能的 JSONL 响应（虽然 Ollama API 默认是非 stream 的）
                             // 但通常我们这里收到的是 standard OpenAI format
                             
                             // 构建请求配置
                             const requestId = isStream ? 'stream_' + Date.now() + '_' + Math.random() : '';
+                            // 超时策略：流式=300s；AI API=60s；网页内容抓取=30s（与 Cherry Studio 自身 25s 超时匹配）
+                            const _isAiApi = url.includes('/v1/chat') || url.includes('/api/chat') ||
+                                             url.includes('/v1/messages') || url.includes('/v1/completions') ||
+                                             url.includes('/chat/completions') || url.includes('/images/');
+                            const _reqTimeout = isStream ? 300 : (_isAiApi ? 120 : 30);
                             const payload = {
                                 url: url,
                                 method: method,
                                 headers: headers,
                                 body: body,
-                                timeout: isStream ? 300 : 60,  // 增加超时时间，尤其是流式请求
+                                timeout: _reqTimeout,
                                 stream: isStream,
                                 requestId: requestId
                             };
                             
-                            console.log('[Cherry Studio] 🔍 payload.stream:', payload.stream);
-                            console.log('[Cherry Studio] 🔍 payload.requestId:', payload.requestId);
-                            
                             // 如果是流式请求，返回 ReadableStream
                             if (isStream) {
-                                console.log('[Cherry Studio] 🌊 Creating stream for request:', requestId);
                                 
                                 let streamController;
                                 let responseHeaders = { 'Content-Type': 'text/event-stream' };
@@ -2314,50 +4349,68 @@ def get_post_load_fix_script() -> str:
                                     start(controller) {
                                         streamController = controller;
                                         
-                                        // 在这里注册处理器，确保在 Python 发送数据前就准备好
-                                        // 启动 Python 流式请求并轮询读取数据
-                                        window.qt.api.fetchProxy(JSON.stringify(payload)).then(result => {
-                                            const parsed = JSON.parse(result);
-                                            if (!parsed.streaming) {
-                                                streamController.error(new Error('Stream not started'));
-                                                return;
-                                            }
-                                            
-                                            // 轮询读取流数据
-                                            const poll = () => {
-                                                window.qt.api.streamRead(requestId).then(chunk => {
-                                                    const data = JSON.parse(chunk);
-                                                    
-                                                    if (data.type === 'headers') {
-                                                        responseStatus = data.status || 200;
-                                                        responseHeaders = new Headers(data.headers || {});
-                                                        setTimeout(poll, 10);
-                                                    } else if (data.type === 'data') {
-                                                        streamController.enqueue(new TextEncoder().encode(data.data));
-                                                        setTimeout(poll, 10);
-                                                    } else if (data.type === 'end') {
-                                                        streamController.close();
-                                                        // 保存数据
-                                                        if (window.__saveIndexedDB) window.__saveIndexedDB();
-                                                    } else if (data.type === 'error') {
-                                                        streamController.error(new Error(data.error));
-                                                    } else if (data.type === 'empty') {
-                                                        setTimeout(poll, 50);
+                                        // 流式请求：仅使用后端 HTTP 直连
+                                        const _doStream = async () => {
+                                            // 第一级：JS fetch 直连后端 HTTP
+                                            if (_backendUrl) {
+                                                try {
+                                                    const startResp = await originalFetch(_backendUrl + '/api/v1/network/fetch', {
+                                                        method: 'POST', headers: _apiHdrs, body: JSON.stringify(payload),
+                                                        signal: AbortSignal.timeout(320000)
+                                                    });
+                                                    const startData = await startResp.json();
+                                                    if (!startData.streaming) {
+                                                        streamController.error(new Error('Stream not started: ' + (startData.error || '')));
+                                                        return;
                                                     }
-                                                }).catch(e => {
-                                                    streamController.error(e);
-                                                });
-                                            };
-                                            poll();
-                                        }).catch(e => {
-                                            streamController.error(e);
-                                        });
+                                                    
+                                                    // 轮询读取流数据
+                                                    const poll = async () => {
+                                                        try {
+                                                            let data;
+                                                            const pollResp = await originalFetch(_backendUrl + '/api/v1/network/stream-read', {
+                                                                method: 'POST', headers: _apiHdrs,
+                                                                body: JSON.stringify({ requestId })
+                                                            });
+                                                            data = await pollResp.json();
+                                                            
+                                                            if (data.type === 'headers') {
+                                                                responseStatus = data.status || 200;
+                                                                responseHeaders = new Headers(data.headers || {});
+                                                                setTimeout(poll, 10);
+                                                            } else if (data.type === 'data') {
+                                                                streamController.enqueue(new TextEncoder().encode(data.data));
+                                                                setTimeout(poll, 10);
+                                                            } else if (data.type === 'end') {
+                                                                streamController.close();
+                                                                if (window.__saveIndexedDB) window.__saveIndexedDB();
+                                                            } else if (data.type === 'error') {
+                                                                streamController.error(new Error(data.error));
+                                                            } else {
+                                                                setTimeout(poll, 50);
+                                                            }
+                                                        } catch(e) {
+                                                            streamController.error(e);
+                                                        }
+                                                    };
+                                                    poll();
+
+                                                } catch(_backendStreamErr) {
+                                                    console.error('[Cherry Studio] ⚠️ Backend stream unavailable (' + _backendStreamErr.message + ')');
+                                                    streamController.error(_backendStreamErr);
+                                                }
+                                            } else {
+                                                const err = new Error('No backend URL available for streaming');
+                                                console.error('[Cherry Studio]', err);
+                                                streamController.error(err);
+                                            }
+                                        };
+                                        _doStream().catch(e => streamController.error(e));
                                     },
                                     cancel() {}
                                 });
                                 
                                 // 立即返回 Response 对象
-                                console.log('[Cherry Studio] 🌊 Returning Response with stream');
                                 return new Response(stream, {
                                     status: responseStatus,
                                     statusText: 'OK',
@@ -2365,11 +4418,26 @@ def get_post_load_fix_script() -> str:
                                 });
                             }
                             
-                            // 非流式请求
-                            const result = await window.qt.api.fetchProxy(JSON.stringify(payload));
-                            console.log('[Cherry Studio] fetchProxy response received');
-                            
-                            const parsed = typeof result === 'string' ? JSON.parse(result) : result;
+                            // 非流式请求：仅使用后端 HTTP 直连
+                            let parsed;
+
+                            // 第一级：JS fetch 直连后端 HTTP
+                            if (_backendUrl) {
+                                try {
+                                    const fetchResp = await originalFetch(_backendUrl + '/api/v1/network/fetch', {
+                                        method: 'POST', headers: _apiHdrs, body: JSON.stringify(payload),
+                                        signal: AbortSignal.timeout(65000)
+                                    });
+                                    parsed = await fetchResp.json();
+                                } catch(_backendErr) {
+                                    console.error('[Cherry Studio] ⚠️ Backend HTTP unavailable (' + _backendErr.message + ')');
+                                    throw _backendErr;
+                                }
+                            } else {
+                                const err = new Error('No backend URL available');
+                                console.error('[Cherry Studio]', err);
+                                throw err;
+                            }
 
                             // 处理错误响应（包括 401）
                             if (parsed.status && parsed.status >= 400) {
@@ -2434,7 +4502,7 @@ def get_post_load_fix_script() -> str:
                             throw e;
                         }
                     } else {
-                        console.error('[Cherry Studio] QWebChannel fetchProxy not available');
+                        console.error('[Cherry Studio] No backend URL available for fetch proxy');
                     }
                 }
             } catch(e) {
@@ -2501,11 +4569,10 @@ def get_post_load_fix_script() -> str:
     // 调试信息：延迟 3 秒输出
     setTimeout(function() {
         console.log('[DEBUG] ========== 系统诊断开始 ==========');
-        console.log('[DEBUG] === QWebChannel 状态 ===');
+        console.log('[DEBUG] === Qt API 状态 ===');
         console.log('[DEBUG] 1. window.qt:', typeof window.qt);
         console.log('[DEBUG] 2. window.qt.api:', typeof (window.qt && window.qt.api));
-        console.log('[DEBUG] 3. streamChunk:', typeof (window.qt && window.qt.api && window.qt.api.streamChunk));
-        console.log('[DEBUG] 4. streamChunk.connect:', typeof (window.qt && window.qt.api && window.qt.api.streamChunk && window.qt.api.streamChunk.connect));
+        console.log('[DEBUG] 3. __CHERRY_BACKEND_URL:', window.__CHERRY_BACKEND_URL || 'not set');
         
         console.log('[DEBUG] === localStorage 状态 ===');
         try {

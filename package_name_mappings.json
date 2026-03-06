@@ -1,0 +1,34 @@
+{
+  "comment": "包名映射配置 - 处理 PyPI 包名和文件系统存储名称的差异",
+  "mappings": {
+    "jaraco-classes": "jaraco.classes",
+    "jaraco-context": "jaraco.context",
+    "jaraco-functools": "jaraco.functools",
+    "jaraco-text": "jaraco.text",
+    "opentelemetry-api": "opentelemetry_api",
+    "opentelemetry-sdk": "opentelemetry_sdk",
+    "opentelemetry-exporter-prometheus": "opentelemetry_exporter_prometheus",
+    "opentelemetry-instrumentation": "opentelemetry_instrumentation",
+    "opentelemetry-semantic-conventions": "opentelemetry_semantic_conventions"
+  },
+  "version_mappings": {
+    "comment": "版本号格式映射",
+    "0.60b1": "0.60.b1",
+    "1.0a1": "1.0.a1",
+    "2.0rc1": "2.0.rc1"
+  },
+  "rules": {
+    "comment": "自动映射规则",
+    "namespace_packages": {
+      "prefixes": ["jaraco", "zope", "backports", "ruamel"],
+      "separator": ".",
+      "description": "命名空间包使用点号分隔"
+    },
+    "underscore_packages": {
+      "prefixes": ["opentelemetry"],
+      "separator": "_",
+      "description": "某些包在文件系统中使用下划线"
+    }
+  }
+}
+

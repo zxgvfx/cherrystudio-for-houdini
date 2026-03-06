@@ -9,8 +9,20 @@ PySide6>=6.0.0
 # MCP (Model Context Protocol) 客户端 - 用于工具集成
 fastmcp>=0.1.0
 
+# ============ 后端服务依赖（可选，标准库兼容模式无需以下包）============
+# 如果要使用 FastAPI 模式替换内置 HTTP Server：
+# fastapi>=0.100.0
+# uvicorn>=0.23.0
+
 # ============ 可选依赖 ============
 # 以下依赖根据需要安装
+
+# PDF 处理（上传 PDF 给模型时自动抽文本；扫描版 PDF 自动转图片）
+pypdf>=4.0.0
+pymupdf>=1.24.0
+
+# 图像处理（OCR 前压缩 PNG→JPEG 以减小请求体积）
+Pillow>=10.0.0
 
 # 如果需要使用 Houdini 集成功能，需要 hou 模块
 # 注意：hou 模块通常由 Houdini 自带，无需单独安装

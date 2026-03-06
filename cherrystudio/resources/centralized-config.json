@@ -1,82 +1,135 @@
 {
   "version": "1.0.0",
-  "lastUpdated": "2023-12-23T12:00:00.000Z",
-    "defaultModels": {
-    "defaultModel": "qwen3:8b",
-    "quickModel": "qwen3:8b",
-    "translateModel": "qwen3:8b"
+  "lastUpdated": "2026-02-03",
+  "knowledgeBaseSource": "J:/vfxtools/piplineTD/models/knowledge_base/vectors",
+  "proxy": {
+    "bypassRules": "localhost,127.0.0.1,::1,*.ccc.net,192.168.*.*"
+  },
+  "defaultModels": {
+    "defaultModel": {
+      "id": "doubao-seed-1-6",
+      "provider": "centralized-openai"
+    },
+
+    "quickModel": {
+      "id": "doubao-seed-1-6",
+      "provider": "centralized-openai"
+    },
+    "translateModel": {
+      "id": "doubao-seed-1-6",
+      "provider": "centralized-openai"
+    }
   },
   "providers": [
     {
       "id": "centralized-openai",
       "name": "Coco",
       "type": "openai",
-      "apiHost": "http://192.168.166.232",
+      "apiHost": "http://higress.ccc.net",
       "apiKey": "52fc482d-364b-40bc-9589-9918520c9d3e",
       "icon": "",
       "models": [
+
+
         {
-          "id": "qwen3-vl:8b",
-          "name": "Qwen3-vl:8b",
-          "modelId": "qwen3-vl:8b",
+          "id": "gpt-5.3-codex",
+          "name": "gpt-5.3-codex",
+          "modelId": "gpt-5.3-codex",
           "isCentralized": true,
-          "supported_text_delta": true,
-          "capabilities": [
-            { "type": "text" },
-            { "type": "vision" }
-          ],
-          "endpoint_type": "openai"
-        },
-        {
-          "id": "deepseek-r1:32b",
-          "name": "Deepseek-r1:32b",
-          "modelId": "deepseek-r1:32b",
-          "isCentralized": true,
-          "supported_text_delta": true,
-          "capabilities": [
-            { "type": "text" },
-            { "type": "reasoning" }
-          ],
-          "endpoint_type": "openai"
-        },
-        {
-          "id": "deepseek-r1:14b",
-          "name": "Deepseek-r1:14b",
-          "modelId": "deepseek-r1:14b",
-          "isCentralized": true,
+          "primaryModality": "text",
 
           "supported_text_delta": true
         },
         {
-          "id": "olmo-3:32b",
-          "name": "Olmo-3:32b",
-          "modelId": "olmo-3:32b",
+          "id": "deepseek-v3.2-thinking",
+          "name": "deepseek-v3.2-thinking",
+          "modelId": "deepseek-v3.2-thinking",
           "isCentralized": true,
+          "primaryModality": "text",
 
           "supported_text_delta": true
         },
         {
-          "id": "qwen3:8b",
-          "name": "Qwen3:8b",
-          "modelId": "qwen3:8b",
+          "id": "qwen3-vl-plus",
+          "name": "qwen3-vl-plus",
+          "modelId": "qwen3-vl-plus",
           "isCentralized": true,
+          "primaryModality": "multimodal",
 
           "supported_text_delta": true
         },
         {
-          "id": "gpt-oss:20b",
-          "name": "GPT-OSS:20b",
-          "modelId": "gpt-oss:20b",
+          "id": "doubao-seed-1-8-251228",
+          "name": "doubao-seed-1-8-251228",
+          "modelId": "doubao-seed-1-8-251228",
           "isCentralized": true,
-
+          "primaryModality": "multimodal",
           "supported_text_delta": true
         },
         {
-          "id": "huihui_ai/deepseek-r1-abliterated:32b",
-          "name": "Huihui-AI/Deepseek-r1-Abliterated:32b",
-          "modelId": "huihui_ai/deepseek-r1-abliterated:32b",
+          "id": "bge-m3:567m",
+          "name": "bge-m3:567m",
+          "modelId": "bge-m3:567m",
           "isCentralized": true,
-
+          "primaryModality": "embedding"
+        },
+        {
+          "id": "doubao-seed-1-6",
+          "name": "doubao-seed-1-6",
+          "modelId": "doubao-seed-1-6",
+          "isCentralized": true,
+          "primaryModality": "text",
+          "supported_text_delta": true
+        },
+        {
+          "id": "doubao-seedream-4-5-251128",
+          "name": "doubao-seedream-4-5-251128",
+          "modelId": "doubao-seedream-4-5-251128",
+          "isCentralized": true,
+          "primaryModality": "image",
+          "supported_text_delta": true
+        },
+        {
+          "id": "gemini-3.1-flash-image-preview",
+          "name": "gemini-3.1-flash-image-preview",
+          "modelId": "gemini-3.1-flash-image-preview",
+          "isCentralized": true,
+          "primaryModality": "multimodal",
+          "supported_text_delta": true
+        },
+        {
+          "id": "claude-haiku-4-5-20251001",
+          "name": "claude-haiku-4-5-20251001",
+          "modelId": "claude-haiku-4-5-20251001",
+          "isCentralized": true,
+          "primaryModality": "multimodal",
+          "supported_text_delta": true
+        },
+        {
+          "id": "nano-banana-pro",
+          "name": "nano-banana-pro",
+          "modelId": "nano-banana-pro",
+          "isCentralized": true,
+          "primaryModality": "image",
+          "endpoint_type": "openai",
+          "supported_text_delta": true
+        },
+        {
+          "id": "gemini-3.1-pro-preview-thinking",
+          "name": "gemini-3.1-pro-preview-thinking",
+          "modelId": "gemini-3.1-pro-preview-thinking",
+          "isCentralized": true,
+          "primaryModality": "multimodal",
+          "endpoint_type": "openai",
+          "supported_text_delta": true
+        },
+        {
+          "id": "gpt-image-1.5",
+          "name": "gpt-image-1.5",
+          "modelId": "gpt-image-1.5",
+          "isCentralized": true,
+          "primaryModality": "image",
+          "endpoint_type": "openai",
           "supported_text_delta": true
         }
       ]
@@ -85,37 +138,30 @@
   ],
   "mcpServers": [
     {
-      "id": "SQiXdpdE2tWalh1EwT8wg",
-      "name": "mcp-tool-set",
-      "type": "streamableHttp",
-      "url": "http://mcp.ccc.net/mcp",
-      "baseUrl": "http://mcp.ccc.net/mcp",
-      "description": "MCP Tool Set",
-      "isCentralized": true,
-      "isActive": true
-    },
-    {
-      "id": "excel-server",
-      "name": "Excel",
+      "id": "mcpAtlassian",
+      "name": "mcpAtlassian",
       "type": "stdio",
-      "command": "cmd",
-      "args": ["/c", "npx", "--yes", "@negokaz/excel-mcp-server"],
+      "command": "uvx",
+      "args": [
+        "mcp-atlassian"
+      ],
       "env": {
-        "EXCEL_MCP_PAGING_CELLS_LIMIT": "4000"
+        "JIRA_URL": "http://jira2.ccc.net",
+        "JIRA_PERSONAL_TOKE": "<your-jira-token>",
+        "CONFLUENCE_URL": "http://wiki.ccc.net",
+        "CONFLUENCE_PERSONAL_TOKEN": "<your-confluence-token>"
       },
-      "description": "Excel MCP Server",
       "isCentralized": true,
       "isActive": true
-    },
+    }
+  ],
+  "webSearchProviders": [
     {
-      "id": "playwright-server",
-      "name": "Playwright",
-      "type": "stdio",
-      "command": "npx",
-      "args": ["@playwright/mcp@latest"],
-      "description": "Playwright MCP Server",
-      "isCentralized": true,
-      "isActive": true
+      "id": "searxng",
+      "name": "SearXNG (Internal)",
+      "apiHost": "http://192.168.160.108",
+      "contentFetchMode": "full",
+      "isCentralized": true
     }
   ]
 }

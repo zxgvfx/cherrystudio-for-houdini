@@ -1,0 +1,24 @@
+import "./react-4-AZLvKD.js";
+import { b as createLucideIcon } from "./createLucideIcon-BDzeED0C.js";
+const __iconNode = [
+	["circle", {
+		cx: "12",
+		cy: "12",
+		r: "10",
+		key: "1mglay"
+	}],
+	["path", {
+		d: "m5 5 14 14",
+		key: "11anup"
+	}],
+	["path", {
+		d: "M13 13a3 3 0 1 0 0-6H9v2",
+		key: "uoagbd"
+	}],
+	["path", {
+		d: "M9 17v-2.34",
+		key: "a9qo08"
+	}]
+];
+const CircleParkingOff = createLucideIcon("circle-parking-off", __iconNode);
+export { __iconNode, CircleParkingOff as default };

@@ -1,0 +1,424 @@
+### New console messages
+- [ERROR] Failed to load resource: net::ERR_TIMED_OUT @ https://fonts.googleapis.com/css2?family=Open+...
+
+### Page state
+- Page URL: http://192.168.77.226:8088/#browse/welcome
+- Page Title: Dashboard - Sonatype Nexus Repository
+- Page Snapshot:
+```yaml
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - link "Home" [ref=e5] [cursor=pointer]:
+      - /url: /
+      - img "Sonatype Nexus Repository Community" [ref=e6]
+    - generic [ref=e7]:
+      - generic [ref=e9]:
+        - img [ref=e10]
+        - textbox "Search components" [ref=e12]
+        - text: 
+      - button "Refresh" [ref=e13] [cursor=pointer]:
+        - img [ref=e14]: 
+      - button "Help" [ref=e61] [cursor=pointer]:
+        - img [ref=e18]: 
+      - button "Log In" [ref=e20] [cursor=pointer]:
+        - img [ref=e21]: 
+  - generic [ref=e23]:
+    - navigation "global sidebar" [ref=e24]:
+      - link "Dashboard" [ref=e25] [cursor=pointer]:
+        - /url: "#browse/welcome"
+        - img [ref=e26]: 
+        - generic [ref=e28]: Dashboard
+      - generic [ref=e29]:
+        - link "Search Expand Menu" [ref=e30] [cursor=pointer]:
+          - /url: "#browse/search/generic"
+          - img [ref=e31]: 
+          - generic [ref=e34]:
+            - text: Search
+            - button "Expand Menu" [ref=e35]:
+              - img [ref=e36]: 
+        - listitem [ref=e38]:
+          - link [ref=e39] [cursor=pointer]:
+            - /url: "#browse/search/custom/"
+            - generic [ref=e40]: Custom
+        - listitem [ref=e41]:
+          - link [ref=e42] [cursor=pointer]:
+            - /url: "#browse/search/maven/"
+            - generic [ref=e43]: Maven
+        - listitem [ref=e44]:
+          - link [ref=e45] [cursor=pointer]:
+            - /url: "#browse/search/npm/"
+            - generic [ref=e46]: npm
+        - listitem [ref=e47]:
+          - link [ref=e48] [cursor=pointer]:
+            - /url: "#browse/search/nuget/"
+            - generic [ref=e49]: NuGet
+        - listitem [ref=e50]:
+          - link [ref=e51] [cursor=pointer]:
+            - /url: "#browse/search/pypi/"
+            - generic [ref=e52]: PyPI
+      - link "Browse" [ref=e53] [cursor=pointer]:
+        - /url: "#browse/browse"
+        - img [ref=e54]: 
+        - generic [ref=e56]: Browse
+    - button "Collapse Menu" [expanded] [ref=e57] [cursor=pointer]:
+      - img [ref=e58]: 
+      - generic [ref=e60]: Collapse Menu
+  - main [ref=e62]:
+    - generic [ref=e64]:
+      - generic [ref=e65]:
+        - button "Browse Browse my repositories" [ref=e67] [cursor=pointer]:
+          - generic [ref=e68]:
+            - img [ref=e71]: 
+            - generic [ref=e73]:
+              - heading "Browse" [level=4] [ref=e74]
+              - generic [ref=e75]: Browse my repositories
+            - img [ref=e77]: 
+        - button "Search Search for new components" [ref=e82] [cursor=pointer]:
+          - generic [ref=e83]:
+            - img [ref=e86]: 
+            - generic [ref=e88]:
+              - heading "Search" [level=4] [ref=e89]
+              - generic [ref=e90]: Search for new components
+            - img [ref=e92]: 
+        - button "Connect Connect to a repository" [ref=e97] [cursor=pointer]:
+          - generic [ref=e98]:
+            - img [ref=e101]: 
+            - generic [ref=e103]:
+              - heading "Connect" [level=4] [ref=e104]
+              - generic [ref=e105]: Connect to a repository
+            - img [ref=e107]: 
+      - iframe [ref=e111]:
+        - generic [active] [ref=f2e1]:
+          - banner:                
+          - main [ref=f2e2]:
+            - generic [ref=f2e3]:
+              - generic [ref=f2e4]:
+                - generic [ref=f2e5]:
+                  - generic [ref=f2e6]:
+                    - generic [ref=f2e7]:
+                      - generic [ref=f2e8]: 
+                      - heading "Notification Center" [level=2] [ref=f2e9]
+                    - generic [ref=f2e10]:
+                      - text: You have
+                      - strong [ref=f2e11]: 2 notifications
+                      - text: to review
+                  - separator [ref=f2e12]
+                  - region "Promotional banner" [ref=f2e13]:
+                    - generic [ref=f2e14]:
+                      - img [ref=f2e15]
+                      - generic [ref=f2e16]:
+                        - heading "Nexus Repository Cloud Migrator Is Now Available" [level=1] [ref=f2e17]
+                        - paragraph [ref=f2e18]: Easily migrate your Nexus instance to the cloud without downtime.
+                      - link "Learn More" [ref=f2e20] [cursor=pointer]:
+                        - /url: https://links.sonatype.com/products/nxrm3/learn-migrator
+                - group:
+                  - text:  
+                  - generic " Show More" [ref=f2e21]:
+                    - generic [ref=f2e22]: 
+                    - strong [ref=f2e23]: Show More
+              - generic [ref=f2e24]:
+                - img "Sonatype MCP Server for dependency management" [ref=f2e26]
+                - heading "What's New?" [level=1] [ref=f2e27]
+                - paragraph [ref=f2e28]: December 2025
+                - separator [ref=f2e29]
+                - heading "Stop fixing AI code. Start shipping" [level=2] [ref=f2e30]
+                - paragraph [ref=f2e31]:
+                  - text: Guide your AI assistants with Sonatype's MCP Server, ensuring faster, higher-quality AI code that passes reviews with trusted open source intelligence.
+                  - link "Try it free " [ref=f2e32] [cursor=pointer]:
+                    - /url: https://links.sonatype.com/products/nxrm3/mcp
+                    - text: Try it free
+                    - generic [ref=f2e33]: 
+                - heading "New Capabilities API" [level=2] [ref=f2e34]
+                - paragraph [ref=f2e35]: A new Capabilities API is now available, allowing administrators to programmatically view, create, update, and delete capabilities. This makes it easier to automate repository setup and management, supporting more scalable and consistent configuration across environments.
+                - heading "Firewall for Containers" [level=2] [ref=f2e36]
+                - paragraph [ref=f2e37]:
+                  - text: Sonatype Repository Firewall now supports Docker container images, allowing organizations to enforce open-source security policies on containerized applications as they're requested from proxy repositories.
+                  - strong [ref=f2e38]: This feature requires a Pro license and Sonatype Lifecycle version 194 or later.
+                - heading "New Configuration API" [level=2] [ref=f2e39]
+                - paragraph [ref=f2e40]: A new Configuration API is now available to simplify Nexus Repository instance migration, backup, and automation workflows. This API allows administrators to export and import repository configuration as JSON and migrate individual assets between repositories or instances.
+                - separator [ref=f2e41]
+                - link " Go To Release Notes" [ref=f2e42] [cursor=pointer]:
+                  - /url: https://help.sonatype.com/en/nexus-repository-2025-release-notes.html
+                  - generic [ref=f2e43]: 
+                  - generic [ref=f2e44]: Go To Release Notes
+              - generic [ref=f2e45]:
+                - img "Community Edition Launch" [ref=f2e47]
+                - heading "Welcome to Sonatype Nexus Repository Community Edition" [level=1] [ref=f2e48]
+                - separator [ref=f2e49]
+                - paragraph [ref=f2e50]: We're excited for you to experience everything Sonatype Nexus Community Edition has to offer. Our free repository manager empowers you with modern capabilities designed to meet the needs of today's fast moving DevOps teams.
+                - heading "Benefits of the Sonatype Nexus Repository Community Edition" [level=2] [ref=f2e51]
+                - paragraph [ref=f2e52]: Our goal is to empower developers to build innovative software. We are excited to introduce new features in Community Edition that will help improve the developer experience. Community Edition gives you the flexibility of an external PostgreSQL database to support modern deployment options like Kubernetes. In addition to this, Nexus Repository Community includes previously Pro-only formats including Composer (PHP), Cargo (Rust), Hugging Face and Conan V2.
+                - heading "Upgrade to Sonatype Nexus Repository Pro for enterprise features and increased usage" [level=2] [ref=f2e53]
+                - paragraph [ref=f2e54]: Looking to scale your usage? Our Nexus Repository Pro supports high consumption with appropriate advanced technical options like High Availability (HA) and Disaster Recovery (DR) allowing you to avoid costly disruption.
+                - paragraph [ref=f2e55]: By upgrading to Pro you also gain access to single sign on authentication and world class support leaving your team time to focus on their priorities.
+                - link "Learn more about the benefits of Pro " [ref=f2e56] [cursor=pointer]:
+                  - /url: https://www.sonatype.com/products/sonatype-nexus-repository
+                  - text: Learn more about the benefits of Pro
+                  - generic [ref=f2e57]: 
+              - generic [ref=f2e58]:
+                - heading "Latest Releases" [level=1] [ref=f2e59]
+                - generic [ref=f2e60]:
+                  - generic [ref=f2e61]:
+                    - generic [ref=f2e62]:
+                      - generic [ref=f2e63]: December
+                      - heading "2" [level=1] [ref=f2e64]
+                    - generic [ref=f2e65]:
+                      - paragraph [ref=f2e66]: Sonatype Nexus Repository 3.87.0 - 3.87.1
+                      - link "View Release Notes " [ref=f2e67] [cursor=pointer]:
+                        - /url: https://help.sonatype.com/en/sonatype-nexus-repository-3-87-0-release-notes.html
+                        - text: View Release Notes
+                        - generic [ref=f2e68]: 
+                  - generic [ref=f2e69]:
+                    - generic [ref=f2e70]:
+                      - generic [ref=f2e71]: November
+                      - heading "5" [level=1] [ref=f2e72]
+                    - generic [ref=f2e73]:
+                      - paragraph [ref=f2e74]: Sonatype Nexus Repository 3.86.0 - 3.86.2
+                      - link "View Release Notes " [ref=f2e75] [cursor=pointer]:
+                        - /url: https://help.sonatype.com/en/sonatype-nexus-repository-3-86-0-release-notes.html
+                        - text: View Release Notes
+                        - generic [ref=f2e76]: 
+                  - generic [ref=f2e77]:
+                    - generic [ref=f2e78]:
+                      - generic [ref=f2e79]: October
+                      - heading "7" [level=1] [ref=f2e80]
+                    - generic [ref=f2e81]:
+                      - paragraph [ref=f2e82]: Sonatype Nexus Repository 3.85.0
+                      - link "View Release Notes " [ref=f2e83] [cursor=pointer]:
+                        - /url: https://help.sonatype.com/en/sonatype-nexus-repository-3-85-0-release-notes.html
+                        - text: View Release Notes
+                        - generic [ref=f2e84]: 
+                  - generic [ref=f2e85]:
+                    - generic [ref=f2e86]:
+                      - generic [ref=f2e87]: September
+                      - heading "9" [level=1] [ref=f2e88]
+                    - generic [ref=f2e89]:
+                      - paragraph [ref=f2e90]: Sonatype Nexus Repository 3.84.0 - 3.84.1
+                      - link "View Release Notes " [ref=f2e91] [cursor=pointer]:
+                        - /url: https://help.sonatype.com/en/sonatype-nexus-repository-3-84-0-release-notes.html
+                        - text: View Release Notes
+                        - generic [ref=f2e92]: 
+                  - generic [ref=f2e93]:
+                    - generic [ref=f2e94]:
+                      - generic [ref=f2e95]: August
+                      - heading "12" [level=1] [ref=f2e96]
+                    - generic [ref=f2e97]:
+                      - paragraph [ref=f2e98]: Sonatype Nexus Repository 3.83.0 - 3.83.2
+                      - link "View Release Notes " [ref=f2e99] [cursor=pointer]:
+                        - /url: https://help.sonatype.com/en/sonatype-nexus-repository-3-83-0-release-notes.html
+                        - text: View Release Notes
+                        - generic [ref=f2e100]: 
+                - link " View all releases" [ref=f2e101] [cursor=pointer]:
+                  - /url: https://help.sonatype.com/repomanager3/product-information/release-notes
+                  - generic [ref=f2e102]: 
+                  - generic [ref=f2e103]: View all releases
+              - generic [ref=f2e104]:
+                - heading "Help Docs to Get You Started" [level=1] [ref=f2e105]
+                - generic [ref=f2e106]:
+                  - generic [ref=f2e108]: 
+                  - generic [ref=f2e109]:
+                    - paragraph [ref=f2e110]: Using Sonatype Nexus Repository
+                    - list [ref=f2e111]:
+                      - listitem [ref=f2e112]:
+                        - link "Concepts and terms " [ref=f2e113] [cursor=pointer]:
+                          - /url: https://help.sonatype.com/en/repository-manager-concepts.html
+                          - paragraph [ref=f2e114]:
+                            - text: Concepts and terms
+                            - generic [ref=f2e115]: 
+                      - listitem [ref=f2e116]:
+                        - link "Search for components " [ref=f2e117] [cursor=pointer]:
+                          - /url: https://help.sonatype.com/en/searching-for-components.html
+                          - paragraph [ref=f2e118]:
+                            - text: Search for components
+                            - generic [ref=f2e119]: 
+                      - listitem [ref=f2e120]:
+                        - link "Browse repositories and groups " [ref=f2e121] [cursor=pointer]:
+                          - /url: https://help.sonatype.com/en/browsing-repositories-and-repository-groups.html
+                          - paragraph [ref=f2e122]:
+                            - text: Browse repositories and groups
+                            - generic [ref=f2e123]: 
+                - generic [ref=f2e124]:
+                  - generic [ref=f2e126]: 
+                  - generic [ref=f2e127]:
+                    - paragraph [ref=f2e128]: Administration
+                    - list [ref=f2e129]:
+                      - listitem [ref=f2e130]:
+                        - link "Plan your implementation " [ref=f2e131] [cursor=pointer]:
+                          - /url: https://help.sonatype.com/en/planning-your-implementation.html
+                          - paragraph [ref=f2e132]:
+                            - text: Plan your implementation
+                            - generic [ref=f2e133]: 
+                      - listitem [ref=f2e134]:
+                        - link "Installation and upgrades " [ref=f2e135] [cursor=pointer]:
+                          - /url: https://help.sonatype.com/en/installation-and-upgrades.html
+                          - paragraph [ref=f2e136]:
+                            - text: Installation and upgrades
+                            - generic [ref=f2e137]: 
+                      - listitem [ref=f2e138]:
+                        - link "Repository administration " [ref=f2e139] [cursor=pointer]:
+                          - /url: https://help.sonatype.com/en/nexus-repository-administration.html
+                          - paragraph [ref=f2e140]:
+                            - text: Repository administration
+                            - generic [ref=f2e141]: 
+                      - listitem [ref=f2e142]:
+                        - link "Integrations " [ref=f2e143] [cursor=pointer]:
+                          - /url: https://help.sonatype.com/en/integrations.html
+                          - paragraph [ref=f2e144]:
+                            - text: Integrations
+                            - generic [ref=f2e145]: 
+                      - listitem [ref=f2e146]:
+                        - link "Administration best practices " [ref=f2e147] [cursor=pointer]:
+                          - /url: https://help.sonatype.com/en/administration-best-practices.html
+                          - paragraph [ref=f2e148]:
+                            - text: Administration best practices
+                            - generic [ref=f2e149]: 
+                - separator [ref=f2e150]
+                - generic [ref=f2e151]:
+                  - generic [ref=f2e153]:
+                    - paragraph [ref=f2e154]: Documentation
+                    - list [ref=f2e155]:
+                      - listitem [ref=f2e156]:
+                        - link "Visit our help site " [ref=f2e157] [cursor=pointer]:
+                          - /url: https://my.sonatype.com/
+                          - paragraph [ref=f2e158]:
+                            - text: Visit our help site
+                            - generic [ref=f2e159]: 
+                  - generic [ref=f2e161]:
+                    - paragraph [ref=f2e162]: Community
+                    - list [ref=f2e163]:
+                      - listitem [ref=f2e164]:
+                        - link "Ask and answer questions " [ref=f2e165] [cursor=pointer]:
+                          - /url: https://community.sonatype.com/
+                          - paragraph [ref=f2e166]:
+                            - text: Ask and answer questions
+                            - generic [ref=f2e167]: 
+              - group [ref=f2e169]:
+                - generic "Supported Formats and Types" [ref=f2e170] [cursor=pointer]:
+                  - generic [ref=f2e171]: 
+                  - heading "Supported Formats and Types" [level=2] [ref=f2e172]
+                - generic [ref=f2e173]:
+                  - separator [ref=f2e174]
+                  - generic [ref=f2e175]:
+                    - generic [ref=f2e176]:
+                      - heading "Repository Types" [level=2] [ref=f2e177]
+                      - paragraph [ref=f2e178]: "Sonatype Nexus Repository is set up to work with repositories the way you do:"
+                      - list [ref=f2e179]:
+                        - listitem [ref=f2e180]:
+                          - paragraph [ref=f2e181]: "Hosted: stores components within your Nexus Repository instance"
+                        - listitem [ref=f2e182]:
+                          - paragraph [ref=f2e183]: "Proxy: stores components in a remote repository"
+                        - listitem [ref=f2e184]:
+                          - paragraph [ref=f2e185]: "Group: contains either or both hosted and proxy repositories"
+                    - generic [ref=f2e186]:
+                      - heading "Supported Formats" [level=2] [ref=f2e187]
+                      - generic [ref=f2e188]:
+                        - generic [ref=f2e189]:
+                          - img "APT" [ref=f2e190]
+                          - link "APT" [ref=f2e191] [cursor=pointer]:
+                            - /url: https://help.sonatype.com/en/apt-repositories.html
+                        - generic [ref=f2e192]:
+                          - img "Cargo" [ref=f2e193]
+                          - link "Cargo" [ref=f2e194] [cursor=pointer]:
+                            - /url: https://help.sonatype.com/en/rust-cargo.html
+                        - generic [ref=f2e195]:
+                          - img "Cocoapods" [ref=f2e196]
+                          - link "CocoaPods" [ref=f2e197] [cursor=pointer]:
+                            - /url: https://help.sonatype.com/en/cocoapods-repositories.html
+                        - generic [ref=f2e198]:
+                          - img "Composer" [ref=f2e199]
+                          - link "Composer" [ref=f2e200] [cursor=pointer]:
+                            - /url: https://help.sonatype.com/en/composer-repositories.html
+                        - generic [ref=f2e201]:
+                          - img "Conan" [ref=f2e202]
+                          - link "Conan" [ref=f2e203] [cursor=pointer]:
+                            - /url: https://help.sonatype.com/en/conan-repositories.html
+                        - generic [ref=f2e204]:
+                          - img "Conda" [ref=f2e205]
+                          - link "Conda" [ref=f2e206] [cursor=pointer]:
+                            - /url: https://help.sonatype.com/en/conda-repositories.html
+                        - generic [ref=f2e207]:
+                          - img "Docker" [ref=f2e208]
+                          - link "Docker" [ref=f2e209] [cursor=pointer]:
+                            - /url: https://help.sonatype.com/en/docker-registry.html
+                        - generic [ref=f2e210]:
+                          - img "Git LFS" [ref=f2e211]
+                          - link "Git LFS" [ref=f2e212] [cursor=pointer]:
+                            - /url: https://help.sonatype.com/en/git-lfs-repositories.html
+                        - generic [ref=f2e213]:
+                          - img "Go" [ref=f2e214]
+                          - link "Go" [ref=f2e215] [cursor=pointer]:
+                            - /url: https://help.sonatype.com/en/go-repositories.html
+                        - generic [ref=f2e216]:
+                          - img "Helm" [ref=f2e217]
+                          - link "Helm" [ref=f2e218] [cursor=pointer]:
+                            - /url: https://help.sonatype.com/en/helm-repositories.html
+                        - generic [ref=f2e219]:
+                          - img "Hugging Face" [ref=f2e220]
+                          - link "Hugging Face" [ref=f2e221] [cursor=pointer]:
+                            - /url: https://help.sonatype.com/en/hugging-face-repositories.html
+                        - generic [ref=f2e222]:
+                          - img "Maven" [ref=f2e223]
+                          - link "Maven" [ref=f2e224] [cursor=pointer]:
+                            - /url: https://help.sonatype.com/en/maven-repositories.html
+                        - generic [ref=f2e225]:
+                          - img "NPM" [ref=f2e226]
+                          - link "npm" [ref=f2e227] [cursor=pointer]:
+                            - /url: https://help.sonatype.com/en/npm-registry.html
+                        - generic [ref=f2e228]:
+                          - img "Nuget" [ref=f2e229]
+                          - link "NuGet" [ref=f2e230] [cursor=pointer]:
+                            - /url: https://help.sonatype.com/en/nuget-repositories.html
+                        - generic [ref=f2e231]:
+                          - img "p2" [ref=f2e232]
+                          - link "p2" [ref=f2e233] [cursor=pointer]:
+                            - /url: https://help.sonatype.com/en/p2-repositories.html
+                        - generic [ref=f2e234]:
+                          - img "PyPi" [ref=f2e235]
+                          - link "PyPi" [ref=f2e236] [cursor=pointer]:
+                            - /url: https://help.sonatype.com/en/pypi-repositories.html
+                        - generic [ref=f2e237]:
+                          - img "R" [ref=f2e238]
+                          - link "R" [ref=f2e239] [cursor=pointer]:
+                            - /url: https://help.sonatype.com/en/r-repositories.html
+                        - generic [ref=f2e240]:
+                          - img "Raw" [ref=f2e241]
+                          - link "Raw" [ref=f2e242] [cursor=pointer]:
+                            - /url: https://help.sonatype.com/en/raw-repositories.html
+                        - generic [ref=f2e243]:
+                          - img "Rubygems" [ref=f2e244]
+                          - link "RubyGems" [ref=f2e245] [cursor=pointer]:
+                            - /url: https://help.sonatype.com/en/rubygems-repositories.html
+                        - generic [ref=f2e246]:
+                          - img "Yum" [ref=f2e247]
+                          - link "Yum(RPM)" [ref=f2e248] [cursor=pointer]:
+                            - /url: https://help.sonatype.com/en/yum-repositories.html
+              - heading "Explore Sonatype Solutions" [level=1] [ref=f2e249]
+              - link "Build fast with centralized components. Explore Repository " [ref=f2e251] [cursor=pointer]:
+                - /url: https://www.sonatype.com/products/sonatype-nexus-repository
+                - generic [ref=f2e254]:
+                  - generic [ref=f2e255]:
+                    - text: Build fast with centralized components.
+                    - heading "Explore Repository" [level=2] [ref=f2e256]
+                  - generic [ref=f2e257]: 
+              - link "Intercept malicious open source at the door. Explore Firewall " [ref=f2e259] [cursor=pointer]:
+                - /url: https://www.sonatype.com/products/sonatype-repository-firewall
+                - generic [ref=f2e262]:
+                  - generic [ref=f2e263]:
+                    - text: Intercept malicious open source at the door.
+                    - heading "Explore Firewall" [level=2] [ref=f2e264]
+                  - generic [ref=f2e265]: 
+              - link "Reduce risk across software development. Explore Lifecycle " [ref=f2e267] [cursor=pointer]:
+                - /url: https://www.sonatype.com/products/open-source-security-dependency-management
+                - generic [ref=f2e270]:
+                  - generic [ref=f2e271]:
+                    - text: Reduce risk across software development.
+                    - heading "Explore Lifecycle" [level=2] [ref=f2e272]
+                  - generic [ref=f2e273]: 
+              - link "Simplify SBOM compliance and monitoring. Explore SBOM Manager " [ref=f2e275] [cursor=pointer]:
+                - /url: https://www.sonatype.com/products/sonatype-sbom-manager
+                - generic [ref=f2e278]:
+                  - generic [ref=f2e279]:
+                    - text: Simplify SBOM compliance and monitoring.
+                    - heading "Explore SBOM Manager" [level=2] [ref=f2e280]
+                  - generic [ref=f2e281]: 
+```

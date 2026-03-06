@@ -72,4 +72,9 @@ web/.turbo/
 # OS
 Thumbs.db
 
+# Security config template (keep in root, do not commit)
+secure_config_template.py
+setup_secure.py
 
+# Compiled security config
+cherrystudio/core/secure_config.c

@@ -1,44 +1,87 @@
 {
   "version": "1.0.0",
   "lastUpdated": "2023-12-23T12:00:00.000Z",
-  "defaultModels": {
-    "defaultModel": "gpt-4o-corp",
-    "quickModel": "deepseek-chat-corp",
-    "translateModel": "deepseek-chat-corp"
+    "defaultModels": {
+    "defaultModel": "qwen3:8b",
+    "quickModel": "qwen3:8b",
+    "translateModel": "qwen3:8b"
   },
   "providers": [
     {
       "id": "centralized-openai",
-      "name": "Corporate OpenAI",
+      "name": "Coco",
       "type": "openai",
-      "apiHost": "https://api.openai.com",
-      "apiKey": "sk-proj-...",
+      "apiHost": "http://192.168.166.232",
+      "apiKey": "52fc482d-364b-40bc-9589-9918520c9d3e",
       "icon": "",
       "models": [
         {
-          "id": "gpt-4o-corp",
-          "name": "GPT-4o (Corp)",
-          "modelId": "gpt-4o",
-          "isCentralized": true
-        }
-      ]
-    },
-    {
-      "id": "centralized-deepseek",
-      "name": "DeepSeek Internal",
-      "type": "openai",
-      "apiHost": "https://api.deepseek.com",
-      "apiKey": "sk-...",
-      "icon": "",
-      "models": [
+          "id": "qwen3-vl:8b",
+          "name": "Qwen3-vl:8b",
+          "modelId": "qwen3-vl:8b",
+          "isCentralized": true,
+          "supported_text_delta": true,
+          "capabilities": [
+            { "type": "text" },
+            { "type": "vision" }
+          ],
+          "endpoint_type": "openai"
+        },
         {
-          "id": "deepseek-chat-corp",
-          "name": "DeepSeek Chat (Corp)",
-          "modelId": "deepseek-chat",
-          "isCentralized": true
+          "id": "deepseek-r1:32b",
+          "name": "Deepseek-r1:32b",
+          "modelId": "deepseek-r1:32b",
+          "isCentralized": true,
+          "supported_text_delta": true,
+          "capabilities": [
+            { "type": "text" },
+            { "type": "reasoning" }
+          ],
+          "endpoint_type": "openai"
+        },
+        {
+          "id": "deepseek-r1:14b",
+          "name": "Deepseek-r1:14b",
+          "modelId": "deepseek-r1:14b",
+          "isCentralized": true,
+
+          "supported_text_delta": true
+        },
+        {
+          "id": "olmo-3:32b",
+          "name": "Olmo-3:32b",
+          "modelId": "olmo-3:32b",
+          "isCentralized": true,
+
+          "supported_text_delta": true
+        },
+        {
+          "id": "qwen3:8b",
+          "name": "Qwen3:8b",
+          "modelId": "qwen3:8b",
+          "isCentralized": true,
+
+          "supported_text_delta": true
+        },
+        {
+          "id": "gpt-oss:20b",
+          "name": "GPT-OSS:20b",
+          "modelId": "gpt-oss:20b",
+          "isCentralized": true,
+
+          "supported_text_delta": true
+        },
+        {
+          "id": "huihui_ai/deepseek-r1-abliterated:32b",
+          "name": "Huihui-AI/Deepseek-r1-Abliterated:32b",
+          "modelId": "huihui_ai/deepseek-r1-abliterated:32b",
+          "isCentralized": true,
+
+          "supported_text_delta": true
         }
       ]
     }
+
   ],
   "mcpServers": [
     {

@@ -238,12 +238,334 @@ class AgentAPIHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps(response).encode('utf-8'))
                 return
         
+        # /v1/agents 端点
+        if path == '/v1/agents' or path.startswith('/v1/agents/'):
+            if not self._check_auth():
+                self.send_response(401)
+                self._send_cors_headers()
+                self.end_headers()
+                response = {'error': {'message': 'Unauthorized', 'type': 'authentication_error'}}
+                self.wfile.write(json.dumps(response).encode('utf-8'))
+                return
+            
+            try:
+                agents = AgentStorage.list_agents()
+                
+                # 如果是获取单个 agent
+                if path != '/v1/agents':
+                    agent_id = path.split('/v1/agents/')[-1].split('/')[0]
+                    if agent_id:
+                        agent = AgentStorage.get_agent(agent_id)
+                        if agent:
+                            self.send_response(200)
+                            self._send_cors_headers()
+                            self.end_headers()
+                            response = {'data': agent}
+                            self.wfile.write(json.dumps(response).encode('utf-8'))
+                        else:
+                            self.send_response(404)
+                            self._send_cors_headers()
+                            self.end_headers()
+                            response = {'error': {'message': 'Agent not found', 'type': 'not_found_error'}}
+                            self.wfile.write(json.dumps(response).encode('utf-8'))
+                        return
+                
+                # 列出所有 agents
+                self.send_response(200)
+                self._send_cors_headers()
+                self.end_headers()
+                # 前端期望格式: {data, total, limit, offset}
+                response = {
+                    'data': agents,
+                    'total': len(agents),
+                    'limit': 100,
+                    'offset': 0
+                }
+                self.wfile.write(json.dumps(response).encode('utf-8'))
+                return
+                
+            except Exception as e:
+                _log(f"Error in /v1/agents GET: {e}")
+                self.send_response(500)
+                self._send_cors_headers()
+                self.end_headers()
+                response = {'error': {'message': str(e), 'type': 'internal_error'}}
+                self.wfile.write(json.dumps(response).encode('utf-8'))
+                return
+        
         # 其他路径返回 404
         self.send_response(404)
         self._send_cors_headers()
         self.end_headers()
         response = {'error': {'message': 'Not found', 'type': 'not_found_error'}}
         self.wfile.write(json.dumps(response).encode('utf-8'))
+    
+    def do_POST(self):
+        """处理 POST 请求"""
+        parsed_path = urlparse(self.path)
+        path = parsed_path.path
+        
+        # /v1/agents 创建 agent
+        if path == '/v1/agents':
+            if not self._check_auth():
+                self.send_response(401)
+                self._send_cors_headers()
+                self.end_headers()
+                response = {'error': {'message': 'Unauthorized', 'type': 'authentication_error'}}
+                self.wfile.write(json.dumps(response).encode('utf-8'))
+                return
+            
+            try:
+                content_length = int(self.headers.get('Content-Length', 0))
+                body = self.rfile.read(content_length).decode('utf-8')
+                data = json.loads(body) if body else {}
+                
+                agent = AgentStorage.create_agent(data)
+                
+                self.send_response(201)
+                self._send_cors_headers()
+                self.end_headers()
+                response = {'data': agent}
+                self.wfile.write(json.dumps(response).encode('utf-8'))
+                return
+                
+            except Exception as e:
+                _log(f"Error in /v1/agents POST: {e}")
+                self.send_response(500)
+                self._send_cors_headers()
+                self.end_headers()
+                response = {'error': {'message': str(e), 'type': 'internal_error'}}
+                self.wfile.write(json.dumps(response).encode('utf-8'))
+                return
+        
+        # 其他路径返回 404
+        self.send_response(404)
+        self._send_cors_headers()
+        self.end_headers()
+        response = {'error': {'message': 'Not found', 'type': 'not_found_error'}}
+        self.wfile.write(json.dumps(response).encode('utf-8'))
+    
+    def do_PUT(self):
+        """处理 PUT 请求"""
+        parsed_path = urlparse(self.path)
+        path = parsed_path.path
+        
+        # /v1/agents/{id} 更新 agent
+        if path.startswith('/v1/agents/'):
+            if not self._check_auth():
+                self.send_response(401)
+                self._send_cors_headers()
+                self.end_headers()
+                response = {'error': {'message': 'Unauthorized', 'type': 'authentication_error'}}
+                self.wfile.write(json.dumps(response).encode('utf-8'))
+                return
+            
+            try:
+                agent_id = path.split('/v1/agents/')[-1].split('/')[0]
+                content_length = int(self.headers.get('Content-Length', 0))
+                body = self.rfile.read(content_length).decode('utf-8')
+                data = json.loads(body) if body else {}
+                
+                agent = AgentStorage.update_agent(agent_id, data)
+                if agent:
+                    self.send_response(200)
+                    self._send_cors_headers()
+                    self.end_headers()
+                    response = {'data': agent}
+                    self.wfile.write(json.dumps(response).encode('utf-8'))
+                else:
+                    self.send_response(404)
+                    self._send_cors_headers()
+                    self.end_headers()
+                    response = {'error': {'message': 'Agent not found', 'type': 'not_found_error'}}
+                    self.wfile.write(json.dumps(response).encode('utf-8'))
+                return
+                
+            except Exception as e:
+                _log(f"Error in /v1/agents PUT: {e}")
+                self.send_response(500)
+                self._send_cors_headers()
+                self.end_headers()
+                response = {'error': {'message': str(e), 'type': 'internal_error'}}
+                self.wfile.write(json.dumps(response).encode('utf-8'))
+                return
+        
+        # 其他路径返回 404
+        self.send_response(404)
+        self._send_cors_headers()
+        self.end_headers()
+        response = {'error': {'message': 'Not found', 'type': 'not_found_error'}}
+        self.wfile.write(json.dumps(response).encode('utf-8'))
+    
+    def do_DELETE(self):
+        """处理 DELETE 请求"""
+        parsed_path = urlparse(self.path)
+        path = parsed_path.path
+        
+        # /v1/agents/{id} 删除 agent
+        if path.startswith('/v1/agents/'):
+            if not self._check_auth():
+                self.send_response(401)
+                self._send_cors_headers()
+                self.end_headers()
+                response = {'error': {'message': 'Unauthorized', 'type': 'authentication_error'}}
+                self.wfile.write(json.dumps(response).encode('utf-8'))
+                return
+            
+            try:
+                agent_id = path.split('/v1/agents/')[-1].split('/')[0]
+                success = AgentStorage.delete_agent(agent_id)
+                
+                if success:
+                    self.send_response(200)
+                    self._send_cors_headers()
+                    self.end_headers()
+                    response = {'success': True}
+                    self.wfile.write(json.dumps(response).encode('utf-8'))
+                else:
+                    self.send_response(404)
+                    self._send_cors_headers()
+                    self.end_headers()
+                    response = {'error': {'message': 'Agent not found', 'type': 'not_found_error'}}
+                    self.wfile.write(json.dumps(response).encode('utf-8'))
+                return
+                
+            except Exception as e:
+                _log(f"Error in /v1/agents DELETE: {e}")
+                self.send_response(500)
+                self._send_cors_headers()
+                self.end_headers()
+                response = {'error': {'message': str(e), 'type': 'internal_error'}}
+                self.wfile.write(json.dumps(response).encode('utf-8'))
+                return
+        
+        # 其他路径返回 404
+        self.send_response(404)
+        self._send_cors_headers()
+        self.end_headers()
+        response = {'error': {'message': 'Not found', 'type': 'not_found_error'}}
+        self.wfile.write(json.dumps(response).encode('utf-8'))
+
+
+class AgentStorage:
+    """Agent 数据存储"""
+    
+    _agents_file = None
+    
+    @classmethod
+    def _get_agents_file(cls):
+        if cls._agents_file is None:
+            from pathlib import Path
+            import os
+            user_data_dir = Path(os.environ.get('CHERRYSTUDIO_DATA_DIR', Path.home() / '.cherrystudio'))
+            cls._agents_file = user_data_dir / 'agents.json'
+        return cls._agents_file
+    
+    @classmethod
+    def _load_agents(cls) -> list:
+        """加载所有 agents"""
+        try:
+            agents_file = cls._get_agents_file()
+            if agents_file.exists():
+                with open(agents_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        except Exception as e:
+            _log(f"Error loading agents: {e}")
+        return []
+    
+    @classmethod
+    def _save_agents(cls, agents: list) -> bool:
+        """保存所有 agents"""
+        try:
+            agents_file = cls._get_agents_file()
+            agents_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(agents_file, 'w', encoding='utf-8') as f:
+                json.dump(agents, f, ensure_ascii=False, indent=2)
+            return True
+        except Exception as e:
+            _log(f"Error saving agents: {e}")
+            return False
+    
+    @classmethod
+    def list_agents(cls) -> list:
+        """列出所有 agents"""
+        return cls._load_agents()
+    
+    @classmethod
+    def get_agent(cls, agent_id: str) -> Optional[dict]:
+        """获取单个 agent"""
+        agents = cls._load_agents()
+        for agent in agents:
+            if agent.get('id') == agent_id:
+                return agent
+        return None
+    
+    @classmethod
+    def create_agent(cls, data: dict) -> dict:
+        """创建新 agent"""
+        import uuid
+        from datetime import datetime
+        
+        agents = cls._load_agents()
+        
+        now = datetime.now().strftime('%Y-%m-%dT%H:%M:%S.000Z')
+        
+        # 前端期望的 Agent 格式 (AgentEntitySchema)
+        agent = {
+            'id': data.get('id') or str(uuid.uuid4()),
+            'type': data.get('type', 'claude-code'),  # 必须是 'claude-code'
+            'name': data.get('name', 'Unnamed Agent'),
+            'description': data.get('description', ''),
+            'model': data.get('model', ''),  # 必填
+            'accessible_paths': data.get('accessible_paths') or data.get('accessible_directories') or ['.'],  # 必填非空
+            'instructions': data.get('instructions', ''),
+            'plan_model': data.get('plan_model'),
+            'small_model': data.get('small_model'),
+            'mcps': data.get('mcps', []),
+            'allowed_tools': data.get('allowed_tools', []),
+            'slash_commands': data.get('slash_commands', []),
+            'configuration': data.get('configuration', {}),
+            'tools': data.get('tools', []),
+            'created_at': now,
+            'updated_at': now
+        }
+        
+        agents.append(agent)
+        cls._save_agents(agents)
+        
+        _log(f"Created agent: {agent['id']} - {agent['name']}")
+        return agent
+    
+    @classmethod
+    def update_agent(cls, agent_id: str, data: dict) -> Optional[dict]:
+        """更新 agent"""
+        from datetime import datetime
+        
+        agents = cls._load_agents()
+        for i, agent in enumerate(agents):
+            if agent.get('id') == agent_id:
+                # 更新字段
+                for key in ['name', 'description', 'model', 'instructions', 'tools', 'accessible_directories', 'metadata']:
+                    if key in data:
+                        agent[key] = data[key]
+                agent['updated_at'] = datetime.now().isoformat()
+                agents[i] = agent
+                cls._save_agents(agents)
+                _log(f"Updated agent: {agent_id}")
+                return agent
+        return None
+    
+    @classmethod
+    def delete_agent(cls, agent_id: str) -> bool:
+        """删除 agent"""
+        agents = cls._load_agents()
+        for i, agent in enumerate(agents):
+            if agent.get('id') == agent_id:
+                agents.pop(i)
+                cls._save_agents(agents)
+                _log(f"Deleted agent: {agent_id}")
+                return True
+        return False
 
 
 class AgentServer:

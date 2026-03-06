@@ -11,10 +11,24 @@ from .core.app_lifecycle import (
     create_app
 )
 from .core.window_manager import create_window
+from .utils.package_manager_config import ensure_package_manager_configs
+
+
+def _resolve_index_path() -> str:
+    """优先使用 web/out/renderer 产物，其次使用内置 public。"""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(script_dir)
+    built_index = os.path.join(project_root, 'web', 'out', 'renderer', 'index.html')
+    if os.path.exists(built_index):
+        return built_index
+    return os.path.join(script_dir, 'public', 'index.html')
 
 
 def main():
     """主函数：应用入口"""
+    
+    # 0. 检查并配置包管理器环境 (npm/uv)
+    ensure_package_manager_configs()
     
     # 1. 解析命令行参数
     parser = argparse.ArgumentParser(description='Cherry Studio for Houdini')
@@ -28,8 +42,7 @@ def main():
         load_url = args.url
     else:
         # 默认加载本地 index.html
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        index_path = os.path.join(script_dir, 'public', 'index.html')
+        index_path = _resolve_index_path()
         if not os.path.exists(index_path):
             print(f"错误：找不到 index.html 在 {index_path}")
             sys.exit(1)
@@ -78,8 +91,7 @@ def create_widget_for_pane(url: str | None = None, theme: str = 'dark'):
     if url:
         load_url = url
     else:
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        index_path = os.path.join(script_dir, 'public', 'index.html')
+        index_path = _resolve_index_path()
         if not os.path.exists(index_path):
             raise FileNotFoundError(f"找不到 index.html 在 {index_path}")
         load_url = index_path
