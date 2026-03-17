@@ -20,10 +20,12 @@ _chrome_flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
 _flags_to_add = []
 if "--proxy-bypass-list" not in _chrome_flags:
     _flags_to_add.append("--proxy-bypass-list=127.0.0.1;localhost;::1;<-loopback>")
-if "--disable-web-security" not in _chrome_flags:
-    _flags_to_add.append("--disable-web-security")
-if "--allow-file-access-from-files" not in _chrome_flags:
-    _flags_to_add.append("--allow-file-access-from-files")
+    if "--disable-web-security" not in _chrome_flags:
+        _flags_to_add.append("--disable-web-security")
+    if "--allow-file-access-from-files" not in _chrome_flags:
+        _flags_to_add.append("--allow-file-access-from-files")
+    if "--allow-file-access" not in _chrome_flags:
+        _flags_to_add.append("--allow-file-access")
 if _flags_to_add:
     os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
         _chrome_flags + " " + " ".join(_flags_to_add)
@@ -50,13 +52,18 @@ from ..web.electron_injector import (
 )
 
 
-def _ensure_backend_service() -> str:
+def _ensure_backend_service(static_dir: str = "") -> str:
     """
     确保后端服务可用，返回服务的 base URL。
 
     必须在当前进程内嵌入启动后端，因为 Qt Bridge（qt_bridge.py）需要
     直接访问 CherryStudioAPI 实例（同进程内的 Python 对象），外部后端
     进程无法持有 Qt API 引用。
+
+    Args:
+        static_dir: 前端静态文件目录，设置后后端将托管该目录，
+                    使页面可通过 http:// 加载（解决 file:// + UNC 路径下
+                    blob URL 被 Chromium 拦截的问题）。
     """
     try:
         from ..backend.service_runner import BackendService
@@ -64,6 +71,11 @@ def _ensure_backend_service() -> str:
         if not svc.is_running():
             port = svc.start()
             print(f"[WindowManager] Backend service started (embedded) on port {port}")
+        # 注册静态文件目录
+        server = svc.get_server()
+        if server and static_dir and os.path.isdir(static_dir):
+            server.static_dir = static_dir
+            print(f"[WindowManager] Static files served from: {static_dir}")
         return svc.get_base_url()
     except Exception as e:
         import traceback
@@ -104,35 +116,46 @@ def _register_dcc_session(backend_url: str) -> str:
 def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, parent=None):
     """
     创建主窗口。
-    
+
     架构步骤：
     1. 启动后端服务（如未运行）
     2. 注册 DCC 会话（启动 Houdini MCP Server）
     3. 将 session_id 和 backend_url 注入到前端加载 URL
     4. 创建 QWebEngineView，前端通过 HTTP 直连后端（无 QWebChannel）
-    
+
     Args:
         load_url: 要加载的 URL（本地文件路径或 HTTP URL）
         theme: 主题设置（'light' 或 'dark'）
-        
+
     Returns:
         QMainWindow: 创建的主窗口实例
     """
     try:
-        # ── Step 1: 启动后端服务 ──────────────────────────────────────────────
-        backend_url = _ensure_backend_service()
-        
+        # ── Step 1: 启动后端服务（同时注册静态文件目录） ─────────────────────
+        # 如果 load_url 指向本地 index.html，将其所在目录作为静态文件根目录，
+        # 这样前端通过 http://127.0.0.1:PORT/ 加载，避免 file:// + UNC 路径
+        # 导致 blob: URL 被 Chromium 安全策略拦截。
+        static_dir = ""
+        if not load_url.startswith("http"):
+            abs_url = os.path.abspath(load_url) if not os.path.isabs(load_url) else load_url
+            if os.path.isfile(abs_url):
+                static_dir = os.path.dirname(abs_url)
+
+        backend_url = _ensure_backend_service(static_dir)
+
+        # 如果后端可用且有静态目录，改为通过 HTTP 加载
+        if backend_url and static_dir and not load_url.startswith("http"):
+            load_url = backend_url + "/"
+            print(f"[WindowManager] Loading frontend via HTTP: {load_url}")
+
         # ── Step 2: 注册 DCC 会话 ────────────────────────────────────────────
         session_id = _register_dcc_session(backend_url)
-        
+
         # ── Step 3: 将会话信息注入到 URL ─────────────────────────────────────
         if session_id and backend_url and "?" not in load_url:
             from ..dcc.session import DCCSession
             query = DCCSession.instance().get_url_params()
-            # 对于本地文件 URL，query 参数需要加在 fragment 之前
-            # 注意：QWebEngine 加载本地文件时 query 参数可能被忽略，
-            # 但我们通过 JS 注入也会传递这些信息
-            load_url_with_params = load_url  # 通过 JS 注入更可靠（见下方注入脚本）
+            load_url_with_params = load_url
         else:
             load_url_with_params = load_url
 
@@ -154,7 +177,7 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
                     parent = hou.ui.mainQtWindow()
             except Exception:
                 parent = None
-        
+
         # 如果需要 QWidget 模式，则不创建 QMainWindow
         window = None
         if not as_widget:
@@ -164,7 +187,7 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
                     super().__init__(parent)
                     self._is_dragging = False
                     self._drag_position = None
-                
+
                 def mousePressEvent(self, event):
                     if event.button() == Qt.LeftButton:
                         self._is_dragging = True
@@ -172,14 +195,14 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
                         event.accept()
                     else:
                         super().mousePressEvent(event)
-                
+
                 def mouseMoveEvent(self, event):
                     if self._is_dragging and event.buttons() & Qt.LeftButton:
                         self.move(event.globalPosition().toPoint() - self._drag_position)
                         event.accept()
                     else:
                         super().mouseMoveEvent(event)
-                
+
                 def mouseReleaseEvent(self, event):
                     self._is_dragging = False
                     super().mouseReleaseEvent(event)
@@ -190,13 +213,13 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
             window.setAttribute(Qt.WA_TranslucentBackground)  # 允许透明背景，配合圆角
             window.setWindowTitle("Cherry Studio")
             window.resize(1400, 900)
-        
+
         # 配置持久化存储（确保配置不会丢失）
         # 重要：必须在任何 WebEngine 相关对象创建之前设置
         # 使用用户主目录下的 .cherrystudio 目录，确保跨宿主应用路径一致
         storage_path = os.path.join(os.path.expanduser("~"), ".cherrystudio")
         os.makedirs(storage_path, exist_ok=True)
-        
+
         # 使用默认 profile（hython 环境不支持命名 Profile，会崩溃）
         # 虽然 defaultProfile 是 off-the-record 模式，但我们会在 JavaScript 层面手动持久化 IndexedDB
         profile = QWebEngineProfile("CherryStudio")
@@ -206,11 +229,43 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
         profile.setCachePath(cache_path)
         profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies)
         profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.DiskHttpCache)
-        
+
         print(f"持久化存储路径: {storage_path}")
         print(f"实际存储路径: {profile.persistentStoragePath()}")
         print(f"缓存路径: {profile.cachePath()}")
-        
+
+        # ─── Download Handler ─────────────────────────────────────────────────
+        def _on_download_requested(download):
+            try:
+                from PySide6.QtWidgets import QFileDialog
+                print(f"[Download] Requested: {download.downloadFileName()}")
+
+                # Determine parent
+                parent_widget = window if window else None
+
+                suggested = download.downloadFileName()
+                default_dir = os.path.join(os.path.expanduser("~"), "Downloads")
+                default_path = os.path.join(default_dir, suggested)
+
+                path, _ = QFileDialog.getSaveFileName(parent_widget, "Save File", default_path, "CSV Files (*.csv)")
+
+                if path:
+                    download.setDownloadDirectory(os.path.dirname(path))
+                    download.setDownloadFileName(os.path.basename(path))
+                    download.accept()
+                    print(f"[Download] Saving to {path}")
+                else:
+                    download.cancel()
+                    print("[Download] Cancelled")
+            except Exception as e:
+                print(f"[Download] Error: {e}")
+                try:
+                    download.cancel()
+                except:
+                    pass
+
+        profile.downloadRequested.connect(_on_download_requested)
+
         # 创建 WebEngine 视图（使用默认 profile）
         try:
             web_view = QWebEngineView(profile)
@@ -219,7 +274,7 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
             web_view = QWebEngineView()
             page = QWebEnginePage(profile, web_view)
             web_view.setPage(page)
-        
+
         # 创建支持拖拽的容器
         class WebContainer(QWidget):
             """支持拖拽的 Web 容器"""
@@ -260,13 +315,13 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
             def mouseReleaseEvent(self, event):
                 self._is_dragging = False
                 super().mouseReleaseEvent(event)
-            
+
             def dragEnterEvent(self, event: QDragEnterEvent):
                 """拖拽进入事件"""
                 try:
                     mime_data = event.mimeData()
-                    if (mime_data.hasUrls() or mime_data.hasText() or 
-                        mime_data.hasFormat("text/uri-list") or 
+                    if (mime_data.hasUrls() or mime_data.hasText() or
+                        mime_data.hasFormat("text/uri-list") or
                         mime_data.hasFormat("text/plain")):
                         event.acceptProposedAction()
                     else:
@@ -274,13 +329,13 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
                 except Exception as e:
                     print(f"Error in dragEnterEvent: {e}")
                     event.ignore()
-            
+
             def dragMoveEvent(self, event: QDragMoveEvent):
                 """拖拽移动事件"""
                 try:
                     mime_data = event.mimeData()
-                    if (mime_data.hasUrls() or mime_data.hasText() or 
-                        mime_data.hasFormat("text/uri-list") or 
+                    if (mime_data.hasUrls() or mime_data.hasText() or
+                        mime_data.hasFormat("text/uri-list") or
                         mime_data.hasFormat("text/plain")):
                         event.acceptProposedAction()
                     else:
@@ -288,12 +343,12 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
                 except Exception as e:
                     print(f"Error in dragMoveEvent: {e}")
                     event.ignore()
-            
+
             def dropEvent(self, event: QDropEvent):
                 """拖拽释放事件"""
                 try:
                     mime_data = event.mimeData()
-                    
+
                     # 处理 Houdini 节点拖拽
                     try:
                         import hou
@@ -310,7 +365,7 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
                         pass
                     except Exception:
                         pass
-                    
+
                     # 处理文件拖拽
                     files = []
                     if mime_data.hasUrls():
@@ -319,12 +374,12 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
                                 file_path = url.toLocalFile()
                                 if os.path.exists(file_path):
                                     files.append(file_path)
-                    
+
                     if files:
                         self._sendDropData(json.dumps(files))
                         event.acceptProposedAction()
                         return
-                    
+
                     # 处理文本拖拽
                     if mime_data.hasText():
                         text = mime_data.text()
@@ -332,13 +387,13 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
                             self._sendDropData(text)
                             event.acceptProposedAction()
                             return
-                    
+
                     event.ignore()
-                    
+
                 except Exception as e:
                     print(f"Error in dropEvent: {e}")
                     event.ignore()
-            
+
             def _sendDropData(self, data: str):
                 """发送拖拽数据到前端"""
                 try:
@@ -351,13 +406,13 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
                     """)
                 except Exception as e:
                     print(f"Error sending drop data: {e}")
-        
+
         # 设置容器
         container = WebContainer(web_view, window)
         container._profile = profile  # 生命周期
         if window is not None:
             window.setCentralWidget(container)
-        
+
         # 创建并注册 API 对象
         api_parent = window if window is not None else container
         api = CherryStudioAPI(api_parent)
@@ -439,6 +494,13 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
         _settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
         _settings.setAttribute(QWebEngineSettings.WebAttribute.AllowRunningInsecureContent, True)
         _settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptCanAccessClipboard, True)
+        # 禁用 WebSecurity 以允许 file:// 加载 blob:file:// 等资源
+        # 即使有 --disable-web-security 标志，Qt 内部设置也可能需要显式禁用
+        try:
+            # WebSecurityEnabled 属性可能在旧版本 PySide6 中不可用或名称不同，加 try-except
+            _settings.setAttribute(QWebEngineSettings.WebAttribute.WebSecurityEnabled, False)
+        except AttributeError:
+            pass
         print(f"LocalStorageEnabled: {_settings.testAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled)}")
         print(f"LocalContentCanAccessRemoteUrls: {_settings.testAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls)}")
 
@@ -449,7 +511,17 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
             print("[WindowManager] Qt API registered to backend qt_bridge")
         except Exception as e:
             print(f"[WindowManager] Failed to register Qt API to qt_bridge: {e}")
-        
+
+        # ─── Selection Service (划词助手) ─────────────────────────────────────
+        try:
+            from ..services.selection_service import SelectionService
+            _sel_svc = SelectionService.instance()
+            _sel_svc.set_backend_url(backend_url or "")
+            _sel_svc.set_theme(theme)
+            print("[WindowManager] SelectionService initialized (will start when enabled by user)")
+        except Exception as _sel_err:
+            print(f"[WindowManager] SelectionService init failed (non-fatal): {_sel_err}")
+
         # 安装事件过滤器以处理拖拽
         if window:
             class DragFilter(QObject):
@@ -476,9 +548,9 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
                                 # 1. 前端实现拖拽区域（-webkit-app-region: drag）- 这在 Electron 中有效，但在 Qt WebEngine 中无效。
                                 # 2. 前端 JS 监听 mousedown，判断是否在标题栏，调用 window.qt.api.startDrag()。
                                 pass
-                        
+
                     return False
-            
+
             # 使用 JS 通信方式实现拖拽（更可靠）
             # 我们需要在 API 中添加 startDrag 方法，并在前端标题栏 mousedown 时调用
             pass
@@ -505,24 +577,24 @@ console.error('[Cherry] Backend URL:', window.__CHERRY_BACKEND_URL, 'Session:', 
         early_fix_script.setSourceCode(get_early_logger_fix_script())
         early_fix_script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
         early_fix_script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
-        early_fix_script.setRunsOnSubFrames(True)
-        
+        early_fix_script.setRunsOnSubFrames(False)
+
         # 2. 主 Electron API 脚本
         electron_api_script = QWebEngineScript()
         electron_api_script.setName("electron-api")
         electron_api_script.setSourceCode(get_electron_api_script(theme))
         electron_api_script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
         electron_api_script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
-        electron_api_script.setRunsOnSubFrames(True)
-        
+        electron_api_script.setRunsOnSubFrames(False)
+
         # 3. Post-load 脚本（使用 DocumentReady 注入）
         post_load_script = QWebEngineScript()
         post_load_script.setName("post-load-fix")
         post_load_script.setSourceCode(get_post_load_fix_script())
         post_load_script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
         post_load_script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentReady)
-        post_load_script.setRunsOnSubFrames(True)
-        
+        post_load_script.setRunsOnSubFrames(False)
+
         if page:
             page.scripts().insert(session_inject_script)
             print(f"会话信息脚本已注入 (backend={backend_url}, session={session_id[:8] if session_id else 'none'}...)")
@@ -532,18 +604,18 @@ console.error('[Cherry] Backend URL:', window.__CHERRY_BACKEND_URL, 'Session:', 
             print("Electron API脚本已注入")
             page.scripts().insert(post_load_script)
             print("Post-load脚本已注入 (DocumentReady)")
-            
+
             # 调试：列出所有已注入的脚本
             all_scripts = page.scripts().toList()
             print(f"总共注入了 {len(all_scripts)} 个脚本")
-        
+
         # 监听窗口标题变化
         def on_title_changed(title):
             print(f"窗口标题变化: {title}")
-        
+
         if window is not None:
             window.windowTitleChanged.connect(on_title_changed)
-        
+
         # 设置页面加载回调
         def on_load_finished(ok):
             if ok:
@@ -553,10 +625,10 @@ console.error('[Cherry] Backend URL:', window.__CHERRY_BACKEND_URL, 'Session:', 
                 # 所有脚本都通过 QWebEngineScript.insert() 注入
             else:
                 print("页面加载失败")
-        
+
         if page:
             page.loadFinished.connect(on_load_finished)
-        
+
         # 加载 URL
         if load_url.startswith("http"):
             web_view.load(QUrl(load_url))
@@ -564,7 +636,7 @@ console.error('[Cherry] Backend URL:', window.__CHERRY_BACKEND_URL, 'Session:', 
             if not os.path.isabs(load_url):
                 load_url = os.path.abspath(load_url)
             web_view.load(QUrl.fromLocalFile(load_url))
-        
+
         # 防止 Python GC 回收
         holder = window if window is not None else container
         holder._webview_ref = web_view

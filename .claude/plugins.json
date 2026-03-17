@@ -1,0 +1,737 @@
+{
+  "version": 1,
+  "lastUpdated": 1773717049467,
+  "plugins": [
+    {
+      "filename": "code-review.md",
+      "type": "command",
+      "metadata": {
+        "sourcePath": "code-review.md",
+        "filename": "code-review.md",
+        "name": "code-review",
+        "description": "Code review a pull request",
+        "allowed_tools": [
+          "Bash(gh issue view:*)",
+          "Bash(gh search:*)",
+          "Bash(gh issue list:*)",
+          "Bash(gh pr comment:*)",
+          "Bash(gh pr diff:*)",
+          "Bash(gh pr view:*)",
+          "Bash(gh pr list:*)",
+          "mcp__github_inline_comment__create_inline_comment"
+        ],
+        "category": "plugins",
+        "type": "command",
+        "size": 7297,
+        "contentHash": "2b0837c5ec0b2e75f8ba4565bdafd76fa916b0dc146608c5733af7ba5802012c",
+        "installedAt": 1773716742146,
+        "updatedAt": 1773716742146,
+        "packageName": "code-review",
+        "packageVersion": "1.0.0"
+      }
+    },
+    {
+      "filename": "code-reviewer.md",
+      "type": "agent",
+      "metadata": {
+        "sourcePath": "code-reviewer.md",
+        "filename": "code-reviewer.md",
+        "name": "code-reviewer",
+        "description": "Use this agent when you need to review code for adherence to project guidelines, style guides, and best practices. This agent should be used proactively after writing or modifying code, especially before committing changes or creating pull requests. It will check for style violations, potential issues, and ensure code follows the established patterns in CLAUDE.md. Also the agent needs to know which files to focus on for the review. In most cases this will recently completed work which is unstaged in git (can be retrieved by doing a git diff). However there can be cases where this is different, make sure to specify this as the agent input when calling the agent. \\n\\nExamples:\\n<example>\\nContext: The user has just implemented a new feature with several TypeScript files.\\nuser: \"I've added the new authentication feature. Can you check if everything looks good?\"\\nassistant: \"I'll use the Task tool to launch the code-reviewer agent to review your recent changes.\"\\n<commentary>\\nSince the user has completed a feature and wants validation, use the code-reviewer agent to ensure the code meets project standards.\\n</commentary>\\n</example>\\n<example>\\nContext: The assistant has just written a new utility function.\\nuser: \"Please create a function to validate email addresses\"\\nassistant: \"Here's the email validation function:\"\\n<function call omitted for brevity>\\nassistant: \"Now I'll use the Task tool to launch the code-reviewer agent to review this implementation.\"\\n<commentary>\\nProactively use the code-reviewer agent after writing new code to catch issues early.\\n</commentary>\\n</example>\\n<example>\\nContext: The user is about to create a PR.\\nuser: \"I think I'm ready to create a PR for this feature\"\\nassistant: \"Before creating the PR, I'll use the Task tool to launch the code-reviewer agent to ensure all code meets our standards.\"\\n<commentary>\\nProactively review code before PR creation to avoid review comments and iterations.\\n</commentary>\\n</example>",
+        "category": "plugins",
+        "type": "agent",
+        "size": 3985,
+        "contentHash": "533b9967ca21b7e9572236935cada4bfd03d7dd362cb2e680a2d13aa0d699232",
+        "installedAt": 1773716757392,
+        "updatedAt": 1773716757392,
+        "packageName": "pr-review-toolkit",
+        "packageVersion": "1.0.0"
+      }
+    },
+    {
+      "filename": "code-simplifier.md",
+      "type": "agent",
+      "metadata": {
+        "sourcePath": "code-simplifier.md",
+        "filename": "code-simplifier.md",
+        "name": "code-simplifier",
+        "description": "Use this agent when code has been written or modified and needs to be simplified for clarity, consistency, and maintainability while preserving all functionality. This agent should be triggered automatically after completing a coding task or writing a logical chunk of code. It simplifies code by following project best practices while retaining all functionality. The agent focuses only on recently modified code unless instructed otherwise.\\n\\nExamples:\\n\\n<example>",
+        "category": "plugins",
+        "type": "agent",
+        "size": 5230,
+        "contentHash": "da129a12e959b059a7605d093fbc4f8710755ebf0c914ebc3102b5f78831ead1",
+        "installedAt": 1773716757470,
+        "updatedAt": 1773716757470,
+        "packageName": "pr-review-toolkit",
+        "packageVersion": "1.0.0"
+      }
+    },
+    {
+      "filename": "comment-analyzer.md",
+      "type": "agent",
+      "metadata": {
+        "sourcePath": "comment-analyzer.md",
+        "filename": "comment-analyzer.md",
+        "name": "comment-analyzer",
+        "description": "Use this agent when you need to analyze code comments for accuracy, completeness, and long-term maintainability. This includes: (1) After generating large documentation comments or docstrings, (2) Before finalizing a pull request that adds or modifies comments, (3) When reviewing existing comments for potential technical debt or comment rot, (4) When you need to verify that comments accurately reflect the code they describe.\\n\\n<example>\\nContext: The user is working on a pull request that adds several documentation comments to functions.\\nuser: \"I've added documentation to these functions. Can you check if the comments are accurate?\"\\nassistant: \"I'll use the comment-analyzer agent to thoroughly review all the comments in this pull request for accuracy and completeness.\"\\n<commentary>\\nSince the user has added documentation comments and wants them checked, use the comment-analyzer agent to verify their accuracy against the actual code.\\n</commentary>\\n</example>\\n\\n<example>\\nContext: The user just asked to generate comprehensive documentation for a complex function.\\nuser: \"Add detailed documentation for this authentication handler function\"\\nassistant: \"I've added the documentation. Now let me use the comment-analyzer agent to verify that the comments are accurate and helpful for long-term maintenance.\"\\n<commentary>\\nAfter generating large documentation comments, proactively use the comment-analyzer to ensure quality.\\n</commentary>\\n</example>\\n\\n<example>\\nContext: The user is preparing to create a pull request with multiple code changes and comments.\\nuser: \"I think we're ready to create the PR now\"\\nassistant: \"Before creating the pull request, let me use the comment-analyzer agent to review all the comments we've added or modified to ensure they're accurate and won't create technical debt.\"\\n<commentary>\\nBefore finalizing a PR, use the comment-analyzer to review all comment changes.\\n</commentary>\\n</example>",
+        "category": "plugins",
+        "type": "agent",
+        "size": 5725,
+        "contentHash": "da0540c507e42a7f66df0b09f81f3c9d3b246620a8f2be4e84b85b97f7b4e2f5",
+        "installedAt": 1773716757480,
+        "updatedAt": 1773716757480,
+        "packageName": "pr-review-toolkit",
+        "packageVersion": "1.0.0"
+      }
+    },
+    {
+      "filename": "pr-test-analyzer.md",
+      "type": "agent",
+      "metadata": {
+        "sourcePath": "pr-test-analyzer.md",
+        "filename": "pr-test-analyzer.md",
+        "name": "pr-test-analyzer",
+        "description": "Use this agent when you need to review a pull request for test coverage quality and completeness. This agent should be invoked after a PR is created or updated to ensure tests adequately cover new functionality and edge cases. Examples:\\n\\n<example>\\nContext: Daisy has just created a pull request with new functionality.\\nuser: \"I've created the PR. Can you check if the tests are thorough?\"\\nassistant: \"I'll use the pr-test-analyzer agent to review the test coverage and identify any critical gaps.\"\\n<commentary>\\nSince Daisy is asking about test thoroughness in a PR, use the Task tool to launch the pr-test-analyzer agent.\\n</commentary>\\n</example>\\n\\n<example>\\nContext: A pull request has been updated with new code changes.\\nuser: \"The PR is ready for review - I added the new validation logic we discussed\"\\nassistant: \"Let me analyze the PR to ensure the tests adequately cover the new validation logic and edge cases.\"\\n<commentary>\\nThe PR has new functionality that needs test coverage analysis, so use the pr-test-analyzer agent.\\n</commentary>\\n</example>\\n\\n<example>\\nContext: Reviewing PR feedback before marking as ready.\\nuser: \"Before I mark this PR as ready, can you double-check the test coverage?\"\\nassistant: \"I'll use the pr-test-analyzer agent to thoroughly review the test coverage and identify any critical gaps before you mark it ready.\"\\n<commentary>\\nDaisy wants a final test coverage check before marking PR ready, use the pr-test-analyzer agent.\\n</commentary>\\n</example>",
+        "category": "plugins",
+        "type": "agent",
+        "size": 4985,
+        "contentHash": "d369fd3946a814bb7a9d4f32e971722fe259e301878986bc6312d6f6c56014a8",
+        "installedAt": 1773716757491,
+        "updatedAt": 1773716757491,
+        "packageName": "pr-review-toolkit",
+        "packageVersion": "1.0.0"
+      }
+    },
+    {
+      "filename": "silent-failure-hunter.md",
+      "type": "agent",
+      "metadata": {
+        "sourcePath": "silent-failure-hunter.md",
+        "filename": "silent-failure-hunter.md",
+        "name": "silent-failure-hunter",
+        "description": "Use this agent when reviewing code changes in a pull request to identify silent failures, inadequate error handling, and inappropriate fallback behavior. This agent should be invoked proactively after completing a logical chunk of work that involves error handling, catch blocks, fallback logic, or any code that could potentially suppress errors. Examples:\\n\\n<example>\\nContext: Daisy has just finished implementing a new feature that fetches data from an API with fallback behavior.\\nDaisy: \"I've added error handling to the API client. Can you review it?\"\\nAssistant: \"Let me use the silent-failure-hunter agent to thoroughly examine the error handling in your changes.\"\\n<Task tool invocation to launch silent-failure-hunter agent>\\n</example>\\n\\n<example>\\nContext: Daisy has created a PR with changes that include try-catch blocks.\\nDaisy: \"Please review PR #1234\"\\nAssistant: \"I'll use the silent-failure-hunter agent to check for any silent failures or inadequate error handling in this PR.\"\\n<Task tool invocation to launch silent-failure-hunter agent>\\n</example>\\n\\n<example>\\nContext: Daisy has just refactored error handling code.\\nDaisy: \"I've updated the error handling in the authentication module\"\\nAssistant: \"Let me proactively use the silent-failure-hunter agent to ensure the error handling changes don't introduce silent failures.\"\\n<Task tool invocation to launch silent-failure-hunter agent>\\n</example>",
+        "category": "plugins",
+        "type": "agent",
+        "size": 7807,
+        "contentHash": "fa9b0daec5a267e7e66435cc48b3328301fc9f70c3af259fe248881327a1babc",
+        "installedAt": 1773716757502,
+        "updatedAt": 1773716757502,
+        "packageName": "pr-review-toolkit",
+        "packageVersion": "1.0.0"
+      }
+    },
+    {
+      "filename": "type-design-analyzer.md",
+      "type": "agent",
+      "metadata": {
+        "sourcePath": "type-design-analyzer.md",
+        "filename": "type-design-analyzer.md",
+        "name": "type-design-analyzer",
+        "description": "Use this agent when you need expert analysis of type design in your codebase. Specifically use it: (1) when introducing a new type to ensure it follows best practices for encapsulation and invariant expression, (2) during pull request creation to review all types being added, (3) when refactoring existing types to improve their design quality. The agent will provide both qualitative feedback and quantitative ratings on encapsulation, invariant expression, usefulness, and enforcement.\\n\\n<example>\\nContext: Daisy is writing code that introduces a new UserAccount type and wants to ensure it has well-designed invariants.\\nuser: \"I've just created a new UserAccount type that handles user authentication and permissions\"\\nassistant: \"I'll use the type-design-analyzer agent to review the UserAccount type design\"\\n<commentary>\\nSince a new type is being introduced, use the type-design-analyzer to ensure it has strong invariants and proper encapsulation.\\n</commentary>\\n</example>\\n\\n<example>\\nContext: Daisy is creating a pull request and wants to review all newly added types.\\nuser: \"I'm about to create a PR with several new data model types\"\\nassistant: \"Let me use the type-design-analyzer agent to review all the types being added in this PR\"\\n<commentary>\\nDuring PR creation with new types, use the type-design-analyzer to review their design quality.\\n</commentary>\\n</example>",
+        "category": "plugins",
+        "type": "agent",
+        "size": 5368,
+        "contentHash": "ad160052fd3b45395d531d5e97e54940a1b660443fb513db3feb613848b6e72d",
+        "installedAt": 1773716757512,
+        "updatedAt": 1773716757512,
+        "packageName": "pr-review-toolkit",
+        "packageVersion": "1.0.0"
+      }
+    },
+    {
+      "filename": "backend-architect.md",
+      "type": "agent",
+      "metadata": {
+        "sourcePath": "backend-architect.md",
+        "filename": "backend-architect.md",
+        "name": "backend-architect",
+        "description": "Expert backend architect specializing in scalable API design, microservices architecture, and distributed systems. Masters REST/GraphQL/gRPC APIs, event-driven architectures, service mesh patterns, and modern backend frameworks. Handles service boundary definition, inter-service communication, resilience patterns, and observability. Use PROACTIVELY when creating new backend services or APIs.",
+        "category": "plugins",
+        "type": "agent",
+        "size": 18487,
+        "contentHash": "c20b1655d78b06c41496ceb479412bcdd24a7099540c33f7b2599ff7279f0bee",
+        "installedAt": 1773716767225,
+        "updatedAt": 1773716767225,
+        "packageName": "backend-development",
+        "packageVersion": "1.3.1"
+      }
+    },
+    {
+      "filename": "event-sourcing-architect.md",
+      "type": "agent",
+      "metadata": {
+        "sourcePath": "event-sourcing-architect.md",
+        "filename": "event-sourcing-architect.md",
+        "name": "event-sourcing-architect",
+        "description": "Expert in event sourcing, CQRS, and event-driven architecture patterns. Masters event store design, projection building, saga orchestration, and eventual consistency patterns. Use PROACTIVELY for event-sourced systems, audit trail requirements, or complex domain modeling with temporal queries.",
+        "category": "plugins",
+        "type": "agent",
+        "size": 1907,
+        "contentHash": "ab409389783fdd01b1d9adcffe84b510bfb44566b329c9a0a3806e89c23c672b",
+        "installedAt": 1773716767296,
+        "updatedAt": 1773716767296,
+        "packageName": "backend-development",
+        "packageVersion": "1.3.1"
+      }
+    },
+    {
+      "filename": "temporal-python-testing",
+      "type": "skill",
+      "metadata": {
+        "sourcePath": "temporal-python-testing",
+        "filename": "temporal-python-testing",
+        "name": "temporal-python-testing",
+        "description": "Test Temporal workflows with pytest, time-skipping, and mocking strategies. Covers unit testing, integration testing, replay testing, and local development setup. Use when implementing Temporal workflow tests or debugging test failures.",
+        "category": "plugins",
+        "type": "skill",
+        "size": 53056,
+        "contentHash": "67bf8c966ddb5cb628cc215361d415cf1959333859f98c42681a1295ab21b830",
+        "installedAt": 1773716767356,
+        "updatedAt": 1773716767356,
+        "packageName": "backend-development",
+        "packageVersion": "1.3.1"
+      }
+    },
+    {
+      "filename": "workflow-orchestration-patterns",
+      "type": "skill",
+      "metadata": {
+        "sourcePath": "workflow-orchestration-patterns",
+        "filename": "workflow-orchestration-patterns",
+        "name": "workflow-orchestration-patterns",
+        "description": "Design durable workflows with Temporal for distributed systems. Covers workflow vs activity separation, saga patterns, state management, and determinism constraints. Use when building long-running processes, distributed transactions, or microservice orchestration.",
+        "category": "plugins",
+        "type": "skill",
+        "size": 9480,
+        "contentHash": "9be993443c36f02ca07fe0200d91f1e9c0ed76565da0bf9b3532330fa1c7546b",
+        "installedAt": 1773716767418,
+        "updatedAt": 1773716767418,
+        "packageName": "backend-development",
+        "packageVersion": "1.3.1"
+      }
+    },
+    {
+      "filename": "javascript-testing-patterns",
+      "type": "skill",
+      "metadata": {
+        "sourcePath": "javascript-testing-patterns",
+        "filename": "javascript-testing-patterns",
+        "name": "javascript-testing-patterns",
+        "description": "Implement comprehensive testing strategies using Jest, Vitest, and Testing Library for unit tests, integration tests, and end-to-end testing with mocking, fixtures, and test-driven development. Use when writing JavaScript/TypeScript tests, setting up test infrastructure, or implementing TDD/BDD workflows.",
+        "category": "plugins",
+        "type": "skill",
+        "size": 26755,
+        "contentHash": "2d23d02d9cd6b37d641e5931dabeead101afaf2001b79e4c962a8432a4cde0f0",
+        "installedAt": 1773716772723,
+        "updatedAt": 1773716772723,
+        "packageName": "javascript-typescript",
+        "packageVersion": "1.2.2"
+      }
+    },
+    {
+      "filename": "modern-javascript-patterns",
+      "type": "skill",
+      "metadata": {
+        "sourcePath": "modern-javascript-patterns",
+        "filename": "modern-javascript-patterns",
+        "name": "modern-javascript-patterns",
+        "description": "Master ES6+ features including async/await, destructuring, spread operators, arrow functions, promises, modules, iterators, generators, and functional programming patterns for writing clean, efficient JavaScript code. Use when refactoring legacy code, implementing modern patterns, or optimizing JavaScript applications.",
+        "category": "plugins",
+        "type": "skill",
+        "size": 20740,
+        "contentHash": "9f2ae31e6bd1fdf1d84c3dbf7ed1f158b701d97e2bafa6accd966570778d9f4a",
+        "installedAt": 1773716772853,
+        "updatedAt": 1773716772853,
+        "packageName": "javascript-typescript",
+        "packageVersion": "1.2.2"
+      }
+    },
+    {
+      "filename": "nodejs-backend-patterns",
+      "type": "skill",
+      "metadata": {
+        "sourcePath": "nodejs-backend-patterns",
+        "filename": "nodejs-backend-patterns",
+        "name": "nodejs-backend-patterns",
+        "description": "Build production-ready Node.js backend services with Express/Fastify, implementing middleware patterns, error handling, authentication, database integration, and API design best practices. Use when creating Node.js servers, REST APIs, GraphQL backends, or microservices architectures.",
+        "category": "plugins",
+        "type": "skill",
+        "size": 25779,
+        "contentHash": "35608a95074420e0d5d2663dc6bb7a4f09d6df40665ffae48d8b6c4142ba7650",
+        "installedAt": 1773716772863,
+        "updatedAt": 1773716772863,
+        "packageName": "javascript-typescript",
+        "packageVersion": "1.2.2"
+      }
+    },
+    {
+      "filename": "typescript-advanced-types",
+      "type": "skill",
+      "metadata": {
+        "sourcePath": "typescript-advanced-types",
+        "filename": "typescript-advanced-types",
+        "name": "typescript-advanced-types",
+        "description": "Master TypeScript's advanced type system including generics, conditional types, mapped types, template literals, and utility types for building type-safe applications. Use when implementing complex type logic, creating reusable type utilities, or ensuring compile-time type safety in TypeScript projects.",
+        "category": "plugins",
+        "type": "skill",
+        "size": 17523,
+        "contentHash": "34103d414363e6563e46d31d5ea5900b1b6f030e5bc16ae60e0f5bf3d990c533",
+        "installedAt": 1773716772872,
+        "updatedAt": 1773716772872,
+        "packageName": "javascript-typescript",
+        "packageVersion": "1.2.2"
+      }
+    },
+    {
+      "filename": "clean_gone.md",
+      "type": "command",
+      "metadata": {
+        "sourcePath": "clean_gone.md",
+        "filename": "clean_gone.md",
+        "name": "clean_gone",
+        "description": "Cleans up all git branches marked as [gone] (branches that have been deleted on the remote but still exist locally), including removing associated worktrees.",
+        "category": "plugins",
+        "type": "command",
+        "size": 1865,
+        "contentHash": "4f07fa2ccf4f81a69c6455bdc563b53a3d3b20aea6e4e82337c52b172ee02344",
+        "installedAt": 1773716783367,
+        "updatedAt": 1773716783367,
+        "packageName": "commit-commands",
+        "packageVersion": "1.0.0"
+      }
+    },
+    {
+      "filename": "commit-push-pr.md",
+      "type": "command",
+      "metadata": {
+        "sourcePath": "commit-push-pr.md",
+        "filename": "commit-push-pr.md",
+        "name": "commit-push-pr",
+        "description": "Commit, push, and open a PR",
+        "allowed_tools": [
+          "Bash(git checkout --branch:*)",
+          "Bash(git add:*)",
+          "Bash(git status:*)",
+          "Bash(git push:*)",
+          "Bash(git commit:*)",
+          "Bash(gh pr create:*)"
+        ],
+        "category": "plugins",
+        "type": "command",
+        "size": 796,
+        "contentHash": "3bc3d171939149cbbef141cbced553dce6ba6f97dac4a764f4ef1e055c35064d",
+        "installedAt": 1773716783378,
+        "updatedAt": 1773716783378,
+        "packageName": "commit-commands",
+        "packageVersion": "1.0.0"
+      }
+    },
+    {
+      "filename": "commit.md",
+      "type": "command",
+      "metadata": {
+        "sourcePath": "commit.md",
+        "filename": "commit.md",
+        "name": "commit",
+        "description": "Create a git commit",
+        "allowed_tools": [
+          "Bash(git add:*)",
+          "Bash(git status:*)",
+          "Bash(git commit:*)"
+        ],
+        "category": "plugins",
+        "type": "command",
+        "size": 624,
+        "contentHash": "d1acbc2bf0c50164f48d6bda872de6a343cd9390954ce903c3431c3119e7f8c4",
+        "installedAt": 1773716783387,
+        "updatedAt": 1773716783387,
+        "packageName": "commit-commands",
+        "packageVersion": "1.0.0"
+      }
+    },
+    {
+      "filename": "ui-designer.md",
+      "type": "agent",
+      "metadata": {
+        "sourcePath": "ui-designer.md",
+        "filename": "ui-designer.md",
+        "name": "ui-designer",
+        "tools": [
+          "Write",
+          "Read",
+          "MultiEdit",
+          "WebSearch",
+          "WebFetch"
+        ],
+        "category": "plugins",
+        "type": "agent",
+        "size": 8111,
+        "contentHash": "6b09b19f2442c24b2474846b3e65e6ddc5a750c38fa9dff32b8873e7d0127410",
+        "installedAt": 1773716789084,
+        "updatedAt": 1773716789084,
+        "packageName": "ui-designer",
+        "packageVersion": "1.0.0"
+      }
+    },
+    {
+      "filename": "do",
+      "type": "skill",
+      "metadata": {
+        "sourcePath": "do",
+        "filename": "do",
+        "name": "do",
+        "description": "Execute a phased implementation plan using subagents. Use when asked to execute, run, or carry out a plan — especially one created by make-plan.",
+        "category": "plugins",
+        "type": "skill",
+        "size": 2094,
+        "contentHash": "d231147bd02e41323cf6ac2e19215d354a89e834d06130480edf434acc786e09",
+        "installedAt": 1773716814849,
+        "updatedAt": 1773716814849,
+        "packageName": "claude-mem",
+        "packageVersion": "10.5.6"
+      }
+    },
+    {
+      "filename": "make-plan",
+      "type": "skill",
+      "metadata": {
+        "sourcePath": "make-plan",
+        "filename": "make-plan",
+        "name": "make-plan",
+        "description": "Create a detailed, phased implementation plan with documentation discovery. Use when asked to plan a feature, task, or multi-step implementation — especially before executing with do.",
+        "category": "plugins",
+        "type": "skill",
+        "size": 2882,
+        "contentHash": "f4d65e519bf805e803388e516ae70dc770d7865b7da882dea7ca65ae741a5cad",
+        "installedAt": 1773716814859,
+        "updatedAt": 1773716814859,
+        "packageName": "claude-mem",
+        "packageVersion": "10.5.6"
+      }
+    },
+    {
+      "filename": "mem-search",
+      "type": "skill",
+      "metadata": {
+        "sourcePath": "mem-search",
+        "filename": "mem-search",
+        "name": "mem-search",
+        "description": "Search claude-mem's persistent cross-session memory database. Use when user asks \"did we already solve this?\", \"how did we do X last time?\", or needs work from previous sessions.",
+        "category": "plugins",
+        "type": "skill",
+        "size": 3963,
+        "contentHash": "55773c5caca98aed5250393e514f6ac1da0685de888ee7365489926499ea0e24",
+        "installedAt": 1773716814870,
+        "updatedAt": 1773716814870,
+        "packageName": "claude-mem",
+        "packageVersion": "10.5.6"
+      }
+    },
+    {
+      "filename": "smart-explore",
+      "type": "skill",
+      "metadata": {
+        "sourcePath": "smart-explore",
+        "filename": "smart-explore",
+        "name": "smart-explore",
+        "description": "Token-optimized structural code search using tree-sitter AST parsing. Use instead of reading full files when you need to understand code structure, find functions, or explore a codebase efficiently.",
+        "category": "plugins",
+        "type": "skill",
+        "size": 6711,
+        "contentHash": "de73dfaaa38e7ebcf9321cb41d12fc6d79426d3f83e51980bae58b34ce618cf3",
+        "installedAt": 1773716814880,
+        "updatedAt": 1773716814880,
+        "packageName": "claude-mem",
+        "packageVersion": "10.5.6"
+      }
+    },
+    {
+      "filename": "async-python-patterns",
+      "type": "skill",
+      "metadata": {
+        "sourcePath": "async-python-patterns",
+        "filename": "async-python-patterns",
+        "name": "async-python-patterns",
+        "description": "Master Python asyncio, concurrent programming, and async/await patterns for high-performance applications. Use when building async APIs, concurrent systems, or I/O-bound applications requiring non-blocking operations.",
+        "category": "plugins",
+        "type": "skill",
+        "size": 20528,
+        "contentHash": "0a535cef4c19af71a33550c8208170f241192e6d25afdfcfe23fe554c24df826",
+        "installedAt": 1773717049146,
+        "updatedAt": 1773717049146,
+        "packageName": "python-development",
+        "packageVersion": "1.2.2"
+      }
+    },
+    {
+      "filename": "python-anti-patterns",
+      "type": "skill",
+      "metadata": {
+        "sourcePath": "python-anti-patterns",
+        "filename": "python-anti-patterns",
+        "name": "python-anti-patterns",
+        "description": "Common Python anti-patterns to avoid. Use as a checklist when reviewing code, before finalizing implementations, or when debugging issues that might stem from known bad practices.",
+        "category": "plugins",
+        "type": "skill",
+        "size": 8471,
+        "contentHash": "fab7d21b8b4ee83c72c8902944cdb5b558a9ea90f42949973f131525ea250d9b",
+        "installedAt": 1773717049292,
+        "updatedAt": 1773717049292,
+        "packageName": "python-development",
+        "packageVersion": "1.2.2"
+      }
+    },
+    {
+      "filename": "python-background-jobs",
+      "type": "skill",
+      "metadata": {
+        "sourcePath": "python-background-jobs",
+        "filename": "python-background-jobs",
+        "name": "python-background-jobs",
+        "description": "Python background job patterns including task queues, workers, and event-driven architecture. Use when implementing async task processing, job queues, long-running operations, or decoupling work from request/response cycles.",
+        "category": "plugins",
+        "type": "skill",
+        "size": 10852,
+        "contentHash": "a3c4e8bffed4ea424c55ce00f8f9b38bd195481f01823335082efb5e84ff9b3c",
+        "installedAt": 1773717049321,
+        "updatedAt": 1773717049321,
+        "packageName": "python-development",
+        "packageVersion": "1.2.2"
+      }
+    },
+    {
+      "filename": "python-code-style",
+      "type": "skill",
+      "metadata": {
+        "sourcePath": "python-code-style",
+        "filename": "python-code-style",
+        "name": "python-code-style",
+        "description": "Python code style, linting, formatting, naming conventions, and documentation standards. Use when writing new code, reviewing style, configuring linters, writing docstrings, or establishing project standards.",
+        "category": "plugins",
+        "type": "skill",
+        "size": 8330,
+        "contentHash": "10d398b884fe285dfeb098c6e2ed563e1083ea4522c3c4ef34e5e725129b493b",
+        "installedAt": 1773717049343,
+        "updatedAt": 1773717049343,
+        "packageName": "python-development",
+        "packageVersion": "1.2.2"
+      }
+    },
+    {
+      "filename": "python-configuration",
+      "type": "skill",
+      "metadata": {
+        "sourcePath": "python-configuration",
+        "filename": "python-configuration",
+        "name": "python-configuration",
+        "description": "Python configuration management via environment variables and typed settings. Use when externalizing config, setting up pydantic-settings, managing secrets, or implementing environment-specific behavior.",
+        "category": "plugins",
+        "type": "skill",
+        "size": 10347,
+        "contentHash": "da322a384ae23bb38eaf29a7b2a9cbc02ab9f723831a53324323642ebd529be8",
+        "installedAt": 1773717049358,
+        "updatedAt": 1773717049358,
+        "packageName": "python-development",
+        "packageVersion": "1.2.2"
+      }
+    },
+    {
+      "filename": "python-design-patterns",
+      "type": "skill",
+      "metadata": {
+        "sourcePath": "python-design-patterns",
+        "filename": "python-design-patterns",
+        "name": "python-design-patterns",
+        "description": "Python design patterns including KISS, Separation of Concerns, Single Responsibility, and composition over inheritance. Use when making architecture decisions, refactoring code structure, or evaluating when abstractions are appropriate.",
+        "category": "plugins",
+        "type": "skill",
+        "size": 13480,
+        "contentHash": "79b07fc5a409020d4318d9c65b6eb669929ee192be46fd2a2a5f04a552c3dd6b",
+        "installedAt": 1773717049369,
+        "updatedAt": 1773717049369,
+        "packageName": "python-development",
+        "packageVersion": "1.2.2"
+      }
+    },
+    {
+      "filename": "python-error-handling",
+      "type": "skill",
+      "metadata": {
+        "sourcePath": "python-error-handling",
+        "filename": "python-error-handling",
+        "name": "python-error-handling",
+        "description": "Python error handling patterns including input validation, exception hierarchies, and partial failure handling. Use when implementing validation logic, designing exception strategies, handling batch processing failures, or building robust APIs.",
+        "category": "plugins",
+        "type": "skill",
+        "size": 11062,
+        "contentHash": "b0e2fe5e20bb5e002e29ef73e0272bc16138e6eac646eb8b5c0f8ec02cdebe5f",
+        "installedAt": 1773717049378,
+        "updatedAt": 1773717049378,
+        "packageName": "python-development",
+        "packageVersion": "1.2.2"
+      }
+    },
+    {
+      "filename": "python-observability",
+      "type": "skill",
+      "metadata": {
+        "sourcePath": "python-observability",
+        "filename": "python-observability",
+        "name": "python-observability",
+        "description": "Python observability patterns including structured logging, metrics, and distributed tracing. Use when adding logging, implementing metrics collection, setting up tracing, or debugging production systems.",
+        "category": "plugins",
+        "type": "skill",
+        "size": 12280,
+        "contentHash": "44c13cd8a0ab12ad87e17c644132a56c2fb36d47387269d25c1c14d1e41cfcbb",
+        "installedAt": 1773717049386,
+        "updatedAt": 1773717049386,
+        "packageName": "python-development",
+        "packageVersion": "1.2.2"
+      }
+    },
+    {
+      "filename": "python-packaging",
+      "type": "skill",
+      "metadata": {
+        "sourcePath": "python-packaging",
+        "filename": "python-packaging",
+        "name": "python-packaging",
+        "description": "Create distributable Python packages with proper project structure, setup.py/pyproject.toml, and publishing to PyPI. Use when packaging Python libraries, creating CLI tools, or distributing Python code.",
+        "category": "plugins",
+        "type": "skill",
+        "size": 18339,
+        "contentHash": "c0ce07dcd35737742623046678952a221ea5f226c30afcc12117769ed8ac737c",
+        "installedAt": 1773717049397,
+        "updatedAt": 1773717049397,
+        "packageName": "python-development",
+        "packageVersion": "1.2.2"
+      }
+    },
+    {
+      "filename": "python-performance-optimization",
+      "type": "skill",
+      "metadata": {
+        "sourcePath": "python-performance-optimization",
+        "filename": "python-performance-optimization",
+        "name": "python-performance-optimization",
+        "description": "Profile and optimize Python code using cProfile, memory profilers, and performance best practices. Use when debugging slow Python code, optimizing bottlenecks, or improving application performance.",
+        "category": "plugins",
+        "type": "skill",
+        "size": 21346,
+        "contentHash": "835732902d1ce80b3fda372fd25a0ade7a6d129bc8213a57d4064590f39f0f6b",
+        "installedAt": 1773717049406,
+        "updatedAt": 1773717049406,
+        "packageName": "python-development",
+        "packageVersion": "1.2.2"
+      }
+    },
+    {
+      "filename": "python-project-structure",
+      "type": "skill",
+      "metadata": {
+        "sourcePath": "python-project-structure",
+        "filename": "python-project-structure",
+        "name": "python-project-structure",
+        "description": "Python project organization, module architecture, and public API design. Use when setting up new projects, organizing modules, defining public interfaces with __all__, or planning directory layouts.",
+        "category": "plugins",
+        "type": "skill",
+        "size": 6979,
+        "contentHash": "75b768010a2c7cc0f636b2d36ee1212e579cea80ded30edd45eff4a34cbf8052",
+        "installedAt": 1773717049415,
+        "updatedAt": 1773717049415,
+        "packageName": "python-development",
+        "packageVersion": "1.2.2"
+      }
+    },
+    {
+      "filename": "python-resilience",
+      "type": "skill",
+      "metadata": {
+        "sourcePath": "python-resilience",
+        "filename": "python-resilience",
+        "name": "python-resilience",
+        "description": "Python resilience patterns including automatic retries, exponential backoff, timeouts, and fault-tolerant decorators. Use when adding retry logic, implementing timeouts, building fault-tolerant services, or handling transient failures.",
+        "category": "plugins",
+        "type": "skill",
+        "size": 11535,
+        "contentHash": "98e79f7c73394609bf6ddd9b8066c3bbb797fcb12ce5697e2d4fc56238135991",
+        "installedAt": 1773717049425,
+        "updatedAt": 1773717049425,
+        "packageName": "python-development",
+        "packageVersion": "1.2.2"
+      }
+    },
+    {
+      "filename": "python-resource-management",
+      "type": "skill",
+      "metadata": {
+        "sourcePath": "python-resource-management",
+        "filename": "python-resource-management",
+        "name": "python-resource-management",
+        "description": "Python resource management with context managers, cleanup patterns, and streaming. Use when managing connections, file handles, implementing cleanup logic, or building streaming responses with accumulated state.",
+        "category": "plugins",
+        "type": "skill",
+        "size": 11897,
+        "contentHash": "471c68bb3de501b32ea54b7b9a320d1f37351432b139afd5e52c1f8c724be36e",
+        "installedAt": 1773717049434,
+        "updatedAt": 1773717049434,
+        "packageName": "python-development",
+        "packageVersion": "1.2.2"
+      }
+    },
+    {
+      "filename": "python-testing-patterns",
+      "type": "skill",
+      "metadata": {
+        "sourcePath": "python-testing-patterns",
+        "filename": "python-testing-patterns",
+        "name": "python-testing-patterns",
+        "description": "Implement comprehensive testing strategies with pytest, fixtures, mocking, and test-driven development. Use when writing Python tests, setting up test suites, or implementing testing best practices.",
+        "category": "plugins",
+        "type": "skill",
+        "size": 26134,
+        "contentHash": "a2eda8d47e8fff89246f935ff3cb41e17977b6703b88072c4e26a5d9cf19feca",
+        "installedAt": 1773717049445,
+        "updatedAt": 1773717049445,
+        "packageName": "python-development",
+        "packageVersion": "1.2.2"
+      }
+    },
+    {
+      "filename": "python-type-safety",
+      "type": "skill",
+      "metadata": {
+        "sourcePath": "python-type-safety",
+        "filename": "python-type-safety",
+        "name": "python-type-safety",
+        "description": "Python type safety with type hints, generics, protocols, and strict type checking. Use when adding type annotations, implementing generic classes, defining structural interfaces, or configuring mypy/pyright.",
+        "category": "plugins",
+        "type": "skill",
+        "size": 11662,
+        "contentHash": "7273d66fdbdb96bedef562b71697b3b3e499eb080bff679910dc1e1f78568627",
+        "installedAt": 1773717049455,
+        "updatedAt": 1773717049455,
+        "packageName": "python-development",
+        "packageVersion": "1.2.2"
+      }
+    },
+    {
+      "filename": "uv-package-manager",
+      "type": "skill",
+      "metadata": {
+        "sourcePath": "uv-package-manager",
+        "filename": "uv-package-manager",
+        "name": "uv-package-manager",
+        "description": "Master the uv package manager for fast Python dependency management, virtual environments, and modern Python project workflows. Use when setting up Python projects, managing dependencies, or optimizing Python development workflows with uv.",
+        "category": "plugins",
+        "type": "skill",
+        "size": 15999,
+        "contentHash": "6c2d6711f989117736b25091921d72b61431320840695de4236f62f929e9274b",
+        "installedAt": 1773717049465,
+        "updatedAt": 1773717049465,
+        "packageName": "python-development",
+        "packageVersion": "1.2.2"
+      }
+    }
+  ]
+}

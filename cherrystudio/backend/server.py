@@ -10,12 +10,14 @@ Cherry Studio Backend HTTP Server
 """
 
 import json
+import mimetypes
+import os
 import threading
 import traceback
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
-from urllib.parse import urlparse, parse_qs
-from typing import Callable, Dict, Any
+from urllib.parse import urlparse, parse_qs, unquote
+from typing import Callable, Dict, Any, Optional
 
 from ..utils.logger import network_logger
 
@@ -33,6 +35,9 @@ _CONNECTION_ERRORS = (
 # ─── 路由注册表 ────────────────────────────────────────────────────────────────
 
 _routes: Dict[str, Dict[str, Callable]] = {}  # {path: {method: handler}}
+_prefix_routes: Dict[str, Dict[str, Callable]] = {}  # {prefix: {method: handler}}
+
+STREAMING_HANDLED = object()
 
 
 def route(path: str, methods=("GET", "POST")):
@@ -40,6 +45,15 @@ def route(path: str, methods=("GET", "POST")):
     def decorator(fn):
         for method in methods:
             _routes.setdefault(path, {})[method.upper()] = fn
+        return fn
+    return decorator
+
+
+def prefix_route(prefix: str, methods=("GET", "POST")):
+    """前缀路由装饰器，匹配以 prefix 开头的所有路径"""
+    def decorator(fn):
+        for method in methods:
+            _prefix_routes.setdefault(prefix, {})[method.upper()] = fn
         return fn
     return decorator
 
@@ -58,7 +72,15 @@ def _import_routes():
         memory,
         models,
         qt_bridge,
+        selection,
+        chat,
+        openclaw,
+        plugins,
+        generate_3d,
     )
+
+    from ..plugins import load_all_plugins
+    load_all_plugins()
 
 
 # ─── 请求处理器 ────────────────────────────────────────────────────────────────
@@ -103,16 +125,28 @@ class _Handler(BaseHTTPRequestHandler):
         if "/api/v1/mcp" in path:
             _log(f"[BackendServer] Dispatching MCP request: {method} {path}")
 
+        # 静态文件：非 /api/ 且非前缀路由路径的 GET 请求尝试从 static_dir 提供
+        is_prefix_route = any(
+            path == pfx or path.startswith(pfx + "/")
+            for pfx in _prefix_routes
+        )
+        if method == "GET" and not path.startswith("/api/") and not is_prefix_route and self.server_instance:
+            static_dir = self.server_instance.static_dir
+            if static_dir:
+                if self._try_serve_static(static_dir, path):
+                    return
+
         # 读取请求体
         body = {}
+        raw_bytes = None
         try:
             content_length = int(self.headers.get("Content-Length", 0))
             if content_length > 0:
-                raw = self.rfile.read(content_length)
+                raw_bytes = self.rfile.read(content_length)
                 try:
-                    body = json.loads(raw.decode("utf-8"))
+                    body = json.loads(raw_bytes.decode("utf-8"))
                 except Exception:
-                    body = {"_raw": raw.decode("utf-8", errors="replace")}
+                    body = {"_raw": raw_bytes.decode("utf-8", errors="replace")}
         except _CONNECTION_ERRORS:
             return  # 读请求体时断开，直接放弃
 
@@ -121,18 +155,33 @@ class _Handler(BaseHTTPRequestHandler):
             "path": path,
             "query": query,
             "body": body,
+            "_raw_bytes": raw_bytes,
             "headers": dict(self.headers),
             "session_id": self.headers.get("X-Session-Id", ""),
             "server": self.server_instance,
+            "_handler": self,
         }
 
         handler = _routes.get(path, {}).get(method)
+
+        # 前缀路由匹配（用于反向代理等场景）
+        if handler is None:
+            for pfx, methods_map in _prefix_routes.items():
+                if path == pfx or path.startswith(pfx + "/") or path.startswith(pfx + "?"):
+                    handler = methods_map.get(method)
+                    if handler:
+                        ctx["prefix"] = pfx
+                        ctx["sub_path"] = path[len(pfx):]
+                        break
+
         if handler is None:
             self._safe_json_response(404, {"error": f"Not found: {method} {path}"})
             return
 
         try:
             result = handler(ctx)
+            if result is STREAMING_HANDLED:
+                return
             if result is None:
                 result = {"ok": True}
             self._safe_json_response(200, result)
@@ -142,6 +191,46 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception as e:
             _log(f"[BackendServer] Handler error [{method} {path}]: {e}\n{traceback.format_exc()}")
             self._safe_json_response(500, {"error": str(e)})
+
+    def _try_serve_static(self, static_dir: str, url_path: str) -> bool:
+        """尝试从 static_dir 提供静态文件。返回 True 表示已处理。"""
+        try:
+            # "/" -> "/index.html"
+            if url_path == "/" or url_path == "":
+                url_path = "/index.html"
+
+            rel = unquote(url_path).lstrip("/")
+            file_path = os.path.normpath(os.path.join(static_dir, rel))
+
+            # 安全检查：防止路径穿越
+            if not file_path.startswith(os.path.normpath(static_dir)):
+                return False
+
+            if not os.path.isfile(file_path):
+                return False
+
+            mime_type, _ = mimetypes.guess_type(file_path)
+            if mime_type is None:
+                mime_type = "application/octet-stream"
+
+            with open(file_path, "rb") as f:
+                data = f.read()
+
+            self.send_response(200)
+            self._send_cors()
+            self.send_header("Content-Type", mime_type)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "public, max-age=3600")
+            self.end_headers()
+            self.wfile.write(data)
+            self.wfile.flush()
+            return True
+
+        except _CONNECTION_ERRORS:
+            return True  # 客户端断开，视为已处理
+        except Exception as e:
+            _log(f"[BackendServer] Static file error: {e}")
+            return False
 
     def do_GET(self):
         self._dispatch("GET")
@@ -191,6 +280,7 @@ class BackendHTTPServer:
     def __init__(self, host: str = "127.0.0.1", port: int = 0):
         self.host = host
         self.port = port
+        self.static_dir: Optional[str] = None
         self._server: _ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
         self._started = threading.Event()
@@ -225,6 +315,23 @@ class BackendHTTPServer:
         self._thread.start()
         self._started.wait(timeout=5)
         _log(f"[BackendServer] Listening on http://{self.host}:{self.port} (threaded)")
+
+        # 后台预热活跃的 MCP 服务器，使 hub search 首次调用时已有缓存
+        try:
+            _log("[BackendServer] Importing auto_start_active_servers...")
+            from .routes.mcp import auto_start_active_servers
+            _log("[BackendServer] Launching MCP warmup thread...")
+            warmup_thread = threading.Thread(
+                target=auto_start_active_servers,
+                name="mcp-warmup",
+                daemon=True,
+            )
+            warmup_thread.start()
+            _log(f"[BackendServer] MCP warmup thread started (tid={warmup_thread.ident})")
+        except Exception as e:
+            import traceback
+            _log(f"[BackendServer] MCP warmup failed to start: {e}\n{traceback.format_exc()}")
+
         return self.port
 
     def _serve(self):

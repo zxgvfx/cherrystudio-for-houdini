@@ -24,6 +24,9 @@ pymupdf>=1.24.0
 # 图像处理（OCR 前压缩 PNG→JPEG 以减小请求体积）
 Pillow>=10.0.0
 
+# 系统级全局鼠标/键盘钩子（划词助手需要）
+pynput>=1.7.6
+
 # 如果需要使用 Houdini 集成功能，需要 hou 模块
 # 注意：hou 模块通常由 Houdini 自带，无需单独安装
 

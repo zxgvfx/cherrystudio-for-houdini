@@ -32,9 +32,11 @@ if __name__ == "__main__":
     if _project_root not in sys.path:
         sys.path.insert(0, _project_root)
     from cherrystudio.backend.server import BackendHTTPServer
+    from cherrystudio.backend.process_manager import pm as _pm
     from cherrystudio.utils.logger import network_logger
 else:
     from .server import BackendHTTPServer
+    from .process_manager import pm as _pm
     from ..utils.logger import network_logger
 
 # 防御性兜底：若上方某条 import 分支漏写（旧文件遗留），用 print 替代避免 NameError
@@ -134,6 +136,7 @@ class BackendService:
             _log(f"[BackendService] Already running on port {self._server.port}")
             return self._server.port
 
+        _pm.init()
         self._server = BackendHTTPServer(host=host, port=port)
         actual_port = self._server.start()
         _write_port_file(actual_port, host)
@@ -145,6 +148,7 @@ class BackendService:
         独立进程模式：阻塞运行直到收到 Ctrl+C / SIGTERM。
         适合用 uv run / python 直接运行此文件。
         """
+        _pm.init()
         self._server = BackendHTTPServer(host=host, port=port)
         actual_port = self._server.start()
         _write_port_file(actual_port, host)
@@ -174,6 +178,7 @@ class BackendService:
             _shutdown(None, None)
 
     def stop(self):
+        _pm.cleanup_all()
         if self._server:
             self._server.stop()
             self._server = None

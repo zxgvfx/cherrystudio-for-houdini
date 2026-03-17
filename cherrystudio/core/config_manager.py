@@ -115,6 +115,9 @@ class ConfigManager:
             "centralizedMcpServers": centralized.get("mcpServers", []),
             "centralizedWebSearchProviders": centralized.get("webSearchProviders", []),
             "defaultModels": default_models,  # 添加 defaultModels 支持
+            "pythonVenv": centralized.get("pythonVenv"),
+            "developerUsers": centralized.get("developerUsers", []),
+            "developerPasswordHash": centralized.get("developerPasswordHash"),
             "userModels": [], 
             "userMcpServers": [],
             "version": "1.0.0",

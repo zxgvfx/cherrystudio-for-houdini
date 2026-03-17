@@ -16,7 +16,7 @@ import base64
 from pathlib import Path
 from typing import Any
 
-from ..server import route
+from ..server import route, STREAMING_HANDLED
 from ...utils.logger import network_logger
 
 _log = network_logger
@@ -723,6 +723,67 @@ def write_with_id(ctx: dict) -> Any:
     with open(dest, "w", encoding="utf-8") as f:
         f.write(content)
     return {"ok": True}
+
+
+@route("/api/v1/files/serve", methods=["GET"])
+def file_serve(ctx: dict) -> Any:
+    """
+    直接以原始二进制格式提供文件（用于 PDF 预览等场景）。
+    GET /api/v1/files/serve?name=<filename>
+    filename 是 APP_DATA_DIR 下的文件名（如 uuid.pdf）。
+    """
+    handler = ctx["_handler"]
+    query = ctx.get("query", {})
+    name = query.get("name", [""])[0] if isinstance(query.get("name"), list) else query.get("name", "")
+    if not name:
+        handler.send_response(400)
+        handler.send_header("Content-Type", "text/plain")
+        handler.end_headers()
+        handler.wfile.write(b"missing 'name' query parameter")
+        return STREAMING_HANDLED
+
+    safe_name = os.path.basename(name)
+    file_path = os.path.join(_APP_DATA_DIR, safe_name)
+
+    if not os.path.isfile(file_path):
+        handler.send_response(404)
+        handler.send_header("Content-Type", "text/plain")
+        handler.end_headers()
+        handler.wfile.write(b"file not found")
+        return STREAMING_HANDLED
+
+    _EXTRA_MIME = {
+        ".glb": "model/gltf-binary",
+        ".gltf": "model/gltf+json",
+        ".usdz": "model/vnd.usdz+zip",
+        ".obj": "text/plain",
+        ".ply": "application/octet-stream",
+    }
+    ext = os.path.splitext(file_path)[1].lower()
+    mime_type = _EXTRA_MIME.get(ext)
+    if not mime_type:
+        mime_type, _ = mimetypes.guess_type(file_path)
+    if not mime_type:
+        mime_type = "application/octet-stream"
+
+    try:
+        with open(file_path, "rb") as f:
+            data = f.read()
+        handler.send_response(200)
+        handler.send_header("Content-Type", mime_type)
+        handler.send_header("Content-Length", str(len(data)))
+        handler.send_header("Content-Disposition", f'inline; filename="{safe_name}"')
+        handler.send_header("Access-Control-Allow-Origin", "*")
+        handler.end_headers()
+        handler.wfile.write(data)
+        handler.wfile.flush()
+    except Exception as e:
+        _log(f"[files/serve] error: {e}")
+        handler.send_response(500)
+        handler.send_header("Content-Type", "text/plain")
+        handler.end_headers()
+        handler.wfile.write(str(e).encode("utf-8"))
+    return STREAMING_HANDLED
 
 
 # ─── 二进制工具安装（uv / bun）──────────────────────────────────────────────────

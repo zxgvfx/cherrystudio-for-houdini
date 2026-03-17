@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Selection Toolbar</title>
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  scrollbar-width: none;
+}
+body::-webkit-scrollbar { display: none; }
+
+:root {
+  /* Basic Colors */
+  --color-error: #f44336;
+  --selection-toolbar-color-error: var(--color-error);
+  --color-primary: #4a90d9;
+  --selection-toolbar-color-primary: var(--color-primary);
+
+  /* Toolbar */
+  --selection-toolbar-height: 36px;
+  --selection-toolbar-font-size: 14px;
+
+  --selection-toolbar-logo-display: flex;
+  --selection-toolbar-logo-size: 22px;
+  --selection-toolbar-logo-border-width: 0.5px 0 0.5px 0.5px;
+  --selection-toolbar-logo-border-style: solid;
+  --selection-toolbar-logo-border-color: rgba(255, 255, 255, 0.2);
+  --selection-toolbar-logo-margin: 0;
+  --selection-toolbar-logo-padding: 0 6px 0 8px;
+  --selection-toolbar-logo-background: transparent;
+
+  --selection-toolbar-padding: 0;
+  --selection-toolbar-margin: 2px 3px 5px 3px;
+
+  --selection-toolbar-border-radius: 10px;
+  --selection-toolbar-border: none;
+  --selection-toolbar-box-shadow: 0px 2px 3px rgba(50, 50, 50, 0.3);
+  --selection-toolbar-background: rgba(20, 20, 20, 0.95);
+
+  /* Buttons */
+  --selection-toolbar-buttons-border-width: 0.5px 0.5px 0.5px 0;
+  --selection-toolbar-buttons-border-style: solid;
+  --selection-toolbar-buttons-border-color: rgba(255, 255, 255, 0.2);
+  --selection-toolbar-buttons-border-radius: 0 var(--selection-toolbar-border-radius) var(--selection-toolbar-border-radius) 0;
+
+  --selection-toolbar-button-icon-size: 16px;
+  --selection-toolbar-button-text-margin: 0 0 0 0;
+  --selection-toolbar-button-margin: 0;
+  --selection-toolbar-button-padding: 0 8px;
+  --selection-toolbar-button-last-padding: 0 12px 0 8px;
+  --selection-toolbar-button-border-radius: 0;
+  --selection-toolbar-button-border: none;
+  --selection-toolbar-button-box-shadow: none;
+
+  --selection-toolbar-button-text-color: rgba(255, 255, 245, 0.9);
+  --selection-toolbar-button-icon-color: var(--selection-toolbar-button-text-color);
+  --selection-toolbar-button-bgcolor: transparent;
+  --selection-toolbar-button-bgcolor-hover: #333333;
+}
+
+[data-theme="light"] {
+  --selection-toolbar-border: none;
+  --selection-toolbar-box-shadow: 0px 2px 3px rgba(50, 50, 50, 0.1);
+  --selection-toolbar-background: rgba(245, 245, 245, 0.95);
+
+  /* Buttons */
+  --selection-toolbar-buttons-border-color: rgba(0, 0, 0, 0.08);
+  --selection-toolbar-logo-border-color: rgba(0, 0, 0, 0.08);
+
+  --selection-toolbar-button-text-color: rgba(0, 0, 0, 1);
+  --selection-toolbar-button-icon-color: var(--selection-toolbar-button-text-color);
+  --selection-toolbar-button-bgcolor-hover: rgba(0, 0, 0, 0.04);
+}
+
+.container {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: stretch;
+  height: var(--selection-toolbar-height);
+  border-radius: var(--selection-toolbar-border-radius);
+  border: var(--selection-toolbar-border);
+  box-shadow: var(--selection-toolbar-box-shadow);
+  background: var(--selection-toolbar-background);
+  padding: var(--selection-toolbar-padding);
+  margin: var(--selection-toolbar-margin);
+  box-sizing: border-box;
+  overflow: hidden;
+  cursor: grab;
+  animation: toolbar-show 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.1) forwards;
+  opacity: 0;
+  transform: scale(0.92) translateY(4px);
+}
+.container.dragging { cursor: grabbing; }
+
+@keyframes toolbar-show {
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.logo-wrapper {
+  display: var(--selection-toolbar-logo-display);
+  align-items: center;
+  justify-content: center;
+  margin: var(--selection-toolbar-logo-margin);
+  padding: var(--selection-toolbar-logo-padding);
+  background-color: var(--selection-toolbar-logo-background);
+  border-width: var(--selection-toolbar-logo-border-width);
+  border-style: var(--selection-toolbar-logo-border-style);
+  border-color: var(--selection-toolbar-logo-border-color);
+  border-radius: var(--selection-toolbar-border-radius) 0 0 var(--selection-toolbar-border-radius);
+}
+
+.logo {
+  height: var(--selection-toolbar-logo-size);
+  width: var(--selection-toolbar-logo-size);
+  border-radius: 50%;
+  overflow: hidden;
+}
+.logo img { width: 100%; height: 100%; object-fit: cover; }
+
+.action-wrapper {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  background-color: transparent;
+  border-width: var(--selection-toolbar-buttons-border-width);
+  border-style: var(--selection-toolbar-buttons-border-style);
+  border-color: var(--selection-toolbar-buttons-border-color);
+  border-radius: var(--selection-toolbar-buttons-border-radius);
+}
+
+.action-button {
+  height: 100%;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  cursor: pointer;
+  margin: var(--selection-toolbar-button-margin);
+  padding: var(--selection-toolbar-button-padding);
+  background-color: var(--selection-toolbar-button-bgcolor);
+  border-radius: var(--selection-toolbar-button-border-radius);
+  border: var(--selection-toolbar-button-border);
+  box-shadow: var(--selection-toolbar-button-box-shadow);
+  transition: all 0.1s ease-in-out;
+}
+
+.action-button:last-child {
+  border-radius: 0 var(--selection-toolbar-border-radius) var(--selection-toolbar-border-radius) 0;
+  padding: var(--selection-toolbar-button-last-padding);
+}
+
+.action-button:hover {
+  background-color: var(--selection-toolbar-button-bgcolor-hover);
+}
+.action-button:hover .btn-icon, .action-button:hover .btn-title {
+  color: var(--color-primary);
+}
+
+.action-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  height: var(--selection-toolbar-button-icon-size);
+  width: var(--selection-toolbar-button-icon-size);
+}
+
+.btn-icon {
+  width: 100%;
+  height: 100%;
+  color: var(--selection-toolbar-button-icon-color);
+  transition: color 0.1s ease-in-out;
+}
+.btn-icon.success { color: var(--selection-toolbar-color-primary); }
+.btn-icon.fail { color: var(--selection-toolbar-color-error); }
+
+.btn-title {
+  font-size: var(--selection-toolbar-font-size);
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin: var(--selection-toolbar-button-text-margin);
+  color: var(--selection-toolbar-button-text-color);
+  transition: color 0.1s ease-in-out;
+  line-height: 1.1;
+}
+
+.compact .btn-title { display: none; }
+
+/* Icons */
+svg { stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+</style>
+</head>
+<body>
+
+<div class="container" id="toolbar">
+  <div class="logo-wrapper">
+    <div class="logo">
+      <!-- Cherry Logo placeholder -->
+      <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="cg" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#e74c6f"/>
+            <stop offset="100%" stop-color="#d63b5c"/>
+          </linearGradient>
+        </defs>
+        <path d="M52 18 C52 18 56 4 68 6 C74 7 76 14 72 18 C68 22 58 22 52 18Z" fill="#4a8c3f"/>
+        <path d="M48 18 C48 18 44 4 32 6 C26 7 24 14 28 18 C32 22 42 22 48 18Z" fill="#5a9e4e"/>
+        <path d="M50 20 C50 20 49 10 50 6" stroke="#4a8c3f" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+        <circle cx="36" cy="52" r="22" fill="url(#cg)"/>
+        <circle cx="64" cy="52" r="22" fill="url(#cg)"/>
+        <ellipse cx="30" cy="46" rx="5" ry="6" fill="rgba(255,255,255,0.25)"/>
+        <ellipse cx="58" cy="46" rx="5" ry="6" fill="rgba(255,255,255,0.25)"/>
+      </svg>
+    </div>
+  </div>
+  <div class="action-wrapper">
+    <!-- Translate -->
+    <div class="action-button" data-action="translate" title="翻译">
+      <div class="action-icon">
+        <svg viewBox="0 0 24 24" class="btn-icon"><path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/></svg>
+      </div>
+      <span class="btn-title">翻译</span>
+    </div>
+    <!-- Explain -->
+    <div class="action-button" data-action="explain" title="解释">
+      <div class="action-icon">
+        <svg viewBox="0 0 24 24" class="btn-icon"><path d="M12 17h.01"/><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M9.1 9a3 3 0 0 1 5.82 1c0 2-3 3-3 3"/></svg>
+      </div>
+      <span class="btn-title">解释</span>
+    </div>
+    <!-- Summary -->
+    <div class="action-button" data-action="summary" title="总结">
+      <div class="action-icon">
+        <svg viewBox="0 0 24 24" class="btn-icon"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 8h8"/><path d="M7 12h10"/><path d="M7 16h6"/></svg>
+      </div>
+      <span class="btn-title">总结</span>
+    </div>
+    <!-- Copy -->
+    <div class="action-button" data-action="copy" title="复制">
+      <div class="action-icon">
+        <svg viewBox="0 0 24 24" class="btn-icon default"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/><path d="M16 4h2a2 2 0 0 1 2 2v4"/><path d="M21 14H11"/><path d="m15 10-4 4 4 4"/></svg>
+        <svg viewBox="0 0 24 24" class="btn-icon success" style="display:none"><path d="M20 6 9 17l-5-5"/></svg>
+      </div>
+      <span class="btn-title">复制</span>
+    </div>
+    <!-- Quote -->
+    <div class="action-button" data-action="quote" title="引用">
+      <div class="action-icon">
+        <svg viewBox="0 0 24 24" class="btn-icon"><path d="M3 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2H4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V20c0 1 0 1 1 1z"/><path d="M15 21c3 0 7-1 7-8V5c0-1.25-.757-2.017-2-2h-4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2h.75c0 2.25.25 4-2.75 4v3c0 1 0 1 1 1z"/></svg>
+      </div>
+      <span class="btn-title">引用</span>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  var toolbar = document.getElementById('toolbar');
+  var copyTimer = null;
+
+  document.querySelectorAll('.action-button').forEach(function(btn) {
+    btn.addEventListener('click', function(e) {
+      var action = this.dataset.action;
+      if (action === 'copy') {
+        handleCopy(this);
+      }
+      if (window.qtBridge && window.qtBridge.onAction) {
+        window.qtBridge.onAction(action);
+      }
+    });
+  });
+
+  function handleCopy(btn) {
+    var defaultIcon = btn.querySelector('.btn-icon.default');
+    var successIcon = btn.querySelector('.btn-icon.success');
+    
+    if (defaultIcon && successIcon) {
+      defaultIcon.style.display = 'none';
+      successIcon.style.display = 'block';
+      
+      if (copyTimer) clearTimeout(copyTimer);
+      copyTimer = setTimeout(function() {
+        defaultIcon.style.display = 'block';
+        successIcon.style.display = 'none';
+        copyTimer = null;
+      }, 2000);
+    }
+  }
+
+  window.setTheme = function(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+  };
+
+  window.setCompact = function(isCompact) {
+    if (isCompact) {
+      toolbar.classList.add('compact');
+    } else {
+      toolbar.classList.remove('compact');
+    }
+    reportSize();
+  };
+
+  function reportSize() {
+    requestAnimationFrame(function() {
+      var rect = toolbar.getBoundingClientRect();
+      // Add margin buffer (left 3 + right 3 + extra 10 for shadow/safety)
+      var w = Math.ceil(rect.width) + 16; 
+      // Add margin buffer (top 2 + bottom 5 + extra 10)
+      var h = Math.ceil(rect.height) + 17;
+      if (window.qtBridge && window.qtBridge.onReady) {
+        window.qtBridge.onReady(w, h);
+      }
+    });
+  }
+
+  window.addEventListener('load', function() {
+    reportSize();
+  });
+
+  // ── Drag support ──
+  var _dragging = false;
+  var _dragStartScreenX = 0;
+  var _dragStartScreenY = 0;
+
+  toolbar.addEventListener('mousedown', function(e) {
+    if (e.target.closest('.action-button')) return;
+    if (e.button !== 0) return;
+    _dragging = true;
+    _dragStartScreenX = e.screenX;
+    _dragStartScreenY = e.screenY;
+    toolbar.classList.add('dragging');
+    if (window.qtBridge && window.qtBridge.onDragStart) {
+      window.qtBridge.onDragStart(e.screenX, e.screenY);
+    }
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', function(e) {
+    if (!_dragging) return;
+    if (window.qtBridge && window.qtBridge.onDragMove) {
+      window.qtBridge.onDragMove(e.screenX, e.screenY);
+    }
+  });
+
+  document.addEventListener('mouseup', function(e) {
+    if (!_dragging) return;
+    _dragging = false;
+    toolbar.classList.remove('dragging');
+  });
+})();
+</script>
+</body>
+</html>

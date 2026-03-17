@@ -1,0 +1,27 @@
+---
+description: Frontend must never access external network directly; all external requests go through backend proxy
+globs: web/src/renderer/src/**/*.{ts,tsx}
+alwaysApply: false
+---
+
+# Backend Proxy Rule
+
+This project runs inside a Qt WebEngine environment where the frontend has NO direct external network access. All HTTP requests to external URLs must go through the backend proxy.
+
+## Endpoints
+
+- **Images**: `POST /api/v1/proxy/image` — use `proxyImageUrl()` from `@renderer/utils/proxyImage` or the `useProxiedImage` hook
+- **General HTTP**: `POST /api/v1/network/fetch` — for arbitrary GET/POST to external services
+- **Search**: `POST /api/v1/network/search` — for search engine queries
+
+## Rules
+
+1. NEVER use `fetch()`, `XMLHttpRequest`, or `<img src="https://...">` to access external URLs directly
+2. For external images, use `proxyImageUrl()` or `useProxiedImage` hook — they handle 3-layer caching (memory, IndexedDB, backend disk)
+3. For non-image HTTP requests, use the `/api/v1/network/fetch` backend endpoint
+4. Localhost URLs (`127.0.0.1`, `localhost`) are exempt — they reach the local backend server
+5. `data:` and `blob:` URLs are exempt — they are already local
+
+## Detecting External URLs
+
+Use `isExternalUrl()` from `@renderer/utils/proxyImage` to check if a URL needs proxying.

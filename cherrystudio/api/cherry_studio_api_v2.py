@@ -887,6 +887,19 @@ class CherryStudioAPI(QObject):
             return json.dumps({"error": "invalid json"})
         return self._svc_str("/api/v1/mcp/call-dcc", call)
 
+    @staticmethod
+    def _sync_dir_impl(src: "Path", dst: "Path"):
+        """增量同步：将 src 下缺失或更新的文件/子目录复制到 dst"""
+        dst.mkdir(parents=True, exist_ok=True)
+        for item in src.iterdir():
+            target = dst / item.name
+            if item.is_dir():
+                CherryStudioAPI._sync_dir_impl(item, target)
+            elif item.is_file():
+                if not target.exists() or item.stat().st_mtime > target.stat().st_mtime:
+                    import shutil as _shutil
+                    _shutil.copy2(str(item), str(target))
+
     @Slot(result=str)
     def mcpGetInstallInfo(self) -> str:
         """
@@ -903,15 +916,14 @@ class CherryStudioAPI(QObject):
             local_bin_dir = Path(os.path.expanduser("~")) / ".cherrystudio" / "bin"
             j_bin_dir = Path("J:/vfxtools/piplineTD/models/packages/bin")
 
-            # 本地目录不存在时，尝试从 J 盘一次性复制
-            if not local_bin_dir.exists() and j_bin_dir.exists():
+            # 从 J 盘同步到本地（增量：只复制缺失或更新的文件/子目录）
+            if j_bin_dir.exists():
                 try:
-                    _log(f"[mcpGetInstallInfo] 本地 bin 目录不存在，从 {j_bin_dir} 复制...")
                     local_bin_dir.parent.mkdir(parents=True, exist_ok=True)
-                    _shutil.copytree(str(j_bin_dir), str(local_bin_dir))
-                    _log("[mcpGetInstallInfo] 复制完成")
+                    self._sync_dir_impl(j_bin_dir, local_bin_dir)
+                    _log(f"[mcpGetInstallInfo] 同步完成: {j_bin_dir} -> {local_bin_dir}")
                 except Exception as _ce:
-                    _log(f"[mcpGetInstallInfo] 复制失败: {_ce}")
+                    _log(f"[mcpGetInstallInfo] 同步失败: {_ce}")
 
             # 确定实际 bin 目录
             env_bin = os.environ.get("CHERRY_STUDIO_BIN_DIR")

@@ -16,7 +16,7 @@ def get_electron_api_script(theme: str = 'light') -> str:
         完整的 JavaScript 代码字符串
     """
     # 前端通过 HTTP 直连后端，window.qt.api 使用 Proxy 自动路由到 /api/v1/qt/invoke
-    
+
     script = f"""
     //  使用 console.error 因为在 hython 中只有它会输出到终端
     
@@ -1095,7 +1095,21 @@ def get_electron_api_script(theme: str = 'light') -> str:
     
     // ========== DEBUG: 全局错误捕获 ==========
     window.addEventListener('error', function(e) {{
-        console.error('[Qt] Global error:', e.message, e.filename, e.lineno);
+        let errorDetails = e.message;
+        try {{
+            if (e.error) {{
+                if (e.error.stack) {{
+                    errorDetails += '\\nStack: ' + e.error.stack;
+                }} else if (typeof e.error === 'object') {{
+                    errorDetails += ' ' + JSON.stringify(e.error);
+                }} else {{
+                    errorDetails += ' ' + String(e.error);
+                }}
+            }}
+        }} catch (err) {{
+            errorDetails += ' [Error serializing details]';
+        }}
+        console.error('[Qt] Global error:', errorDetails, e.filename, e.lineno);
     }});
     
     // ========== DEBUG: 检查 Qt Bridge 状态 ==========
@@ -1546,22 +1560,36 @@ def get_electron_api_script(theme: str = 'light') -> str:
     }}
     
     // 提供 window.api.network 接口（全部直连后端 HTTP）
-    window.api.network = window.api.network || {{
-        fetchProxy: async function(config) {{ 
-            try {{
-                const _bu = window.__CHERRY_BACKEND_URL || '';
-                if (!_bu) return {{ error: 'No backend URL' }};
-                const resp = await fetch(_bu + '/api/v1/network/fetch', {{
-                    method: 'POST',
-                    headers: {{ 'Content-Type': 'application/json', 'X-Session-Id': window.__CHERRY_SESSION_ID || '' }},
-                    body: JSON.stringify(config || {{}})
-                }});
-                return await resp.json();
-            }} catch(e) {{ 
-                return {{ error: String(e) }} 
-            }} 
-        }},
-        ollamaListModels: async function(options) {{ 
+    window.api.network = window.api.network || {{}};
+    window.api.network.fetchProxy = window.api.network.fetchProxy || async function(config) {{
+        try {{
+            const _bu = window.__CHERRY_BACKEND_URL || '';
+            if (!_bu) return {{ error: 'No backend URL' }};
+            const resp = await fetch(_bu + '/api/v1/network/fetch', {{
+                method: 'POST',
+                headers: {{ 'Content-Type': 'application/json', 'X-Session-Id': window.__CHERRY_SESSION_ID || '' }},
+                body: JSON.stringify(config || {{}})
+            }});
+            return await resp.json();
+        }} catch(e) {{
+            return {{ error: String(e) }}
+        }}
+    }};
+    window.api.network.search = async function(config) {{
+        try {{
+            const _bu = window.__CHERRY_BACKEND_URL || '';
+            if (!_bu) return {{ success: false, error: 'No backend URL' }};
+            const resp = await fetch(_bu + '/api/v1/network/search', {{
+                method: 'POST',
+                headers: {{ 'Content-Type': 'application/json', 'X-Session-Id': window.__CHERRY_SESSION_ID || '' }},
+                body: JSON.stringify(config || {{}})
+            }});
+            return await resp.json();
+        }} catch(e) {{
+            return {{ success: false, error: String(e) }}
+        }}
+    }};
+    window.api.network.ollamaListModels = window.api.network.ollamaListModels || async function(options) {{ 
             try {{ 
                 const _bu = window.__CHERRY_BACKEND_URL || '';
                 if (!_bu) return {{ object: 'list', data: [] }};
@@ -1571,12 +1599,12 @@ def get_electron_api_script(theme: str = 'light') -> str:
                     body: JSON.stringify(options || {{}})
                 }});
                 return await resp.json();
-            }} catch(e) {{ 
-                console.error('[Qt] ollamaListModels error:', e);
-                return {{ object: 'list', data: [] }} 
-            }} 
-        }},
-        ollamaPullModel: async function(options) {{ 
+        }} catch(e) {{ 
+            console.error('[Qt] ollamaListModels error:', e);
+            return {{ object: 'list', data: [] }} 
+        }} 
+    }};
+    window.api.network.ollamaPullModel = window.api.network.ollamaPullModel || async function(options) {{ 
             try {{ 
                 const _bu = window.__CHERRY_BACKEND_URL || '';
                 if (!_bu) return {{ success: false, error: 'No backend URL' }};
@@ -1586,11 +1614,11 @@ def get_electron_api_script(theme: str = 'light') -> str:
                     body: JSON.stringify(options || {{}})
                 }});
                 return await resp.json();
-            }} catch(e) {{ 
-                return {{ success: false, error: String(e) }} 
-            }} 
-        }},
-        modelList: async function(config) {{ 
+        }} catch(e) {{ 
+            return {{ success: false, error: String(e) }} 
+        }} 
+    }};
+    window.api.network.modelList = window.api.network.modelList || async function(config) {{ 
             try {{ 
                 const _bu = window.__CHERRY_BACKEND_URL || '';
                 if (!_bu) return {{ object: 'list', data: [] }};
@@ -1600,10 +1628,9 @@ def get_electron_api_script(theme: str = 'light') -> str:
                     body: JSON.stringify(config || {{}})
                 }});
                 return await resp.json();
-            }} catch(e) {{ 
-                return {{ object: 'list', data: [] }} 
-            }} 
-        }}
+        }} catch(e) {{ 
+            return {{ object: 'list', data: [] }} 
+        }} 
     }};
     
     // ── window.qt.network.fetchProxy ───────────────────────────────────────────
@@ -1974,9 +2001,76 @@ def get_electron_api_script(theme: str = 'light') -> str:
         }}
     }})();
     
+    // ─── 划词助手（Selection Assistant）─── 后端 API 代理，实际 UI 由 Qt 窗口实现 ───
+    (function initSelectionProxy() {{
+        const _backendUrl = window.__CHERRY_BACKEND_URL || '';
+
+        function _post(path, body) {{
+            if (!_backendUrl) return Promise.resolve({{}});
+            return fetch(_backendUrl + path, {{
+                method: 'POST',
+                headers: {{ 'Content-Type': 'application/json' }},
+                body: JSON.stringify(body || {{}})
+            }}).then(r => r.json()).catch(() => ({{}}));
+        }}
+
+        if (!window.api) window.api = {{}};
+        window.api.selection = {{
+            setEnabled: (enabled) => _post('/api/v1/selection/set-enabled', {{ enabled: !!enabled }}),
+            setTriggerMode: (mode) => _post('/api/v1/selection/set-trigger-mode', {{ mode }}),
+            hideToolbar: () => Promise.resolve(),
+            writeToClipboard: (text) => {{ navigator.clipboard.writeText(text); return Promise.resolve(); }},
+            determineToolbarSize: () => Promise.resolve(),
+            setFollowToolbar: () => Promise.resolve(),
+            setRemeberWinSize: () => Promise.resolve(),
+            setFilterMode: (mode) => _post('/api/v1/selection/set-filter-mode', {{ mode }}),
+            setFilterList: (list) => _post('/api/v1/selection/set-filter-mode', {{ filterList: list }}),
+            processAction: () => Promise.resolve(),
+            closeActionWindow: () => Promise.resolve(),
+            minimizeActionWindow: () => Promise.resolve(),
+            pinActionWindow: () => Promise.resolve(),
+            resizeActionWindow: () => Promise.resolve()
+        }};
+
+        // Sync enabled/triggerMode/defaultModel from Redux to backend when settings change
+        let _lastEnabled = null;
+        let _lastTriggerMode = null;
+        let _lastModelId = null;
+        function syncToBackend() {{
+            try {{
+                const store = window.store;
+                if (!store) return;
+                const state = store.getState();
+                const ss = state && state.selectionStore;
+                if (!ss) return;
+                const enabled = !!ss.selectionEnabled;
+                const mode = ss.triggerMode || 'selected';
+                if (_lastEnabled !== enabled) {{
+                    _lastEnabled = enabled;
+                    _post('/api/v1/selection/set-enabled', {{ enabled }});
+                }}
+                if (_lastTriggerMode !== mode) {{
+                    _lastTriggerMode = mode;
+                    _post('/api/v1/selection/set-trigger-mode', {{ mode }});
+                }}
+                // Sync default model
+                const llm = state && state.llm;
+                const modelId = (llm && llm.defaultModel && llm.defaultModel.id) || '';
+                if (modelId && _lastModelId !== modelId) {{
+                    _lastModelId = modelId;
+                    _post('/api/v1/selection/set-model', {{ model: modelId }});
+                }}
+            }} catch(e) {{}}
+        }}
+        setInterval(syncToBackend, 3000);
+        setTimeout(syncToBackend, 2000);
+
+        console.log('[Qt] Selection assistant proxy initialized (backend API)');
+    }})();
+
     console.log('[Qt] Electron API 注入完成');
     """
-    
+
     polyfill_js = """
     // Polyfill 现代 Array/TypedArray 新增方法，避免 Qt 老版本 JS 引擎报错
     (function() {
@@ -2050,9 +2144,9 @@ def get_electron_api_script(theme: str = 'light') -> str:
         }
     })();
     """.strip("\n")
-    
+
     script = script.replace("    // 在 hython 环境中手动持久化 localStorage", polyfill_js + "\n\n    // 在 hython 环境中手动持久化 localStorage", 1)
-    
+
     extra_runtime_patch = """
 (function () {
     try {
@@ -2314,6 +2408,109 @@ def get_electron_api_script(theme: str = 'light') -> str:
         };
         knowledgeApi.rerank = asyncList;
         knowledgeApi.checkQuota = asyncTrue;
+        
+        // OpenClaw API — 通过后端 HTTP 检测 Node.js / Git 环境
+        var openclawApi = ensureNamespace('openclaw');
+        var _bu = function () { return window.__CHERRY_BACKEND_URL || ''; };
+        
+        openclawApi.checkInstalled = openclawApi.checkInstalled || function () {
+            return fetch(_bu() + '/api/v1/openclaw/check-installed')
+                .then(function (r) { return r.json(); })
+                .catch(function () { return { installed: false, path: null }; });
+        };
+        openclawApi.checkNodeVersion = openclawApi.checkNodeVersion || function () {
+            return fetch(_bu() + '/api/v1/openclaw/check-node')
+                .then(function (r) { return r.json(); })
+                .catch(function () { return { status: 'not_found' }; });
+        };
+        openclawApi.checkGitAvailable = openclawApi.checkGitAvailable || function () {
+            return fetch(_bu() + '/api/v1/openclaw/check-git')
+                .then(function (r) { return r.json(); })
+                .catch(function () { return { available: false, path: null }; });
+        };
+        openclawApi.getNodeDownloadUrl = openclawApi.getNodeDownloadUrl || function () {
+            return resolved('https://nodejs.org/en/download');
+        };
+        openclawApi.getGitDownloadUrl = openclawApi.getGitDownloadUrl || function () {
+            return resolved('https://git-scm.com/downloads');
+        };
+        openclawApi.install = openclawApi.install || function () {
+            return fetch(_bu() + '/api/v1/openclaw/install', { method: 'POST' })
+                .then(function (r) { return r.json(); })
+                .catch(function (e) { return { success: false, message: String(e) }; });
+        };
+        openclawApi.uninstall = openclawApi.uninstall || function () {
+            return fetch(_bu() + '/api/v1/openclaw/uninstall', { method: 'POST' })
+                .then(function (r) { return r.json(); })
+                .catch(function (e) { return { success: false, message: String(e) }; });
+        };
+        openclawApi.startGateway = openclawApi.startGateway || function (port) {
+            return fetch(_bu() + '/api/v1/openclaw/start-gateway', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ port: port })
+            }).then(function (r) { return r.json(); })
+              .catch(function (e) { return { success: false, message: String(e) }; });
+        };
+        openclawApi.stopGateway = openclawApi.stopGateway || function () {
+            return fetch(_bu() + '/api/v1/openclaw/stop-gateway', { method: 'POST' })
+                .then(function (r) { return r.json(); })
+                .catch(function (e) { return { success: false, message: String(e) }; });
+        };
+        openclawApi.restartGateway = openclawApi.restartGateway || function () {
+            return fetch(_bu() + '/api/v1/openclaw/restart-gateway', { method: 'POST' })
+                .then(function (r) { return r.json(); })
+                .catch(function (e) { return { success: false, message: String(e) }; });
+        };
+        openclawApi.getStatus = openclawApi.getStatus || function () {
+            return fetch(_bu() + '/api/v1/openclaw/get-status')
+                .then(function (r) { return r.json(); })
+                .catch(function () { return { status: 'stopped', port: 0 }; });
+        };
+        openclawApi.checkHealth = openclawApi.checkHealth || function () {
+            return fetch(_bu() + '/api/v1/openclaw/check-health')
+                .then(function (r) { return r.json(); })
+                .catch(function () { return { status: 'unhealthy', gatewayPort: 0 }; });
+        };
+        openclawApi.getDashboardUrl = openclawApi.getDashboardUrl || function () {
+            return fetch(_bu() + '/api/v1/openclaw/get-dashboard-url')
+                .then(function (r) { return r.json(); })
+                .then(function (d) { return d.url || ''; })
+                .catch(function () { return ''; });
+        };
+        openclawApi.syncConfig = openclawApi.syncConfig || function (provider, model) {
+            return fetch(_bu() + '/api/v1/openclaw/sync-config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ provider: provider, model: model })
+            }).then(function (r) { return r.json(); })
+              .catch(function (e) { return { success: false, message: String(e) }; });
+        };
+        openclawApi.getChannels = openclawApi.getChannels || function () {
+            return fetch(_bu() + '/api/v1/openclaw/get-channels')
+                .then(function (r) { return r.json(); })
+                .then(function (d) { return d.channels || []; })
+                .catch(function () { return []; });
+        };
+        
+        // Analytics API (Qt 环境中静默忽略)
+        var analyticsApi = ensureNamespace('analytics');
+        analyticsApi.trackTokenUsage = analyticsApi.trackTokenUsage || function () {
+            return resolved(undefined);
+        };
+        
+        // StoreSync API (Qt 单窗口模式，无需跨窗口同步)
+        var storeSyncApi = ensureNamespace('storeSync');
+        storeSyncApi.subscribe = storeSyncApi.subscribe || function () { return resolved(undefined); };
+        storeSyncApi.unsubscribe = storeSyncApi.unsubscribe || function () { return resolved(undefined); };
+        storeSyncApi.onUpdate = storeSyncApi.onUpdate || function () { return resolved(undefined); };
+        
+        // AgentTools API
+        var agentToolsApi = ensureNamespace('agentTools');
+        agentToolsApi.respondToPermission = agentToolsApi.respondToPermission || function (payload) {
+            console.warn('[Qt] agentTools.respondToPermission called - agent tool approval not supported in Qt runtime');
+            return resolved({ success: false });
+        };
         
         // 强制覆盖 memory API - 确保在 post-load 阶段也正确设置
         var memoryApi = ensureNamespace('memory');
@@ -2843,6 +3040,35 @@ def get_electron_api_script(theme: str = 'light') -> str:
         claudeCodePluginApi.readContent = claudeCodePluginApi.readContent || asyncStub('claudeCodePlugin.readContent', { success: true, data: '' });
         claudeCodePluginApi.writeContent = claudeCodePluginApi.writeContent || asyncTrue;
 
+        var localTransferApi = ensureNamespace('localTransfer');
+        localTransferApi.getState = localTransferApi.getState || function () {
+            return resolved({ services: [], scanning: false, connected: false });
+        };
+        localTransferApi.startScan = localTransferApi.startScan || function () {
+            return resolved({ services: [], scanning: false, connected: false });
+        };
+        localTransferApi.stopScan = localTransferApi.stopScan || function () {
+            return resolved({ services: [], scanning: false, connected: false });
+        };
+        localTransferApi.connect = localTransferApi.connect || function () {
+            return resolved({ success: false });
+        };
+        localTransferApi.disconnect = localTransferApi.disconnect || function () {
+            return resolved(undefined);
+        };
+        localTransferApi.onServicesUpdated = localTransferApi.onServicesUpdated || function () {
+            return function () {};
+        };
+        localTransferApi.onClientEvent = localTransferApi.onClientEvent || function () {
+            return function () {};
+        };
+        localTransferApi.sendFile = localTransferApi.sendFile || function () {
+            return resolved({ success: false });
+        };
+        localTransferApi.cancelTransfer = localTransferApi.cancelTransfer || function () {
+            return resolved(undefined);
+        };
+
         var webSocketApi = ensureNamespace('webSocket');
         webSocketApi.start = webSocketApi.start || asyncTrue;
         webSocketApi.stop = webSocketApi.stop || asyncTrue;
@@ -3188,7 +3414,7 @@ def get_electron_api_script(theme: str = 'light') -> str:
     }
 })();
 """
-    
+
     script += extra_runtime_patch
     return script
 
@@ -3197,13 +3423,14 @@ def get_early_logger_fix_script() -> str:
     """
     获取早期 LoggerService 修复脚本
     在页面最早阶段注入，确保 window.source 等变量正确设置
-    
+
     Returns:
         JavaScript 代码字符串
     """
     return """
     // 最早期的 LoggerService 修复 - 必须在页面加载的最早期执行
     (function() {
+        if (window.self !== window.top) return;
         // 立即输出调试信息，确认脚本已执行
         console.error('[Qt] 🚀 早期脚本开始执行 - readyState:', document.readyState);
         
@@ -3502,11 +3729,12 @@ def get_post_load_fix_script() -> str:
     """
     获取页面加载完成后的修复脚本
     在页面加载完成后再次确保环境变量正确，并安装 fetch 拦截器
-    
+
     Returns:
         JavaScript 代码字符串
     """
     return """
+    if (window.self !== window.top) { /* skip iframe */ } else {
     console.log('[Cherry Studio] 🚀 POST-LOAD SCRIPT EXECUTING!');
     
     // 强制修复 LoggerService
@@ -4597,6 +4825,7 @@ def get_post_load_fix_script() -> str:
         
         console.log('[DEBUG] ========== 系统诊断结束 ==========');
     }, 3000);
+    } // end iframe guard
     """
 
 

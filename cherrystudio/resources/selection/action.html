@@ -1,0 +1,816 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cherry Action</title>
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  background: transparent;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  color: var(--text);
+  user-select: none;
+}
+
+:root {
+  --bg: #ffffff;
+  --bg-soft: #f5f5f5;
+  --bg-mute: #e5e5e5;
+  --text: #1a1a1a;
+  --text-secondary: #666;
+  --text-tertiary: #999;
+  --border: rgba(0,0,0,0.08);
+  --accent: #4a90d9;
+  --accent-light: rgba(74, 144, 217, 0.1);
+  --error: #f44336;
+  --shadow: 0 2px 8px rgba(0,0,0,0.1);
+  
+  --code-bg: #f6f8fa;
+  --code-block-bg: #282c34;
+  --code-block-text: #abb2bf;
+}
+
+[data-theme="dark"] {
+  --bg: #1e1e1e;
+  --bg-soft: #252525;
+  --bg-mute: #2d2d2d;
+  --text: #e0e0e0;
+  --text-secondary: #a0a0a0;
+  --text-tertiary: #666;
+  --border: rgba(255,255,255,0.08);
+  --accent: #5ba0e6;
+  --accent-light: rgba(91, 160, 230, 0.15);
+  --error: #ff6b6b;
+  --shadow: 0 2px 8px rgba(0,0,0,0.3);
+  
+  --code-bg: #2d2d2d;
+  --code-block-bg: #1a1a2e;
+  --code-block-text: #c5c8c6;
+}
+
+#window-frame {
+  width: calc(100% - 4px);
+  height: calc(100% - 4px);
+  margin: 2px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  position: relative;
+}
+
+/* ── Title Bar ── */
+#titlebar {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 8px;
+  background: var(--bg-soft);
+  border-bottom: 1px solid var(--border);
+  cursor: grab;
+  gap: 8px;
+  flex-shrink: 0;
+}
+#titlebar.dragging { cursor: grabbing; }
+
+#titlebar-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text);
+  margin-left: 4px;
+}
+
+#titlebar-text {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.titlebar-buttons {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  -webkit-app-region: no-drag;
+}
+
+.tb-btn {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s;
+  padding: 0;
+}
+.tb-btn:hover { background: var(--bg-mute); color: var(--text); }
+.tb-btn.pinned { color: var(--accent); transform: rotate(45deg); }
+.tb-btn.pinned:hover { background: var(--accent-light); }
+.tb-btn.close-btn:hover { background: var(--error); color: #fff; }
+.tb-btn svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ── Main Container ── */
+#main-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+#content-wrapper {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 16px;
+  scroll-behavior: smooth;
+}
+#content-wrapper::-webkit-scrollbar { width: 6px; }
+#content-wrapper::-webkit-scrollbar-track { background: transparent; }
+#content-wrapper::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.2); border-radius: 3px; }
+
+/* ── Translation UI ── */
+#translate-header {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+#translate-header.visible { display: flex; }
+
+.trans-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lang-tag {
+  padding: 2px 6px;
+  background: var(--bg-soft);
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.trans-arrow { font-size: 14px; color: var(--text-tertiary); }
+
+#target-lang-select {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  outline: none;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+#target-lang-select:hover { background: var(--bg-soft); }
+
+#original-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 12px;
+  user-select: none;
+}
+#original-header:hover { color: var(--accent); }
+#original-header span { margin-right: 4px; }
+#original-header svg { width: 14px; height: 14px; transition: transform 0.2s; }
+#original-header.expanded svg { transform: rotate(180deg); }
+
+#original-content {
+  display: none;
+  padding: 8px;
+  margin-bottom: 12px;
+  background-color: var(--bg-soft);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  position: relative;
+}
+#original-content.visible { display: block; }
+
+.orig-copy-btn {
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  opacity: 0.6;
+  cursor: pointer;
+  padding: 2px;
+  color: var(--text-secondary);
+}
+.orig-copy-btn:hover { opacity: 1; color: var(--accent); }
+
+/* ── Content ── */
+#content {
+  user-select: text;
+  line-height: 1.6;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  font-size: 14px;
+}
+
+/* Markdown Styles */
+#content h1, #content h2, #content h3 { margin: 0.8em 0 0.4em; font-weight: 600; line-height: 1.3; }
+#content h1 { font-size: 1.3em; }
+#content h2 { font-size: 1.2em; }
+#content h3 { font-size: 1.1em; }
+#content p { margin: 0.5em 0; }
+#content ul, #content ol { margin: 0.5em 0; padding-left: 1.5em; }
+#content li { margin: 0.2em 0; }
+#content blockquote {
+  margin: 0.5em 0; padding: 4px 12px;
+  border-left: 3px solid var(--accent);
+  background: var(--accent-light);
+  border-radius: 0 4px 4px 0;
+  color: var(--text-secondary);
+}
+#content a { color: var(--accent); text-decoration: none; }
+#content a:hover { text-decoration: underline; }
+#content code {
+  font-family: Consolas, monospace;
+  font-size: 0.9em;
+  background: var(--bg-soft);
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+#content pre {
+  margin: 0.8em 0;
+  border-radius: 6px;
+  background: var(--code-block-bg);
+  overflow-x: auto;
+  padding: 12px;
+}
+#content pre code {
+  background: none;
+  padding: 0;
+  color: var(--code-block-text);
+  display: block;
+}
+
+/* ── Loading ── */
+#loading {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+#loading.visible { display: flex; }
+
+.dot-pulse { display: flex; gap: 4px; align-items: center; }
+.dot-pulse span {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: dotBounce 1.4s infinite ease-in-out both;
+}
+.dot-pulse span:nth-child(1) { animation-delay: -0.32s; }
+.dot-pulse span:nth-child(2) { animation-delay: -0.16s; }
+@keyframes dotBounce {
+  0%, 80%, 100% { transform: scale(0.4); opacity: 0.4; }
+  40% { transform: scale(1); opacity: 1; }
+}
+
+/* ── Footer Overlay ── */
+#footer-overlay {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(8px);
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none; /* Let clicks pass through when hidden */
+}
+[data-theme="dark"] #footer-overlay {
+  background: rgba(45, 45, 45, 0.8);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+#footer-overlay.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.footer-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  transition: all 0.2s;
+}
+.footer-btn:hover { color: var(--accent); background: var(--bg-soft); }
+.footer-btn svg { width: 12px; height: 12px; }
+
+.error-msg {
+  color: var(--error);
+  background: rgba(244, 67, 54, 0.1);
+  border: 1px solid var(--error);
+  padding: 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  margin-top: 8px;
+}
+</style>
+</head>
+<body>
+
+<div id="window-frame">
+  <!-- Title Bar -->
+  <div id="titlebar">
+    <div id="titlebar-icon">
+      <!-- Dynamic icon will be set by JS if needed, default generic -->
+      <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+      </svg>
+    </div>
+    <div id="titlebar-text">Cherry Action</div>
+    <div class="titlebar-buttons">
+      <button class="tb-btn" id="btn-pin" title="置顶">
+        <svg viewBox="0 0 24 24"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>
+      </button>
+      <button class="tb-btn" id="btn-minimize" title="最小化">
+        <svg viewBox="0 0 24 24"><path d="M8 12h8"/></svg>
+      </button>
+      <button class="tb-btn close-btn" id="btn-close" title="关闭">
+        <svg viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <div id="main-container">
+    <div id="content-wrapper">
+      <!-- Translate Header -->
+      <div id="translate-header">
+        <div class="trans-left">
+          <div class="lang-tag" id="detected-lang">Auto</div>
+          <span class="trans-arrow">→</span>
+          <select id="target-lang-select">
+            <option value="zh-CN">简体中文</option>
+            <option value="en-US">English</option>
+            <option value="ja-JP">日本語</option>
+            <option value="ko-KR">한국어</option>
+            <option value="fr-FR">Français</option>
+            <option value="de-DE">Deutsch</option>
+            <option value="es-ES">Español</option>
+            <option value="ru-RU">Русский</option>
+          </select>
+        </div>
+        <!-- Original Toggle inside header for Translate -->
+        <div id="toggle-original-trans" class="toggle-original-btn">
+          <span>显示原文</span>
+          <svg viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+        </div>
+      </div>
+
+      <!-- Original Toggle for General (Right aligned) -->
+      <div id="original-header" style="display:none;">
+        <span>显示原文</span>
+        <svg viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+      </div>
+
+      <!-- Original Content Area -->
+      <div id="original-content"></div>
+
+      <!-- Result Content -->
+      <div id="content"></div>
+      
+      <div id="loading">
+        <div class="dot-pulse"><span></span><span></span><span></span></div>
+        <span>正在生成...</span>
+      </div>
+      
+      <!-- Spacer for footer -->
+      <div style="height: 40px;"></div>
+    </div>
+
+    <!-- Footer Overlay -->
+    <div id="footer-overlay">
+      <button class="footer-btn" id="footer-esc">
+        <svg viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>
+        关闭
+      </button>
+      <button class="footer-btn" id="footer-regen">
+        <svg viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>
+        重新生成
+      </button>
+      <button class="footer-btn" id="footer-copy">
+        <svg viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/><path d="M16 4h2a2 2 0 0 1 2 2v4"/><path d="M21 14H11"/><path d="m15 10-4 4 4 4"/></svg>
+        复制
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  'use strict';
+
+  // ── State ──
+  var _rawContent = '';
+  var _isPinned = false;
+  var _isStreaming = false;
+  var _currentAction = null;
+  var _showOriginal = false;
+  var _footerTimer = null;
+
+  var contentEl = document.getElementById('content');
+  var loadingEl = document.getElementById('loading');
+  var titleTextEl = document.getElementById('titlebar-text');
+  
+  var transHeader = document.getElementById('translate-header');
+  var originalHeader = document.getElementById('original-header');
+  var origContent = document.getElementById('original-content');
+  
+  var targetLangSel = document.getElementById('target-lang-select');
+  var detectedLangEl = document.getElementById('detected-lang');
+  
+  var toggleTransBtn = document.getElementById('toggle-original-trans');
+  var footerOverlay = document.getElementById('footer-overlay');
+  var mainContainer = document.getElementById('main-container');
+
+  // ── Markdown Renderer ──
+  function renderMarkdown(text) {
+    var html = escapeHtml(text);
+    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
+    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+    html = html.replace(/^#### (.+)$/gm, '<h4>$1</h4>');
+    html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+    html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+    html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+    html = html.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>');
+    html = html.replace(/^[-*] (.+)$/gm, '<li>$1</li>');
+    html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
+    html = html.replace(/^---$/gm, '<hr>');
+    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+    html = html.replace(/\n\n/g, '</p><p>');
+    html = html.replace(/\n/g, '<br>');
+    return '<p>' + html + '</p>';
+  }
+
+  function escapeHtml(s) {
+    var d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  function updateDisplay() {
+    contentEl.innerHTML = renderMarkdown(_rawContent);
+    var wrapper = document.getElementById('content-wrapper');
+    // Auto-scroll if near bottom
+    if (wrapper.scrollHeight - wrapper.scrollTop - wrapper.clientHeight < 50) {
+      wrapper.scrollTop = wrapper.scrollHeight;
+    }
+  }
+
+  function showLoading(show) {
+    loadingEl.classList.toggle('visible', show);
+  }
+
+  // ── Public API ──
+
+  window.appendChunk = function(text) {
+    _rawContent += text;
+    updateDisplay();
+  };
+
+  window.setContent = function(text) {
+    _rawContent = text;
+    updateDisplay();
+  };
+
+  window.clearContent = function() {
+    _rawContent = '';
+    contentEl.innerHTML = '';
+  };
+
+  window.showError = function(msg) {
+    contentEl.innerHTML += '<div class="error-msg">' + escapeHtml(msg) + '</div>';
+    _isStreaming = false;
+    showLoading(false);
+  };
+
+  window.onStreamDone = function() {
+    _isStreaming = false;
+    showLoading(false);
+  };
+
+  window.setTheme = function(theme) {
+    document.documentElement.setAttribute('data-theme', theme === 'light' ? 'light' : 'dark');
+  };
+
+  window.setAction = function(actionData) {
+    _currentAction = actionData;
+    if (actionData.name) {
+      titleTextEl.textContent = actionData.name;
+    }
+
+    // Reset UI
+    transHeader.classList.remove('visible');
+    originalHeader.style.display = 'none';
+    origContent.classList.remove('visible');
+    _showOriginal = false;
+    updateOriginalToggleUI();
+
+    if (actionData.id === 'translate') {
+      initTranslateUI(actionData);
+    } else {
+      initGeneralUI(actionData);
+      startChat(actionData);
+    }
+    
+    showFooterBriefly();
+  };
+
+  // ── UI Logic ──
+
+  function initTranslateUI(action) {
+    transHeader.classList.add('visible');
+    setupOriginalContent(action.selectedText || '');
+    
+    // Detect language
+    var text = action.selectedText || '';
+    var hasChinese = /[\u4e00-\u9fa5]/.test(text);
+    var detected = hasChinese ? 'zh-CN' : 'en-US';
+    var target = hasChinese ? 'en-US' : 'zh-CN';
+
+    detectedLangEl.textContent = hasChinese ? '中文' : 'English';
+    targetLangSel.value = target;
+
+    startTranslateChat(action, target);
+  }
+
+  function initGeneralUI(action) {
+    originalHeader.style.display = 'flex';
+    setupOriginalContent(action.selectedText || '');
+  }
+
+  function setupOriginalContent(text) {
+    origContent.innerHTML = escapeHtml(text) + 
+      '<div class="orig-copy-btn" title="复制原文">' +
+      '<svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>' +
+      '</div>';
+    
+    var copyBtn = origContent.querySelector('.orig-copy-btn');
+    if (copyBtn) {
+      copyBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        doCopy(text);
+      });
+    }
+  }
+
+  function toggleOriginal() {
+    _showOriginal = !_showOriginal;
+    if (_showOriginal) {
+      origContent.classList.add('visible');
+    } else {
+      origContent.classList.remove('visible');
+    }
+    updateOriginalToggleUI();
+  }
+
+  function updateOriginalToggleUI() {
+    var text = _showOriginal ? '隐藏原文' : '显示原文';
+    var transform = _showOriginal ? 'rotate(180deg)' : 'rotate(0deg)';
+    
+    // Update translate toggle
+    toggleTransBtn.querySelector('span').textContent = text;
+    toggleTransBtn.querySelector('svg').style.transform = transform;
+    
+    // Update general toggle
+    originalHeader.querySelector('span').textContent = text;
+    originalHeader.querySelector('svg').style.transform = transform;
+  }
+
+  toggleTransBtn.addEventListener('click', toggleOriginal);
+  originalHeader.addEventListener('click', toggleOriginal);
+
+  targetLangSel.addEventListener('change', function() {
+    if (_currentAction && _currentAction.id === 'translate') {
+      startTranslateChat(_currentAction, targetLangSel.value);
+    }
+  });
+
+  // ── Chat Logic ──
+
+  function startTranslateChat(action, targetLang) {
+    var langMap = {
+      'zh-CN': 'Simplified Chinese',
+      'en-US': 'English',
+      'ja-JP': 'Japanese',
+      'ko-KR': 'Korean',
+      'fr-FR': 'French',
+      'de-DE': 'German',
+      'es-ES': 'Spanish',
+      'ru-RU': 'Russian'
+    };
+    var langName = langMap[targetLang] || targetLang;
+    var prompt = "Translate the following text to " + langName + ". Only output the translated text, do not include any explanations or extra text.\n\n" + (action.selectedText || '');
+    
+    var chatBody = {
+      model: 'default',
+      messages: [{ role: 'user', content: prompt }],
+      stream: true
+    };
+    doStartChat(chatBody);
+  }
+
+  function startChat(action) {
+    var userContent = (action.prompt || '') + (action.selectedText || '');
+    var body = {
+      model: 'default',
+      messages: [{ role: 'user', content: userContent }],
+      stream: true
+    };
+    doStartChat(body);
+  }
+
+  function doStartChat(body) {
+    window.clearContent();
+    _isStreaming = true;
+    showLoading(true);
+
+    function doRequest() {
+      if (window.qtBridge && window.qtBridge.requestChat) {
+        window.qtBridge.requestChat(JSON.stringify(body));
+      } else {
+        window.showError('Bridge 未就绪');
+      }
+    }
+
+    if (window.qtBridge) {
+      doRequest();
+    } else {
+      window.__onBridgeReady = function() {
+        doRequest();
+        window.__onBridgeReady = null;
+      };
+      setTimeout(function() {
+        if (_isStreaming && !window.qtBridge) {
+          window.showError('Bridge 连接超时');
+        }
+      }, 5000);
+    }
+  }
+
+  // ── Footer Interaction ──
+
+  function showFooterBriefly() {
+    footerOverlay.classList.add('visible');
+    if (_footerTimer) clearTimeout(_footerTimer);
+    _footerTimer = setTimeout(function() {
+      if (!mainContainer.matches(':hover')) {
+        footerOverlay.classList.remove('visible');
+      }
+    }, 2000);
+  }
+
+  mainContainer.addEventListener('mouseenter', function() {
+    footerOverlay.classList.add('visible');
+    if (_footerTimer) clearTimeout(_footerTimer);
+  });
+
+  mainContainer.addEventListener('mouseleave', function() {
+    _footerTimer = setTimeout(function() {
+      footerOverlay.classList.remove('visible');
+    }, 500);
+  });
+
+  document.getElementById('footer-esc').addEventListener('click', function() {
+    if (_isStreaming) {
+      // Stop generating (not implemented in bridge yet, so just close)
+      if (window.qtBridge && window.qtBridge.onClose) window.qtBridge.onClose();
+    } else {
+      if (window.qtBridge && window.qtBridge.onClose) window.qtBridge.onClose();
+    }
+  });
+
+  document.getElementById('footer-regen').addEventListener('click', function() {
+    if (_currentAction) {
+      if (_currentAction.id === 'translate') {
+        startTranslateChat(_currentAction, targetLangSel.value);
+      } else {
+        startChat(_currentAction);
+      }
+    }
+  });
+
+  document.getElementById('footer-copy').addEventListener('click', function() {
+    doCopy(_rawContent);
+  });
+
+  function doCopy(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).catch(function(){});
+    }
+    if (window.qtBridge && window.qtBridge.onCopy) {
+      window.qtBridge.onCopy(text);
+    }
+  }
+
+  // ── Titlebar Buttons ──
+  var btnPin = document.getElementById('btn-pin');
+  var btnMinimize = document.getElementById('btn-minimize');
+  var btnClose = document.getElementById('btn-close');
+
+  btnPin.addEventListener('click', function() {
+    _isPinned = !_isPinned;
+    btnPin.classList.toggle('pinned', _isPinned);
+    if (window.qtBridge && window.qtBridge.onPin) window.qtBridge.onPin(_isPinned);
+  });
+
+  btnMinimize.addEventListener('click', function() {
+    if (window.qtBridge && window.qtBridge.onMinimize) window.qtBridge.onMinimize();
+  });
+
+  btnClose.addEventListener('click', function() {
+    if (window.qtBridge && window.qtBridge.onClose) window.qtBridge.onClose();
+  });
+
+  // ── Drag & Shortcuts ──
+  var _dragging = false;
+  var titlebar = document.getElementById('titlebar');
+
+  titlebar.addEventListener('mousedown', function(e) {
+    if (e.target.closest('.titlebar-buttons')) return;
+    if (e.button !== 0) return;
+    _dragging = true;
+    titlebar.classList.add('dragging');
+    if (window.qtBridge && window.qtBridge.onDragStart) window.qtBridge.onDragStart(e.screenX, e.screenY);
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', function(e) {
+    if (!_dragging) return;
+    if (window.qtBridge && window.qtBridge.onDragMove) window.qtBridge.onDragMove(e.screenX, e.screenY);
+  });
+
+  document.addEventListener('mouseup', function(e) {
+    if (!_dragging) return;
+    _dragging = false;
+    titlebar.classList.remove('dragging');
+  });
+
+  document.addEventListener('keydown', function(e) {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      if (window.qtBridge && window.qtBridge.onClose) window.qtBridge.onClose();
+    }
+    if (e.key === 'r' || e.key === 'R') {
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
+      e.preventDefault();
+      document.getElementById('footer-regen').click();
+    }
+    if (e.key === 'c' || e.key === 'C') {
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
+      if (window.getSelection().toString()) return;
+      e.preventDefault();
+      doCopy(_rawContent);
+    }
+  });
+})();
+</script>
+</body>
+</html>
