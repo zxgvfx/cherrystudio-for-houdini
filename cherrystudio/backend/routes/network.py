@@ -367,7 +367,9 @@ def _normalize_search_url(provider: str, url: str, language: str = "") -> str:
                 query["gl"] = [lang]
             query["nfpr"] = ["1"]
             query["num"] = [query.get("num", ["10"])[0] or "10"]
-            query.pop("gbv", None)
+            # gbv=1 forces Google to return basic HTML (no JavaScript required)
+            # without this, Google returns a JS-heavy page that urllib cannot parse
+            query["gbv"] = ["1"]
 
         elif provider == "local-bing":
             if lang:
@@ -385,10 +387,14 @@ _GOOGLE_BLOCKED_DOMAINS = (
     "chrome.google.com", "www.google.com/preferences",
     "www.google.com/webhp", "www.google.com/intl",
     "google.com/sorry", "consent.google.com",
+    "google.com/js/", "google.com/images/", "google.com/xjs/",
+    "google.com/gen_204", "google.com/complete/",
+    "googleapis.com", "gstatic.com", "googleusercontent.com",
+    "google.com/setprefs", "google.com/tools/feedback",
 )
 
 _BING_BLOCKED_DOMAINS = (
-    "bing.com/search", "bing.com/ck/a", "login.microsoftonline",
+    "bing.com/search", "login.microsoftonline",
     "bing.com/rewards", "bing.com/maps", "bing.com/news/search",
     "microsoft.com/en-us/servicesagreement", "go.microsoft.com",
 )
@@ -556,8 +562,9 @@ def _google_extract_from_js(html: str):
     # Pattern 4: Any quoted external https URL as last resort
     for m in re.finditer(
         r'"(https?://(?!www\.google\.com|google\.com|accounts\.google'
-        r"|googleapis\.com|gstatic\.com|schema\.org|w3\.org"
-        r'|fonts\.g)[^\s"\\]{12,})"',
+        r"|googleapis\.com|gstatic\.com|googleusercontent\.com"
+        r"|schema\.org|w3\.org|fonts\.g"
+        r'|translate\.google)[^\s"\\]{12,})"',
         html,
     ):
         url = m.group(1).replace("\\/", "/").replace("\\u0026", "&")
@@ -606,23 +613,70 @@ def _find_nearby_title(html: str, pos: int, url: str) -> str:
 
 def _google_extract_results(html: str):
     blocked = _is_google_blocked_page(html)
-    if blocked:
+    if blocked in ("captcha", "consent"):
         _log(f"[network/search] Google blocked page detected: {blocked}")
         return []
 
-    # Try HTML extraction first (for rare cases where Google returns real HTML)
-    results = _google_extract_from_html(html)
+    if blocked:
+        _log(f"[network/search] Google page flagged as '{blocked}', still attempting extraction")
+
+    # Try JS data extraction first (modern Google embeds results in <script>)
+    results = _google_extract_from_js(html)
     if results:
         return results
 
-    # Fall back to JS data extraction (modern Google)
-    results = _google_extract_from_js(html)
+    # Fall back to HTML extraction (basic HTML mode)
+    results = _google_extract_from_html(html)
     return results
+
+
+def _decode_bing_redirect(href: str) -> str:
+    """Decode Bing click-tracking URL (bing.com/ck/a?...&u=a1ENCODED...) to actual URL.
+
+    Bing uses u=a1<base64_encoded_url> or u=a1<url_encoded_url> depending on region.
+    """
+    if "bing.com/ck/a" not in href:
+        return href
+    try:
+        parsed = urllib.parse.urlparse(href if href.startswith("http") else "https:" + href)
+        qs = urllib.parse.parse_qs(parsed.query)
+        u_val = qs.get("u", [""])[0]
+        if not u_val.startswith("a1"):
+            return ""
+        encoded = u_val[2:]
+
+        # Try URL-decode first (some regions use percent-encoding)
+        url_decoded = urllib.parse.unquote(encoded)
+        if url_decoded.startswith("http"):
+            return url_decoded
+
+        # Try Base64 decode (international Bing uses base64)
+        import base64 as _b64
+        padding = 4 - len(encoded) % 4
+        if padding != 4:
+            encoded += "=" * padding
+        b64_decoded = _b64.urlsafe_b64decode(encoded).decode("utf-8", errors="replace")
+        if b64_decoded.startswith("http"):
+            return b64_decoded
+    except Exception:
+        pass
+    return ""
 
 
 def _bing_extract_results(html: str):
     results = []
     seen = set()
+
+    def _resolve_href(href: str) -> str:
+        """Resolve Bing href: decode ck/a redirects, filter blocked domains."""
+        url = _decode_bing_redirect(href) if "bing.com/ck/a" in href else href
+        if not url or not url.startswith("http"):
+            return ""
+        if any(bd in url for bd in _BING_BLOCKED_DOMAINS):
+            return ""
+        if "bing.com" in url or "microsoft.com" in url:
+            return ""
+        return url
 
     # Strategy 1: find <li class="b_algo"> blocks and extract h2 > a
     algo_pattern = re.compile(
@@ -632,17 +686,16 @@ def _bing_extract_results(html: str):
     for block_m in algo_pattern.finditer(html):
         block = block_m.group(1)
         for href, inner in _extract_all_links(block):
-            if not href.startswith("http"):
+            url = _resolve_href(href)
+            if not url:
                 continue
             title = _strip_html_tags(inner)
             if not title or len(title) < 4:
                 continue
-            if any(bd in href for bd in _BING_BLOCKED_DOMAINS):
+            if url in seen:
                 continue
-            if href in seen:
-                continue
-            seen.add(href)
-            results.append({"title": title, "url": href})
+            seen.add(url)
+            results.append({"title": title, "url": url})
             break
 
     # Strategy 2: <h2> containing <a href="https://...">
@@ -651,34 +704,30 @@ def _bing_extract_results(html: str):
         for h2_m in h2_pattern.finditer(html):
             h2_html = h2_m.group(1)
             for href, inner in _extract_all_links(h2_html):
-                if not href.startswith("http"):
+                url = _resolve_href(href)
+                if not url:
                     continue
                 title = _strip_html_tags(inner)
                 if not title or len(title) < 4:
                     continue
-                if any(bd in href for bd in _BING_BLOCKED_DOMAINS):
+                if url in seen:
                     continue
-                if href in seen:
-                    continue
-                seen.add(href)
-                results.append({"title": title, "url": href})
+                seen.add(url)
+                results.append({"title": title, "url": url})
 
     # Strategy 3: fallback — any external link with substantial title
     if not results:
         for href, inner in _extract_all_links(html):
-            if not href.startswith("http"):
+            url = _resolve_href(href)
+            if not url:
                 continue
             title = _strip_html_tags(inner)
             if not title or len(title) < 10:
                 continue
-            if any(bd in href for bd in _BING_BLOCKED_DOMAINS):
+            if url in seen:
                 continue
-            if "bing.com" in href or "microsoft.com" in href:
-                continue
-            if href in seen:
-                continue
-            seen.add(href)
-            results.append({"title": title, "url": href})
+            seen.add(url)
+            results.append({"title": title, "url": url})
 
     return results
 
@@ -803,21 +852,98 @@ def _duckduckgo_extract_results(html: str):
     return results
 
 
-def _fetch_duckduckgo_fallback(query: str, timeout: float) -> list:
-    """Fetch search results from DuckDuckGo HTML as fallback for Google."""
-    ddg_url = "https://html.duckduckgo.com/html/?q=" + urllib.parse.quote(query, safe="")
-    _log(f"[network/search] Google→DuckDuckGo fallback: {ddg_url[:100]}")
+def _fetch_bing_fallback(query: str, timeout: float) -> list:
+    """Fetch search results from Bing as fallback.
 
-    bypass = _should_bypass_proxy(ddg_url)
+    Tries cn.bing.com first (server-side rendered, reliable extraction in China),
+    then www.bing.com (may require JS rendering, extraction less reliable).
+    """
+    for domain in ("cn.bing.com", "www.bing.com"):
+        bing_url = f"https://{domain}/search?" + urllib.parse.urlencode({
+            "q": query, "count": "10"
+        })
+        _log(f"[network/search] Bing fallback ({domain}): q={query[:60]!r}")
+
+        bypass = _should_bypass_proxy(bing_url)
+        opener = _build_opener(bypass)
+
+        req = urllib.request.Request(bing_url)
+        req.add_header("User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+        req.add_header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+        req.add_header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.7")
+        req.add_header("Accept-Encoding", "identity")
+        req.add_header("Referer", f"https://{domain}/")
+
+        try:
+            with opener.open(req, timeout=timeout) as resp:
+                raw = resp.read().decode("utf-8", errors="replace")
+                results = _bing_extract_results(raw)
+                _log(f"[network/search] Bing fallback ({domain}) extracted {len(results)} results")
+                if results:
+                    return results
+                _dump_search_debug(f"bing-fallback-{domain.replace('.', '_')}", raw)
+        except Exception as e:
+            _log(f"[network/search] Bing fallback ({domain}) failed: {e}")
+    return []
+
+
+def _fetch_baidu_fallback(query: str, timeout: float) -> list:
+    """Fetch search results from Baidu as last-resort fallback (most reliable in China)."""
+    baidu_url = "https://www.baidu.com/s?" + urllib.parse.urlencode({
+        "wd": query, "rn": "10"
+    })
+    _log(f"[network/search] Baidu fallback: q={query[:60]!r}")
+
+    bypass = _should_bypass_proxy(baidu_url)
     opener = _build_opener(bypass)
 
-    req = urllib.request.Request(ddg_url)
+    req = urllib.request.Request(baidu_url)
     req.add_header("User-Agent",
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
     req.add_header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
     req.add_header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.7")
     req.add_header("Accept-Encoding", "identity")
+    req.add_header("Referer", "https://www.baidu.com/")
+
+    try:
+        with opener.open(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+            results = _baidu_extract_results(raw)
+            _log(f"[network/search] Baidu fallback extracted {len(results)} results")
+            if not results:
+                _dump_search_debug("baidu-fallback", raw)
+            return results
+    except Exception as e:
+        _log(f"[network/search] Baidu fallback failed: {e}")
+        return []
+
+
+def _fetch_duckduckgo_fallback(query: str, timeout: float) -> list:
+    """Fetch search results from DuckDuckGo HTML as fallback for Google.
+
+    Uses POST (native form submission method) to avoid proxy/firewall stripping
+    query parameters from GET requests, which causes DDG to return its homepage.
+    """
+    ddg_url = "https://html.duckduckgo.com/html/"
+    form_data = urllib.parse.urlencode({"q": query}).encode("utf-8")
+    _log(f"[network/search] Google→DuckDuckGo fallback (POST): q={query[:60]!r}")
+
+    bypass = _should_bypass_proxy(ddg_url)
+    opener = _build_opener(bypass)
+
+    req = urllib.request.Request(ddg_url, data=form_data, method="POST")
+    req.add_header("User-Agent",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+    req.add_header("Content-Type", "application/x-www-form-urlencoded")
+    req.add_header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+    req.add_header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.7")
+    req.add_header("Accept-Encoding", "identity")
+    req.add_header("Referer", "https://html.duckduckgo.com/html/")
+    req.add_header("Origin", "https://html.duckduckgo.com")
 
     try:
         with opener.open(req, timeout=timeout) as resp:
@@ -1282,6 +1408,7 @@ _GOOGLE_USER_AGENTS = [
 def _do_search_request(normalized_url: str, provider: str, headers: dict, timeout: float, ua_index: int = 0):
     """Execute a single search request. Returns (html_str, status_code) or raises."""
     bypass = _should_bypass_proxy(normalized_url)
+    proxy_url = _proxy_settings.get("proxyUrl", "")
     opener = _build_opener(bypass)
 
     ua_list = _GOOGLE_USER_AGENTS if provider == "local-google" else _GOOGLE_USER_AGENTS[:1]
@@ -1347,39 +1474,52 @@ def search_engine(ctx: dict) -> Any:
     if not normalized_url:
         return {"success": False, "error": "invalid url (non-ASCII or malformed)"}
 
-    _log(f"[network/search] {provider} -> {normalized_url[:120]}")
-
-    # --- Google: try direct fetch, then DuckDuckGo fallback ---
+    # --- Google: try direct fetch, then fallback chain ---
     if provider == "local-google":
-        # Attempt 1: direct Google fetch
         try:
             raw_html, status = _do_search_request(
                 normalized_url, provider, headers, timeout, ua_index=0
             )
             blocked = _is_google_blocked_page(raw_html)
-            if not blocked:
-                results = _extract_search_results(provider, raw_html)
+
+            if blocked in ("captcha", "consent"):
+                _log(f"[network/search] Google blocked: {blocked}, skipping extraction")
+                _dump_search_debug("google-blocked", raw_html)
+            else:
+                # For "js-only" or unblocked pages, still try extraction.
+                # Modern Google embeds results in <script> JSON data even on
+                # "js-only" redirect pages — _google_extract_from_js handles this.
+                results = _google_extract_from_js(raw_html)
+                if not results:
+                    results = _google_extract_from_html(raw_html)
                 if results:
-                    _log(f"[network/search] Google direct: {len(results)} results")
+                    _log(f"[network/search] Google direct: {len(results)} results"
+                         f"{' (from js-only page)' if blocked else ''}")
                     return {"success": True, "status": status,
                             "results": results, "count": len(results)}
+                _dump_search_debug("google-no-results", raw_html)
 
             _log(f"[network/search] Google direct failed (blocked={blocked or 'no-results'}), "
-                 f"falling back to DuckDuckGo")
+                 f"falling back to Bing")
         except Exception as e:
             _log(f"[network/search] Google direct error: {e}")
 
-        # Attempt 2: DuckDuckGo HTML fallback
+        # Fallback chain: Bing → Baidu → DuckDuckGo
         query = _extract_query_from_search_url(normalized_url)
         if query:
-            results = _fetch_duckduckgo_fallback(query, timeout)
-            if results:
-                return {"success": True, "status": 200,
-                        "results": results, "count": len(results),
-                        "fallback": "duckduckgo"}
+            for fallback_fn, fallback_name in [
+                (_fetch_bing_fallback, "bing"),
+                (_fetch_baidu_fallback, "baidu"),
+                (_fetch_duckduckgo_fallback, "duckduckgo"),
+            ]:
+                results = fallback_fn(query, timeout)
+                if results:
+                    return {"success": True, "status": 200,
+                            "results": results, "count": len(results),
+                            "fallback": fallback_name}
 
         return {"success": True, "status": 200, "results": [], "count": 0,
-                "warning": "Google requires JavaScript; DuckDuckGo fallback also failed"}
+                "warning": "Google blocked; all fallbacks (Bing/Baidu/DuckDuckGo) also failed"}
 
     # --- Bing / Baidu: direct fetch ---
     try:
@@ -1389,16 +1529,15 @@ def search_engine(ctx: dict) -> Any:
         results = _extract_search_results(provider, raw_html)
         _log(f"[network/search] {provider} extracted {len(results)} results")
 
-        # Bing fallback: if 0 results, try DuckDuckGo
         if not results and provider == "local-bing":
             query = _extract_query_from_search_url(normalized_url)
             if query:
-                _log("[network/search] Bing returned 0, trying DuckDuckGo fallback")
-                results = _fetch_duckduckgo_fallback(query, timeout)
+                _log("[network/search] Bing returned 0, trying Baidu fallback")
+                results = _fetch_baidu_fallback(query, timeout)
                 if results:
                     return {"success": True, "status": 200,
                             "results": results, "count": len(results),
-                            "fallback": "duckduckgo"}
+                            "fallback": "baidu"}
 
         return {"success": True, "status": status,
                 "results": results, "count": len(results)}

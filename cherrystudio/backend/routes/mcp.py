@@ -481,18 +481,20 @@ def _exec_web_search(query: str, provider_id: str = "") -> dict:
 
 _HUB_TOOL_DEFINITIONS = [
     {
-        "name": "search",
+        "name": "discover_tools",
         "description": (
-            "Discover available tools by keyword. Returns tool names with brief descriptions. "
+            "Discover available MCP tools by keyword (NOT for web search). "
+            "Returns tool names with brief descriptions. "
             "Use get_tool_schema to see full parameters, then call_tool to execute. "
-            "Use '*' to list all available tools."
+            "Use '*' to list all available tools. "
+            "Do NOT use this for searching the web — use the dedicated web search tool instead."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Keywords to find tools (comma-separated). Use '*' to list all."
+                    "description": "Keywords to find MCP tools (comma-separated). Use '*' to list all."
                 }
             },
             "required": ["query"]
@@ -2172,16 +2174,33 @@ def mcp_list_tools(ctx: dict) -> Any:
     server_type = body.get("type", "stdio")
     _dbg(f"/mcp/list-tools called: id={server_id!r} name={server_name!r} type={server_type!r}")
 
-    # @cherry/hub：只返回核心元工具（search/get_tool_schema/call_tool/ask_model）
-    # 其他工具通过 search 发现、get_tool_schema 查看参数、call_tool 调用
-    # 预处理器会根据用户消息按需注入匹配工具的完整 schema（Tier 0 直接调用）
+    # @cherry/hub：返回核心元工具 + 所有已注册客户端的工具
+    # 元工具（discover_tools/call_tool/get_tool_schema/ask_model）用于发现/调用 MCP 工具
+    # 直接工具一并返回给前端，但前端仅在用户输入 /工具名 时才将匹配的工具 schema 注入提示词
+    # 这样实现"经典模式省 token + 斜杠命令精准注入"的混合策略
     if _is_hub_server(server_id) or server_type in ("hub", "inMemory"):
         hub_config = {"id": server_id or "@cherry/hub", "name": "@cherry/hub"}
         core_tools = list(_HUB_TOOL_DEFINITIONS)
         core_tools.append(_ASK_MODEL_TOOL)
+        result = _format_tools_for_cherry(core_tools, hub_config)
+
+        with _clients_lock:
+            active_clients = {sid: c for sid, c in _clients.items() if c.is_alive()}
+        direct_tool_count = 0
+        for client_id, client in active_clients.items():
+            try:
+                raw_tools = client.list_tools()
+                if raw_tools:
+                    client_config = {"id": hub_config["id"], "name": client_id}
+                    formatted = _format_tools_for_cherry(raw_tools, client_config)
+                    result.extend(formatted)
+                    direct_tool_count += len(formatted)
+            except Exception as e:
+                _dbg(f"/mcp/list-tools hub: error collecting from '{client_id}': {e}")
+
         _dbg(f"/mcp/list-tools '{server_id[:16]}' → hub: "
-             f"{len(core_tools)} core meta-tools (slim mode)")
-        return _format_tools_for_cherry(core_tools, hub_config)
+             f"{len(core_tools)} meta-tools + {direct_tool_count} direct tools")
+        return result
 
     # 其他内置虚拟服务器（in-memory/memory/thinking 等）——返回 []
     _BUILTIN_PREFIXES = ("in-memory", "builtin", "memory", "thinking")
@@ -2292,7 +2311,7 @@ def mcp_call(ctx: dict) -> Any:
     # @cherry/hub：执行 hub 内置工具（search / exec）
     if _is_hub_server(server_id) or server_config.get("type") in ("hub", "inMemory"):
         _dbg(f"/mcp/call hub tool={tool_name!r} args={json.dumps(arguments)[:80]}")
-        if tool_name == "search":
+        if tool_name in ("discover_tools", "search"):
             q     = arguments.get("query", "")
             limit = int(arguments.get("limit", 10))
             return _hub_search(q, limit)

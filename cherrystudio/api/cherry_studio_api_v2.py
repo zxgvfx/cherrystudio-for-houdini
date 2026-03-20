@@ -1316,6 +1316,10 @@ class CherryStudioAPI(QObject):
                     providers_loader=self._load_providers_from_localstorage)
                 success, port = CherryStudioAPI._agent_server.start(host="127.0.0.1", port=0)
                 if success:
+                    # 同步设置后端路由的全局引用，供 agentApiProxy 使用
+                    from ..backend.routes.agent import set_agent_server
+                    set_agent_server(CherryStudioAPI._agent_server)
+                    _log(f"[apiServerStart] AgentServer started on port {port}, set_agent_server called")
                     return json.dumps({"running": True, "port": port,
                                        "url": f"http://127.0.0.1:{port}", "error": None})
                 return json.dumps({"running": False, "port": 0, "url": "",
