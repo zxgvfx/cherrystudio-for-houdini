@@ -16,9 +16,17 @@ import numpy as np
 from PIL import Image
 
 
+def resolve_gui_module_path(plugin_dir: str) -> str:
+    return os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(plugin_dir))),
+        "__import_project", "sam-3d-objects-main", "integration", "sam3",
+        "sam3_gui_module_pyside6.py",
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description="SAM3 GUI Launcher")
-    parser.add_argument("--image", required=True, help="Path to the image file")
+    parser.add_argument("--image", help="Optional path to the image file")
     parser.add_argument("--session-id", required=True, help="Session ID for result callback")
     parser.add_argument("--callback-url", required=True, help="URL to POST mask results")
     args = parser.parse_args()
@@ -28,15 +36,9 @@ def main():
     plugin_dir = os.path.dirname(os.path.abspath(__file__))
     sys.path.insert(0, os.path.join(plugin_dir, "backend"))
 
-    from backend.sam3_core import SAM3Predictor  # noqa: E402
-
     app = QApplication.instance() or QApplication(sys.argv)
 
-    gui_module_path = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(plugin_dir))),
-        "__import_project", "sam-3d-objects-main", "integration", "sam3",
-        "sam3_gui_module_pyside6.py",
-    )
+    gui_module_path = resolve_gui_module_path(plugin_dir)
 
     if os.path.isfile(gui_module_path):
         import importlib.util
@@ -50,10 +52,13 @@ def main():
 
     window = SAM3Window()
 
-    img = Image.open(args.image).convert("RGB")
-    image_np = np.array(img, dtype=np.uint8)
-    window.load_external_image(image_np)
-    window.image_path = args.image
+    if args.image:
+        img = Image.open(args.image).convert("RGB")
+        image_np = np.array(img, dtype=np.uint8)
+        window.load_external_image(image_np)
+        window.image_path = args.image
+    else:
+        window.image_path = ""
 
     original_on_finished = getattr(window, "on_3d_gen_finished", None)
 

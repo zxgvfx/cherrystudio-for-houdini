@@ -29,14 +29,11 @@ import urllib.request
 
 from ..server import route, prefix_route, STREAMING_HANDLED
 from ..process_manager import pm as _pm
+from ...core.paths import get_base_dir, get_bin_dir
 from ...utils.logger import network_logger
 from ...core.config_manager import config_manager as _cfg_mgr
 
 _log = network_logger
-
-_CHERRYSTUDIO_BIN = os.path.join(
-    os.path.expanduser("~"), ".cherrystudio", "bin"
-)
 _MINIMUM_NODE_VERSION = "22.0.0"
 
 _CREATE_NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
@@ -54,7 +51,7 @@ def _parse_version(version_str: str) -> tuple:
 
 def _find_node() -> str | None:
     ext = ".exe" if os.name == "nt" else ""
-    cs_node = os.path.join(_CHERRYSTUDIO_BIN, f"node{ext}")
+    cs_node = os.path.join(get_bin_dir(), f"node{ext}")
     if os.path.isfile(cs_node):
         return cs_node
     return shutil.which("node")
@@ -126,8 +123,8 @@ def _build_env(with_proxy: bool = False, with_venv: bool = False) -> dict:
               "ALL_PROXY", "all_proxy", "NO_PROXY", "no_proxy",
               "NODE_OPTIONS"):
         env.pop(k, None)
-    if os.path.isdir(_CHERRYSTUDIO_BIN):
-        env["PATH"] = _CHERRYSTUDIO_BIN + os.pathsep + env.get("PATH", "")
+    if os.path.isdir(get_bin_dir()):
+        env["PATH"] = get_bin_dir() + os.pathsep + env.get("PATH", "")
 
     if with_venv:
         venv_scripts = _get_venv_scripts_dir()
@@ -204,7 +201,7 @@ def _repair_npm() -> bool:
     用 Python 下载 npm tarball 并覆盖 ~/.cherrystudio/bin 下损坏的 npm。
     返回 True 表示修复成功。
     """
-    npm_dir = os.path.join(_CHERRYSTUDIO_BIN, "node_modules", "npm")
+    npm_dir = os.path.join(get_bin_dir(), "node_modules", "npm")
     if not os.path.isdir(npm_dir):
         _log("[OpenClaw] npm directory not found, cannot repair")
         return False
@@ -272,12 +269,12 @@ def _find_npm() -> str | None:
     candidates = []
 
     # 系统 npm（排除 cherrystudio/bin）
-    sys_npm = _which_excluding("npm", _CHERRYSTUDIO_BIN)
+    sys_npm = _which_excluding("npm", get_bin_dir())
     if sys_npm:
         candidates.append(sys_npm)
 
     # cherrystudio/bin 的 npm
-    cs_npm = os.path.join(_CHERRYSTUDIO_BIN, f"npm{ext}")
+    cs_npm = os.path.join(get_bin_dir(), f"npm{ext}")
     if os.path.isfile(cs_npm):
         candidates.append(cs_npm)
 
@@ -288,7 +285,7 @@ def _find_npm() -> str | None:
             _log(f"[OpenClaw] Using npm: {npm}")
             return npm
         _log(f"[OpenClaw] Broken npm: {npm}")
-        if os.path.normcase(os.path.dirname(npm)) == os.path.normcase(_CHERRYSTUDIO_BIN):
+        if os.path.normcase(os.path.dirname(npm)) == os.path.normcase(get_bin_dir()):
             broken_cs = True
 
     # 全部 npm 都坏了，先尝试自动修复
@@ -338,9 +335,9 @@ def check_git_available(ctx):
 @route("/api/v1/openclaw/check-installed", methods=["GET"])
 def check_openclaw_installed(ctx):
     openclaw_path = shutil.which("openclaw")
-    if not openclaw_path and os.path.isdir(_CHERRYSTUDIO_BIN):
+    if not openclaw_path and os.path.isdir(get_bin_dir()):
         ext = ".cmd" if os.name == "nt" else ""
-        cs_oc = os.path.join(_CHERRYSTUDIO_BIN, f"openclaw{ext}")
+        cs_oc = os.path.join(get_bin_dir(), f"openclaw{ext}")
         if os.path.isfile(cs_oc):
             openclaw_path = cs_oc
     return {"installed": openclaw_path is not None, "path": openclaw_path}
@@ -353,8 +350,8 @@ def _find_openclaw_bundle() -> str | None:
     candidates = [
         # %APPDATA%\npm\  (Windows npm 全局目录)
         os.path.join(os.environ.get("APPDATA", ""), "npm", _OPENCLAW_BUNDLE_NAME),
-        # ~/.cherrystudio/
-        os.path.join(os.path.expanduser("~"), ".cherrystudio", _OPENCLAW_BUNDLE_NAME),
+        # ~/.cherrystudio/ (shared root)
+        os.path.join(get_base_dir(), _OPENCLAW_BUNDLE_NAME),
         # J 盘公共目录
         os.path.join("J:/vfxtools/piplineTD/models/packages/bin", _OPENCLAW_BUNDLE_NAME),
     ]
@@ -368,23 +365,23 @@ def _install_from_bundle(bundle_path: str) -> dict:
     """从离线 tar.gz 安装 openclaw 到 ~/.cherrystudio/bin"""
     _log(f"[OpenClaw] Installing from offline bundle: {bundle_path}")
     try:
-        os.makedirs(_CHERRYSTUDIO_BIN, exist_ok=True)
+        os.makedirs(get_bin_dir(), exist_ok=True)
 
         with tarfile.open(bundle_path, "r:gz") as tar:
             # 安全检查：防止路径穿越
             for member in tar.getmembers():
                 if member.name.startswith("/") or ".." in member.name:
                     return {"success": False, "message": f"Unsafe path in bundle: {member.name}"}
-            tar.extractall(_CHERRYSTUDIO_BIN)
+            tar.extractall(get_bin_dir())
 
         # 验证安装结果
         ext = ".cmd" if os.name == "nt" else ""
-        openclaw_bin = os.path.join(_CHERRYSTUDIO_BIN, f"openclaw{ext}")
+        openclaw_bin = os.path.join(get_bin_dir(), f"openclaw{ext}")
         if os.path.isfile(openclaw_bin):
             _log(f"[OpenClaw] Offline install OK: {openclaw_bin}")
             return {"success": True, "message": "OpenClaw installed from offline bundle"}
 
-        openclaw_dir = os.path.join(_CHERRYSTUDIO_BIN, "node_modules", "openclaw")
+        openclaw_dir = os.path.join(get_bin_dir(), "node_modules", "openclaw")
         if os.path.isdir(openclaw_dir):
             _log(f"[OpenClaw] Offline install OK (node_modules found, cmd missing)")
             return {"success": True, "message": "OpenClaw installed from offline bundle (node_modules)"}
@@ -411,7 +408,7 @@ def install_openclaw(ctx):
     if not npm_path:
         search_paths = [
             os.path.join(os.environ.get("APPDATA", ""), "npm"),
-            os.path.join(os.path.expanduser("~"), ".cherrystudio"),
+            get_base_dir(),
         ]
         return {
             "success": False,
@@ -635,7 +632,7 @@ _gw_lock = threading.Lock()
 def _find_openclaw() -> str | None:
     """查找 openclaw 可执行文件"""
     ext = ".cmd" if os.name == "nt" else ""
-    cs = os.path.join(_CHERRYSTUDIO_BIN, f"openclaw{ext}")
+    cs = os.path.join(get_bin_dir(), f"openclaw{ext}")
     if os.path.isfile(cs):
         return cs
     return shutil.which("openclaw")
@@ -704,7 +701,7 @@ def _do_stop_gateway():
         _log("[OpenClaw] Gateway stopped")
 
 
-_PROXY_BOOTSTRAP_JS = os.path.join(_CHERRYSTUDIO_BIN, "_proxy_bootstrap.js")
+_PROXY_BOOTSTRAP_JS = os.path.join(get_bin_dir(), "_proxy_bootstrap.js")
 
 # 自包含代理引导脚本，不依赖任何第三方 npm 包
 _PROXY_BOOTSTRAP_CODE = r"""
@@ -909,7 +906,7 @@ _PROXY_BOOTSTRAP_CODE = r"""
 """.strip()
 
 
-_PROXY_WRAPPER_JS = os.path.join(_CHERRYSTUDIO_BIN, "_openclaw_proxy_wrapper.js")
+_PROXY_WRAPPER_JS = os.path.join(get_bin_dir(), "_openclaw_proxy_wrapper.js")
 
 
 def _ensure_proxy_bootstrap() -> str:
@@ -931,7 +928,7 @@ def _build_proxy_wrapper(openclaw_path: str) -> str:
     # 找到 openclaw 的真实 JS 入口
     # openclaw.cmd -> node node_modules/openclaw/bin/openclaw.js
     openclaw_js = ""
-    node_modules = os.path.join(_CHERRYSTUDIO_BIN, "node_modules", "openclaw")
+    node_modules = os.path.join(get_bin_dir(), "node_modules", "openclaw")
     for candidate in ["bin/openclaw.js", "bin/cli.js", "dist/cli.js", "dist/index.js"]:
         p = os.path.join(node_modules, candidate)
         if os.path.isfile(p):
@@ -946,7 +943,7 @@ def _build_proxy_wrapper(openclaw_path: str) -> str:
                 import re as _re
                 m = _re.search(r'node_modules[\\/]openclaw[\\/][^\s"]+\.js', content)
                 if m:
-                    openclaw_js = os.path.join(_CHERRYSTUDIO_BIN, m.group(0)).replace("\\", "/")
+                    openclaw_js = os.path.join(get_bin_dir(), m.group(0)).replace("\\", "/")
             except Exception:
                 pass
 
@@ -955,12 +952,12 @@ def _build_proxy_wrapper(openclaw_path: str) -> str:
         return ""
 
     wrapper_code = f"""'use strict';
-// Proxy bootstrap + OpenClaw launcher
+// Proxy bootstrap (CJS) + OpenClaw launcher (ESM-compatible)
 require('{bootstrap_path}');
-// Forward argv: node wrapper.js gateway --port 18790
-// -> openclaw.js gateway --port 18790
 process.argv = [process.argv[0], '{openclaw_js}'].concat(process.argv.slice(2));
-require('{openclaw_js}');
+// Windows absolute paths need file:// URLs for ESM import()
+var entryUrl = require('url').pathToFileURL('{openclaw_js}').href;
+import(entryUrl).catch(function(e) {{ console.error(e); process.exit(1); }});
 """
     try:
         with open(_PROXY_WRAPPER_JS, "w", encoding="utf-8") as f:
@@ -973,7 +970,7 @@ require('{openclaw_js}');
 
 
 def _ensure_curl_wrapper(proxy_url: str):
-    """在 _CHERRYSTUDIO_BIN 创建 curl.cmd 包装脚本。
+    """在 Cherry Studio bin 目录创建 curl.cmd 包装脚本。
 
     Windows PowerShell 中 `curl` 是 `Invoke-WebRequest` 的别名，
     不读 HTTP_PROXY 环境变量。OpenClaw exec 工具通过 PowerShell 执行命令，
@@ -984,7 +981,7 @@ def _ensure_curl_wrapper(proxy_url: str):
     """
     if os.name != "nt":
         return
-    curl_wrapper = os.path.join(_CHERRYSTUDIO_BIN, "curl.cmd")
+    curl_wrapper = os.path.join(get_bin_dir(), "curl.cmd")
     try:
         # 找到真实的 curl.exe（跳过自己）
         real_curl = shutil.which("curl.exe")
@@ -1043,7 +1040,7 @@ def _spawn_gateway(openclaw_path: str, port: int):
 
     # 确定启动命令
     if use_wrapper:
-        node_exe = os.path.join(_CHERRYSTUDIO_BIN, "node.exe" if os.name == "nt" else "node")
+        node_exe = os.path.join(get_bin_dir(), "node.exe" if os.name == "nt" else "node")
         if not os.path.isfile(node_exe):
             node_exe = shutil.which("node") or "node"
         cmd = [node_exe, _PROXY_WRAPPER_JS, "gateway", "--port", str(port)]

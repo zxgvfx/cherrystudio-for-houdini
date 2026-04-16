@@ -37,6 +37,7 @@ from PySide6.QtCore import QObject, Slot
 
 from ..version import APP_VERSION, APP_PLATFORM, APP_ARCH
 from ..utils.logger import network_logger
+from .agent_message_store import get_session_history, persist_exchange
 from .agent_server import AgentServer
 
 _log = network_logger
@@ -913,7 +914,8 @@ class CherryStudioAPI(QObject):
             import shutil as _shutil
             from pathlib import Path
 
-            local_bin_dir = Path(os.path.expanduser("~")) / ".cherrystudio" / "bin"
+            from ..core.paths import get_bin_dir
+            local_bin_dir = Path(get_bin_dir())
             j_bin_dir = Path("J:/vfxtools/piplineTD/models/packages/bin")
 
             # 从 J 盘同步到本地（增量：只复制缺失或更新的文件/子目录）
@@ -967,7 +969,8 @@ class CherryStudioAPI(QObject):
         """
         from shutil import which
 
-        bin_dir = Path.home() / ".cherrystudio" / "bin"
+        from ..core.paths import get_bin_dir
+        bin_dir = Path(get_bin_dir())
         ext = ".exe" if os.name == "nt" else ""
         local = bin_dir / f"{binary}{ext}"
         if local.exists() and local.is_file():
@@ -1071,9 +1074,8 @@ class CherryStudioAPI(QObject):
             terminal_id = options.get("terminal", "cmd")
             auto_update = options.get("autoUpdateToLatest", False)
 
-            cherry_dir = Path.home() / ".cherrystudio"
-            bin_dir = cherry_dir / "bin"
-            bin_dir.mkdir(parents=True, exist_ok=True)
+            from ..core.paths import get_bin_dir
+            bin_dir = Path(get_bin_dir())
             bun_path = bin_dir / ("bun.exe" if sys.platform == "win32" else "bun")
 
             tool_packages = {
@@ -1357,11 +1359,21 @@ class CherryStudioAPI(QObject):
 
     @Slot(str, result=str)
     def agentMessageGetHistory(self, payload: str) -> str:
-        return "[]"
+        try:
+            body = json.loads(payload) if payload else {}
+            return json.dumps(get_session_history(str(body.get("sessionId", "") or "")), ensure_ascii=False)
+        except Exception as e:
+            _log(f"[agentMessageGetHistory] {e}")
+            return "[]"
 
     @Slot(str, result=bool)
     def agentMessagePersistExchange(self, payload: str) -> bool:
-        return True
+        try:
+            body = json.loads(payload) if payload else {}
+            return persist_exchange(body)
+        except Exception as e:
+            _log(f"[agentMessagePersistExchange] {e}")
+            return False
 
     @Slot(result=str)
     def getInstallInfo(self) -> str:
@@ -1625,7 +1637,8 @@ class CherryStudioAPI(QObject):
     # =========================================================================
 
     def _get_app_data_dir(self) -> str:
-        return os.path.join(os.path.expanduser("~"), ".cherrystudio")
+        from ..core.paths import get_app_data_dir
+        return get_app_data_dir()
 
     _IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'}
     _VIDEO_EXTS = {'.mp4', '.avi', '.mov', '.wmv', '.flv', '.mkv'}

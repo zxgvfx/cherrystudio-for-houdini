@@ -185,6 +185,74 @@ def _get_parm(args: dict) -> Any:
 
 
 @tool(
+    name="import_scene_file",
+    description="将 3D 场景文件（USD/FBX/OBJ/GLB 等）导入到 Houdini 当前场景中",
+    schema={
+        "type": "object",
+        "properties": {
+            "filePath": {"type": "string", "description": "要导入的文件绝对路径"},
+            "format":   {"type": "string", "description": "文件格式（usd/fbx/obj/glb/gltf/ply）"},
+            "parentPath": {"type": "string", "description": "导入到的父节点路径（默认 /obj）"},
+        },
+        "required": ["filePath"],
+    },
+)
+def _import_scene_file(args: dict) -> Any:
+    file_path = args.get("filePath", "")
+    if not file_path:
+        return {"error": "filePath is required"}
+
+    import os
+    if not os.path.isfile(file_path):
+        return {"error": f"File not found: {file_path}"}
+
+    fmt = args.get("format", "").lower()
+    if not fmt:
+        fmt = os.path.splitext(file_path)[1].lstrip(".").lower()
+
+    parent_path = args.get("parentPath", "/obj")
+
+    try:
+        import hou  # type: ignore
+        parent = hou.node(parent_path)
+        if parent is None:
+            return {"error": f"Parent node not found: {parent_path}"}
+
+        file_path_posix = file_path.replace("\\", "/")
+        base_name = os.path.splitext(os.path.basename(file_path))[0]
+
+        if fmt in ("usd", "usda", "usdc", "usdz"):
+            node = parent.createNode("sublayer", base_name)
+            node.parm("filepath1").set(file_path_posix)
+        elif fmt == "fbx":
+            # Houdini 内置 FBX 导入
+            hou.hipFile.importFBX(file_path_posix)
+            return {"ok": True, "method": "importFBX", "path": file_path_posix}
+        elif fmt in ("obj", "glb", "gltf", "ply"):
+            geo_node = parent.createNode("geo", base_name)
+            file_node = geo_node.createNode("file", "import")
+            file_node.parm("file").set(file_path_posix)
+            file_node.setDisplayFlag(True)
+            file_node.setRenderFlag(True)
+            return {"ok": True, "method": "file_sop", "nodePath": file_node.path()}
+        else:
+            geo_node = parent.createNode("geo", base_name)
+            file_node = geo_node.createNode("file", "import")
+            file_node.parm("file").set(file_path_posix)
+            file_node.setDisplayFlag(True)
+            file_node.setRenderFlag(True)
+            return {"ok": True, "method": "file_sop_fallback", "nodePath": file_node.path()}
+
+        node.moveToGoodPosition()
+        return {"ok": True, "method": "sublayer" if fmt.startswith("usd") else "file_sop", "nodePath": node.path()}
+    except ImportError:
+        return {"error": "Not running inside Houdini"}
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
+
+@tool(
     name="houdini_set_parm",
     description="设置节点的参数值",
     schema={

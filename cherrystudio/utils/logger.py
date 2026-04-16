@@ -9,25 +9,20 @@ from pathlib import Path
 
 
 def _get_user_log_dir() -> Path:
-    """
-    获取用户日志目录
-    
-    Returns:
-        Path: 日志目录路径
-    """
-    # Windows: %APPDATA%\CherryStudio\logs
-    # Linux/Mac: ~/.cherrystudio/logs
-    if os.name == 'nt':  # Windows
-        appdata = os.getenv('APPDATA')
-        if appdata:
-            log_dir = Path(appdata) / 'CherryStudio' / 'logs'
-        else:
-            # 回退到用户主目录
-            log_dir = Path.home() / '.cherrystudio' / 'logs'
-    else:  # Linux/Mac
-        log_dir = Path.home() / '.cherrystudio' / 'logs'
-    
-    # 确保目录存在
+    """获取用户日志目录（按 DCC 类型位于 ~/.cherrystudio/<dcc>/logs）。"""
+    try:
+        from ..core.paths import get_app_data_dir
+        log_dir = Path(get_app_data_dir()) / "logs"
+    except (ImportError, ValueError):
+        try:
+            from cherrystudio.core.paths import get_app_data_dir
+            log_dir = Path(get_app_data_dir()) / "logs"
+        except ImportError:
+            try:
+                from core.paths import get_app_data_dir
+                log_dir = Path(get_app_data_dir()) / "logs"
+            except ImportError:
+                log_dir = Path.home() / ".cherrystudio" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     return log_dir
 

@@ -22,12 +22,26 @@ from ..utils.logger import network_logger
 _log = network_logger
 
 
-def _detect_houdini_version() -> str:
-    try:
-        import hou  # type: ignore
-        return hou.applicationVersionString()
-    except Exception:
-        return "unknown"
+def _detect_dcc_version(dcc_type: str) -> str:
+    if dcc_type == "houdini":
+        try:
+            import hou  # type: ignore
+            return hou.applicationVersionString()
+        except Exception:
+            return "unknown"
+    if dcc_type == "maya":
+        try:
+            import maya.cmds as cmds  # type: ignore
+            return cmds.about(version=True)
+        except Exception:
+            return "unknown"
+    if dcc_type == "blender":
+        try:
+            import bpy  # type: ignore
+            return bpy.app.version_string
+        except Exception:
+            return "unknown"
+    return "unknown"
 
 
 class DCCSession:
@@ -39,7 +53,7 @@ class DCCSession:
     def __init__(self):
         self.session_id: str = str(uuid.uuid4())
         self.dcc_type: str = self._detect_dcc_type()
-        self.dcc_version: str = _detect_houdini_version()
+        self.dcc_version: str = _detect_dcc_version(self.dcc_type)
         self.mcp_port: int = 0
         self.backend_url: str = ""
         self._registered: bool = False
@@ -53,14 +67,8 @@ class DCCSession:
 
     @staticmethod
     def _detect_dcc_type() -> str:
-        try:
-            import hou  # type: ignore
-            _ = hou.applicationVersionString()
-            return "houdini"
-        except ImportError:
-            pass
-        # 未来可扩展：Maya、Blender 等
-        return "standalone"
+        from ..core.app_lifecycle import detect_dcc_type
+        return detect_dcc_type()
 
     def set_mcp_port(self, port: int):
         self.mcp_port = port

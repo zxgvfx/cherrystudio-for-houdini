@@ -4,13 +4,18 @@
   "version": "1.0.0",
   "description": "图像分割 + 3D模型生成",
   "icon": "cube",
+  "launcher": {
+    "enabled": true,
+    "type": "webview",
+    "label": "SAM3",
+    "category": "3d",
+    "pinnable": true,
+    "entry": {
+      "action": "route",
+      "url": "/plugins/sam3-segmentation"
+    }
+  },
   "modes": {
-    "manual": {
-      "label": "手动标注",
-      "description": "打开标注窗口，手动选择目标区域",
-      "trigger": "/sam3",
-      "mcp_tool": "sam3_launch_manual"
-    },
     "auto": {
       "label": "自动识别",
       "description": "LLM + 视觉模型自动识别目标",

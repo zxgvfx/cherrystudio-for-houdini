@@ -413,6 +413,13 @@ def get_electron_api_script(theme: str = 'light') -> str:
             // DCC 会话信息
             getSessions: () => callBackend('/api/v1/sessions/list', null).then(r => r.sessions || {{}}),
             getSession:  () => {{ return {{ sessionId: _sessionId, backendUrl: _backendUrl }}; }},
+
+            // DCC MCP 工具调用
+            callDccTool: (toolName, args, timeout) => callBackend('/api/v1/mcp/call-dcc', {{
+                sessionId: _sessionId, toolName, arguments: args || {{}}, timeout: timeout || 30
+            }}),
+            listDccTools: () => callBackend('/api/v1/mcp/list-dcc-tools', {{ sessionId: _sessionId }}),
+            resolveDcc:   () => callBackend('/api/v1/sessions/resolve-dcc', {{ sessionId: _sessionId }}),
         }};
 
         if (_backendUrl) {{
@@ -3905,8 +3912,9 @@ def get_post_load_fix_script() -> str:
                 requestMethod = method;
                 requestUrl = url;
                 
-                // 检查是否是 Agent API 请求
-                if (typeof url === 'string' && (url.includes('/v1/agents') || url.includes('/v1/models'))) {
+                // 仅代理 Agent 相关请求；模型列表走正常前端链路，
+                // 由前端自身的回退逻辑处理，避免调试注入覆盖真实数据。
+                if (typeof url === 'string' && url.includes('/v1/agents')) {
                     isAgentApiRequest = true;
                     console.error('[XHR]', method, url);
                 }
@@ -4247,27 +4255,17 @@ def get_post_load_fix_script() -> str:
                                 return null;
                             };
                             
-                            // 根据 responseType 正确设置响应
-                            console.error('[Debug] XHR responseType:', xhr.responseType);
-                            
-                            // 强制使用 JSON 对象返回
-                            console.error('[Debug] Forcing responseType to json');
-                            Object.defineProperty(xhr, 'responseType', { value: 'json', writable: false });
-                            
+                            // Axios reads responseText when responseType is '' or 'json',
+                            // so we must provide both responseText (string) and response (parsed).
+                            const responseString = typeof responseStr === 'string' ? responseStr : JSON.stringify(responseStr);
+                            let responseParsed;
                             try {
-                                const jsonResponse = typeof responseStr === 'string' ? JSON.parse(responseStr) : responseStr;
-                                Object.defineProperty(xhr, 'response', { value: jsonResponse, writable: false });
+                                responseParsed = typeof responseStr === 'string' ? JSON.parse(responseStr) : responseStr;
                             } catch (e) {
-                                console.error('[XHR] Failed to parse JSON response:', e);
-                                // 如果解析失败，回退到字符串（虽然 responseType 是 json，可能会报错）
-                                Object.defineProperty(xhr, 'response', { value: responseStr, writable: false });
+                                responseParsed = responseStr;
                             }
-                            
-                            /*
-                            if (xhr.responseType === 'json') {
-                                // ...
-                            }
-                            */
+                            Object.defineProperty(xhr, 'responseText', { value: responseString, writable: false });
+                            Object.defineProperty(xhr, 'response', { value: responseParsed, writable: false });
 
                             Object.defineProperty(xhr, 'readyState', { value: 4, writable: false });
                             

@@ -23,6 +23,7 @@ from PySide6.QtCore import QObject, Slot, Signal
 
 from ..version import APP_VERSION, APP_PLATFORM, APP_ARCH
 from .agent_server import AgentServer
+from .agent_message_store import get_session_history, persist_exchange
 from ..utils.logger import network_logger
 from ..core.config_manager import config_manager
 from ..services.knowledge_base import KnowledgeBaseService
@@ -94,7 +95,8 @@ def _get_cherry_bin_dir() -> str:
     env_bin_dir = os.environ.get('CHERRY_STUDIO_BIN_DIR')
     if env_bin_dir:
         return env_bin_dir
-    return os.path.join(os.path.expanduser("~"), ".cherrystudio", "bin")
+    from ..core.paths import get_bin_dir
+    return get_bin_dir()
 
 
 def _get_bundled_binary_path(binary: str) -> Optional[str]:
@@ -614,7 +616,8 @@ class CherryStudioAPI(QObject):
     def _get_kb_service(self):
         with self._kb_service_lock:
             if self._kb_service is None:
-                storage_path = os.path.join(os.path.expanduser("~"), ".cherrystudio", "knowledge_base")
+                from ..core.paths import get_app_data_dir
+                storage_path = os.path.join(get_app_data_dir(), "knowledge_base")
                 os.makedirs(storage_path, exist_ok=True)
                 self._kb_service = KnowledgeBaseService(storage_path)
             return self._kb_service
@@ -1216,9 +1219,7 @@ class CherryStudioAPI(QObject):
             from shutil import which
             from pathlib import Path
 
-            # 优先检查 .cherrystudio/bin 目录
-            home_dir = Path.home()
-            bin_dir = home_dir / '.cherrystudio' / 'bin'
+            bin_dir = Path(_get_cherry_bin_dir())
 
             if bin_dir.exists():
                 # Windows 使用 .exe 扩展名
@@ -1683,12 +1684,9 @@ class CherryStudioAPI(QObject):
             terminal_id = options.get('terminal', 'cmd')
             auto_update = options.get('autoUpdateToLatest', False)
             
-            home_dir = Path.home()
-            cherry_dir = home_dir / '.cherrystudio'
-            bin_dir = cherry_dir / 'bin'
-            
-            # 确保 bin 目录存在
-            bin_dir.mkdir(parents=True, exist_ok=True)
+            from ..core.paths import get_base_dir
+            cherry_dir = Path(get_base_dir())
+            bin_dir = Path(_get_cherry_bin_dir())
             
             # 获取 bun 路径
             bun_path = bin_dir / 'bun.exe' if sys.platform == 'win32' else bin_dir / 'bun'
@@ -2493,13 +2491,12 @@ pause >nul
             return json.dumps({"synced": 0, "updated": 0, "failed": 0, "needsRefresh": False, "error": str(e)})
 
     def _get_app_data_dir(self) -> str:
-        """获取应用数据目录"""
+        """获取应用数据目录（per-DCC-type 隔离）"""
         if hasattr(self, '_app_data_dir'):
             return self._app_data_dir
 
-        # 使用用户主目录下的 .cherrystudio 目录
-        self._app_data_dir = os.path.join(os.path.expanduser("~"), ".cherrystudio")
-        os.makedirs(self._app_data_dir, exist_ok=True)
+        from ..core.paths import get_app_data_dir
+        self._app_data_dir = get_app_data_dir()
         return self._app_data_dir
 
     # ========== 网络功能 API ==========
@@ -3633,12 +3630,22 @@ pause >nul
     @Slot(str, result=str)
     def agentMessageGetHistory(self, payload: str) -> str:
         """获取 Agent 消息历史"""
-        return '[]'
+        try:
+            body = json.loads(payload) if payload else {}
+            return json.dumps(get_session_history(str(body.get('sessionId', '') or '')), ensure_ascii=False)
+        except Exception as e:
+            _log(f"[agentMessageGetHistory] {e}")
+            return '[]'
 
     @Slot(str, result=bool)
     def agentMessagePersistExchange(self, payload: str) -> bool:
         """持久化 Agent 消息"""
-        return True
+        try:
+            body = json.loads(payload) if payload else {}
+            return persist_exchange(body)
+        except Exception as e:
+            _log(f"[agentMessagePersistExchange] {e}")
+            return False
 
     @Slot(result=str)
     def getInstallInfo(self) -> str:
@@ -6695,8 +6702,7 @@ pause >nul
             from pathlib import Path
             import os
 
-            # 定义路径
-            local_bin_dir = Path(os.path.expanduser('~')) / '.cherrystudio' / 'bin'
+            local_bin_dir = Path(_get_cherry_bin_dir())
             j_bin_dir = Path('J:/vfxtools/piplineTD/models/packages/bin')
 
             # 检查本地是否存在，如果不存在则尝试从 J 盘复制
@@ -6809,14 +6815,9 @@ pause >nul
 
     @Slot(result=bool)
     def installBunBinary(self) -> bool:
-        """
-        安装 Bun 二进制文件
-        下载并解压到用户目录 .cherrystudio/bin
-        """
+        """安装 Bun 二进制文件到共享 bin 目录"""
         try:
-            home_dir = Path.home()
-            bin_dir = home_dir / '.cherrystudio' / 'bin'
-            bin_dir.mkdir(parents=True, exist_ok=True)
+            bin_dir = Path(_get_cherry_bin_dir())
 
             # 确定平台和架构
             platform = sys.platform
@@ -6892,14 +6893,9 @@ pause >nul
 
     @Slot(result=bool)
     def installUVBinary(self) -> bool:
-        """
-        安装 UV 二进制文件
-        下载并解压到用户目录 .cherrystudio/bin
-        """
+        """安装 UV 二进制文件到共享 bin 目录"""
         try:
-            home_dir = Path.home()
-            bin_dir = home_dir / '.cherrystudio' / 'bin'
-            bin_dir.mkdir(parents=True, exist_ok=True)
+            bin_dir = Path(_get_cherry_bin_dir())
             
             # 确定平台和架构
             platform = sys.platform

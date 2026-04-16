@@ -248,7 +248,32 @@ def _ocr_images_via_vision_model(images_b64: list, model: str = None) -> str:
     return ""
 
 
-_APP_DATA_DIR = os.path.join(os.path.expanduser("~"), ".cherrystudio")
+def _get_app_data_dir(session_id: str = "") -> str:
+    from ...core.paths import get_app_data_dir
+    return get_app_data_dir(session_id=session_id or None)
+
+
+def _find_file_in_app_data(filename: str, session_id: str = "") -> str:
+    """Locate a file by name, searching session-specific dir first then base dir.
+
+    Returns the absolute path if found, empty string otherwise.
+    """
+    if session_id:
+        session_path = os.path.join(_get_app_data_dir(session_id), filename)
+        if os.path.isfile(session_path):
+            return session_path
+    base_path = os.path.join(_get_app_data_dir(), filename)
+    if os.path.isfile(base_path):
+        return base_path
+    # Fallback: scan session subdirs
+    base_dir = _get_app_data_dir()
+    sessions_dir = os.path.join(base_dir, "sessions")
+    if os.path.isdir(sessions_dir):
+        for sid in os.listdir(sessions_dir):
+            candidate = os.path.join(sessions_dir, sid, filename)
+            if os.path.isfile(candidate):
+                return candidate
+    return ""
 
 # 应用资源目录（只读白名单）
 _RESOURCES_DIR = os.path.join(
@@ -259,7 +284,7 @@ _RESOURCES_DIR = os.path.join(
 
 def _safe_path(relative_path: str) -> str:
     """将相对路径限定在 APP_DATA_DIR 内，防止路径穿越"""
-    base = Path(_APP_DATA_DIR).resolve()
+    base = Path(_get_app_data_dir()).resolve()
     target = (base / relative_path).resolve()
     if not str(target).startswith(str(base)):
         raise PermissionError(f"Access denied: {relative_path}")
@@ -274,7 +299,7 @@ def _safe_read_path(path_str: str) -> str:
     p = Path(path_str)
     if p.is_absolute():
         resolved = p.resolve()
-        for allowed in (_APP_DATA_DIR, _RESOURCES_DIR):
+        for allowed in (_get_app_data_dir(), _RESOURCES_DIR):
             allowed_resolved = Path(allowed).resolve()
             try:
                 resolved.relative_to(allowed_resolved)
@@ -471,7 +496,7 @@ def file_list(ctx: dict) -> Any:
     body = ctx["body"]
     path = body.get("path", "")
     try:
-        full_path = _safe_path(path) if path else _APP_DATA_DIR
+        full_path = _safe_path(path) if path else _get_app_data_dir()
         if not os.path.isdir(full_path):
             return {"files": []}
         entries = []
@@ -561,7 +586,7 @@ def file_unzip(ctx: dict) -> Any:
 @route("/api/v1/files/app-data-dir", methods=["GET"])
 def get_app_data_dir(ctx: dict) -> Any:
     """返回应用数据目录路径"""
-    return {"path": _APP_DATA_DIR}
+    return {"path": _get_app_data_dir()}
 
 
 @route("/api/v1/files/open-external", methods=["POST"])
@@ -598,9 +623,9 @@ def file_upload(ctx: dict) -> Any:
         return {"error": f"Source file not found: {source_path}"}
     file_id = file_meta.get("id") or str(_uuid.uuid4())
     file_ext = file_meta.get("ext", "")
-    os.makedirs(_APP_DATA_DIR, exist_ok=True)
+    os.makedirs(_get_app_data_dir(), exist_ok=True)
     dest_filename = file_id + file_ext
-    dest_path = os.path.join(_APP_DATA_DIR, dest_filename)
+    dest_path = os.path.join(_get_app_data_dir(), dest_filename)
     try:
         if os.path.normpath(os.path.abspath(source_path)) != os.path.normpath(os.path.abspath(dest_path)):
             shutil.copy2(source_path, dest_path)
@@ -625,7 +650,7 @@ def binary_image(ctx: dict) -> Any:
         return None
     file_path = file_id
     if not os.path.isabs(file_id) or not os.path.exists(file_id):
-        file_path = os.path.join(_APP_DATA_DIR, file_id)
+        file_path = os.path.join(_get_app_data_dir(), file_id)
     if not os.path.exists(file_path):
         _log(f"[files/binary-image] not found: {file_path}")
         return None
@@ -662,8 +687,8 @@ def save_base64_image(ctx: dict) -> Any:
     image_bytes = base64.b64decode(b64_str)
     file_uuid = str(_uuid.uuid4())
     ext = ".png"
-    os.makedirs(_APP_DATA_DIR, exist_ok=True)
-    dest = os.path.join(_APP_DATA_DIR, file_uuid + ext)
+    os.makedirs(_get_app_data_dir(), exist_ok=True)
+    dest = os.path.join(_get_app_data_dir(), file_uuid + ext)
     with open(dest, "wb") as f:
         f.write(image_bytes)
     return {
@@ -693,8 +718,8 @@ def save_pasted_image(ctx: dict) -> Any:
     file_uuid = str(_uuid.uuid4())
     if not ext.startswith("."):
         ext = "." + ext
-    os.makedirs(_APP_DATA_DIR, exist_ok=True)
-    dest = os.path.join(_APP_DATA_DIR, file_uuid + ext)
+    os.makedirs(_get_app_data_dir(), exist_ok=True)
+    dest = os.path.join(_get_app_data_dir(), file_uuid + ext)
     with open(dest, "wb") as f:
         f.write(image_bytes)
     return {
@@ -718,7 +743,7 @@ def write_with_id(ctx: dict) -> Any:
     content = body.get("content", "")
     if not file_id:
         return {"error": "missing fileId"}
-    dest = os.path.join(_APP_DATA_DIR, file_id)
+    dest = os.path.join(_get_app_data_dir(), file_id)
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     with open(dest, "w", encoding="utf-8") as f:
         f.write(content)
@@ -743,9 +768,10 @@ def file_serve(ctx: dict) -> Any:
         return STREAMING_HANDLED
 
     safe_name = os.path.basename(name)
-    file_path = os.path.join(_APP_DATA_DIR, safe_name)
+    session_id = ctx.get("session_id", "")
+    file_path = _find_file_in_app_data(safe_name, session_id)
 
-    if not os.path.isfile(file_path):
+    if not file_path:
         handler.send_response(404)
         handler.send_header("Content-Type", "text/plain")
         handler.end_headers()
@@ -836,7 +862,8 @@ def install_bun(ctx: dict) -> Any:
     """下载并安装 Bun 到 ~/.cherrystudio/bin"""
     import sys as _sys
     try:
-        bin_dir = os.path.join(os.path.expanduser("~"), ".cherrystudio", "bin")
+        from ...core.paths import get_bin_dir
+        bin_dir = get_bin_dir()
         plat = _sys.platform
         arch = "x64" if _sys.maxsize > 2**32 else "x86"
         _PKGS = {
@@ -864,7 +891,8 @@ def install_uv(ctx: dict) -> Any:
     """下载并安装 UV 到 ~/.cherrystudio/bin"""
     import sys as _sys
     try:
-        bin_dir = os.path.join(os.path.expanduser("~"), ".cherrystudio", "bin")
+        from ...core.paths import get_bin_dir
+        bin_dir = get_bin_dir()
         plat = _sys.platform
         arch = "x64" if _sys.maxsize > 2**32 else "x86"
         _PKGS = {

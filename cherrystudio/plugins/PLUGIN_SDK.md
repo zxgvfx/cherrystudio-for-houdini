@@ -29,6 +29,17 @@ Every plugin must have a `manifest.json` at its root:
   "version": "1.0.0",
   "description": "What the plugin does",
   "icon": "cube",
+  "launcher": {
+    "enabled": true,
+    "type": "native_window",
+    "label": "My Plugin",
+    "category": "tools",
+    "pinnable": true,
+    "entry": {
+      "action": "api",
+      "endpoint": "/api/v1/plugins/my-plugin/open-gui"
+    }
+  },
   "modes": {
     "default": {
       "label": "Default Mode",
@@ -60,6 +71,7 @@ Every plugin must have a `manifest.json` at its root:
 | `version` | string | Yes | SemVer version |
 | `description` | string | Yes | Brief description |
 | `icon` | string | No | Icon name (cube, image, code, tool) |
+| `launcher` | object | No | GUI launcher metadata for click-to-open plugins |
 | `modes` | object | No | Available interaction modes |
 | `backend_routes` | string | No | Path to backend routes module |
 | `output_types` | string[] | No | Types of output the plugin produces |
@@ -135,6 +147,8 @@ with _clients_lock:
 ## Frontend Integration
 
 Plugins are automatically registered in the `/` quick panel menu based on their `modes` in the manifest. The frontend tool system fetches the plugin list from `GET /api/v1/plugins/list` at startup.
+
+Plugins with a `launcher.enabled: true` entry can also be surfaced in GUI launch areas such as the launchpad. This is intended for standalone plugin UIs that should open directly when clicked and do not need LLM orchestration.
 
 ## Installation
 

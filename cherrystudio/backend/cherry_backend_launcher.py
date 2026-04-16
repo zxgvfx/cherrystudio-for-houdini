@@ -53,8 +53,8 @@ def _inject_mcp_bin_paths() -> None:
         candidates.append(env_bin)
 
     # 2. 用户本地目录 ~/.cherrystudio/bin
-    home_bin = os.path.join(os.path.expanduser("~"), ".cherrystudio", "bin")
-    candidates.append(home_bin)
+    from cherrystudio.core.paths import get_bin_dir
+    candidates.append(get_bin_dir())
 
     # 3. 团队 J 盘公共目录（如果存在）
     j_bin = os.path.join("J:", os.sep, "vfxtools", "piplineTD", "models", "packages", "bin")

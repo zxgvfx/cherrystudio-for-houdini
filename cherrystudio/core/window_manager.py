@@ -26,10 +26,34 @@ if "--proxy-bypass-list" not in _chrome_flags:
         _flags_to_add.append("--allow-file-access-from-files")
     if "--allow-file-access" not in _chrome_flags:
         _flags_to_add.append("--allow-file-access")
+
+# DCC 宿主（Houdini / Maya）环境下，Chromium 默认用桌面 OpenGL 创建 GPU 上下文，
+# 与宿主已占用的 OpenGL 冲突（GpuChannelHost creation failed）。
+# 解决：让 Chromium 通过 ANGLE 使用 D3D11（与 OpenGL 互不干扰），GPU 仍跑在
+# 独立子进程里（不加 --in-process-gpu，避免段错误）。
+#
+# 重要：ensure_qtwebengine_initialized() 在 main.py 中是在 import window_manager
+# 之后才调用的，而此模块加载时就会 import QtWebEngineCore，所以 Chromium 标志
+# 必须在这里设置——app_lifecycle 里设置的已经太晚。
+try:
+    from .app_lifecycle import detect_dcc_type as _detect_dcc
+    if _detect_dcc() not in ("standalone",):
+        for _f in [
+            "--no-sandbox",
+            "--disable-gpu-sandbox",
+            "--use-gl=angle",
+            "--use-angle=d3d11",
+        ]:
+            if _f not in _chrome_flags:
+                _flags_to_add.append(_f)
+except Exception:
+    pass
+
 if _flags_to_add:
     os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
         _chrome_flags + " " + " ".join(_flags_to_add)
     ).strip()
+
 from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebEngineCore import (
@@ -71,6 +95,16 @@ def _ensure_backend_service(static_dir: str = "") -> str:
         if not svc.is_running():
             port = svc.start()
             print(f"[WindowManager] Backend service started (embedded) on port {port}")
+            # Clean up stale profile dirs from previous crashed sessions
+            try:
+                import threading
+                from .paths import cleanup_stale_profiles
+                threading.Thread(
+                    target=cleanup_stale_profiles, daemon=True,
+                    name="profile-cleanup",
+                ).start()
+            except Exception:
+                pass
         # 注册静态文件目录
         server = svc.get_server()
         if server and static_dir and os.path.isdir(static_dir):
@@ -86,31 +120,40 @@ def _ensure_backend_service(static_dir: str = "") -> str:
 
 def _register_dcc_session(backend_url: str) -> str:
     """
-    启动 Houdini MCP Server 并向后端服务注册当前 DCC 会话。
+    根据检测到的 DCC 类型启动对应的 MCP Server 并向后端服务注册当前会话。
     返回 session_id（用于注入到前端 URL）。
     """
     if not backend_url:
         return ""
     try:
         from ..dcc.session import DCCSession
-        from ..dcc.houdini_mcp import HoudiniMCPServer
 
         session = DCCSession.instance()
         session.set_backend_url(backend_url)
 
-        # 启动 Houdini MCP Server（如果尚未启动）
         if session.mcp_port == 0:
-            mcp_server = HoudiniMCPServer()
-            mcp_port = mcp_server.start()
-            session.set_mcp_port(mcp_port)
-            print(f"[WindowManager] Houdini MCP Server started on port {mcp_port}")
+            mcp_server = _create_mcp_server(session.dcc_type)
+            if mcp_server is not None:
+                mcp_port = mcp_server.start()
+                session.set_mcp_port(mcp_port)
+                print(f"[WindowManager] {session.dcc_type} MCP Server started on port {mcp_port}")
 
-        # 注册到后端
         session.register_to_backend()
         return session.session_id
     except Exception as e:
         print(f"[WindowManager] DCC session registration failed: {e}")
         return ""
+
+
+def _create_mcp_server(dcc_type: str):
+    """根据 dcc_type 创建对应的 MCP Server 实例"""
+    if dcc_type == "houdini":
+        from ..dcc.houdini_mcp import HoudiniMCPServer
+        return HoudiniMCPServer()
+    if dcc_type == "maya":
+        from ..dcc.maya_mcp import MayaMCPServer
+        return MayaMCPServer()
+    return None
 
 
 def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, parent=None):
@@ -216,13 +259,13 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
 
         # 配置持久化存储（确保配置不会丢失）
         # 重要：必须在任何 WebEngine 相关对象创建之前设置
-        # 使用用户主目录下的 .cherrystudio 目录，确保跨宿主应用路径一致
-        storage_path = os.path.join(os.path.expanduser("~"), ".cherrystudio")
-        os.makedirs(storage_path, exist_ok=True)
+        # 使用 per-instance Profile 目录，避免多实例 Chromium 锁冲突导致黑屏
+        from .paths import get_profile_dir
+        _instance_id = session_id or str(os.getpid())
+        storage_path = get_profile_dir(_instance_id)
+        profile_name = f"CherryStudio-{_instance_id[:12]}"
 
-        # 使用默认 profile（hython 环境不支持命名 Profile，会崩溃）
-        # 虽然 defaultProfile 是 off-the-record 模式，但我们会在 JavaScript 层面手动持久化 IndexedDB
-        profile = QWebEngineProfile("CherryStudio")
+        profile = QWebEngineProfile(profile_name)
         profile.setPersistentStoragePath(storage_path)
         cache_path = os.path.join(storage_path, "cache")
         os.makedirs(cache_path, exist_ok=True)
@@ -555,17 +598,25 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
             # 我们需要在 API 中添加 startDrag 方法，并在前端标题栏 mousedown 时调用
             pass
 
-        # 0.5 注入会话信息（backend_url、session_id），供前端直接使用
+        # 0.5 注入会话信息（backend_url、session_id、dcc_type），供前端直接使用
         _backend_url_escaped = (backend_url or "").replace("\\", "\\\\").replace('"', '\\"')
         _session_id_escaped = (session_id or "").replace('"', '\\"')
+        _dcc_type = ""
+        try:
+            from ..dcc.session import DCCSession
+            _dcc_type = DCCSession.instance().dcc_type
+        except Exception:
+            pass
+        _dcc_type_escaped = (_dcc_type or "standalone").replace('"', '\\"')
         session_inject_script = QWebEngineScript()
         session_inject_script.setName("cherry-session-info")
         session_inject_script.setSourceCode(f"""
 // Cherry Studio 后端服务信息（由 Python 注入）
 window.__CHERRY_BACKEND_URL = "{_backend_url_escaped}";
 window.__CHERRY_SESSION_ID = "{_session_id_escaped}";
+window.__CHERRY_DCC_TYPE = "{_dcc_type_escaped}";
 window.__CHERRY_API_V2 = true;
-console.error('[Cherry] Backend URL:', window.__CHERRY_BACKEND_URL, 'Session:', window.__CHERRY_SESSION_ID);
+console.error('[Cherry] Backend URL:', window.__CHERRY_BACKEND_URL, 'Session:', window.__CHERRY_SESSION_ID, 'DCC:', window.__CHERRY_DCC_TYPE);
 """)
         session_inject_script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
         session_inject_script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)

@@ -174,6 +174,28 @@ _proxy_settings: Dict[str, str] = {
 }
 
 
+def _init_proxy_from_config():
+    """从 centralized-config.json 读取代理配置作为默认值，
+    确保桌面端（无 Qt API 推送代理配置）也能正确 bypass 内网地址。"""
+    try:
+        cfg_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            "resources", "centralized-config.json"
+        )
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        proxy_cfg = cfg.get("proxy", {})
+        if proxy_cfg.get("bypassRules") and not _proxy_settings["bypassRules"]:
+            _proxy_settings["bypassRules"] = proxy_cfg["bypassRules"]
+        if proxy_cfg.get("proxyUrl") and not _proxy_settings["proxyUrl"]:
+            _proxy_settings["proxyUrl"] = proxy_cfg["proxyUrl"]
+    except Exception:
+        pass
+
+
+_init_proxy_from_config()
+
+
 def _should_bypass_proxy(url: str) -> bool:
     bypass = _proxy_settings.get("bypassRules", "")
     if not bypass:
@@ -295,15 +317,19 @@ def _http_error_dict(e: urllib.error.HTTPError) -> dict:
 import hashlib
 import base64 as _b64
 
-_IMAGE_CACHE_DIR = os.path.join(os.path.expanduser("~"), ".cherrystudio", "image-cache")
-os.makedirs(_IMAGE_CACHE_DIR, exist_ok=True)
-
 _IMAGE_CACHE_MAX_AGE = 7 * 24 * 3600  # 7 days
+
+
+def _image_cache_dir() -> str:
+    from ...core.paths import get_app_data_dir
+    d = os.path.join(get_app_data_dir(), "image-cache")
+    os.makedirs(d, exist_ok=True)
+    return d
 
 
 def _image_cache_path(url: str) -> str:
     url_hash = hashlib.sha256(url.encode("utf-8")).hexdigest()[:32]
-    return os.path.join(_IMAGE_CACHE_DIR, url_hash)
+    return os.path.join(_image_cache_dir(), url_hash)
 
 
 def _read_image_cache(url: str):
@@ -399,16 +425,19 @@ _BING_BLOCKED_DOMAINS = (
     "microsoft.com/en-us/servicesagreement", "go.microsoft.com",
 )
 
-_SEARCH_DEBUG_DIR = os.path.join(os.path.expanduser("~"), ".cherrystudio", "debug")
+def _search_debug_dir() -> str:
+    from ...core.paths import get_app_data_dir
+    return os.path.join(get_app_data_dir(), "debug")
 
 
 def _dump_search_debug(provider: str, html: str):
     """Save HTML to debug file when extraction returns 0 results."""
     try:
-        os.makedirs(_SEARCH_DEBUG_DIR, exist_ok=True)
+        dbg = _search_debug_dir()
+        os.makedirs(dbg, exist_ok=True)
         import time as _t
         ts = _t.strftime("%Y%m%d_%H%M%S")
-        path = os.path.join(_SEARCH_DEBUG_DIR, f"search_{provider}_{ts}.html")
+        path = os.path.join(dbg, f"search_{provider}_{ts}.html")
         with open(path, "w", encoding="utf-8") as f:
             f.write(html)
         _log(f"[network/search] DEBUG: saved HTML ({len(html)} chars) -> {path}")

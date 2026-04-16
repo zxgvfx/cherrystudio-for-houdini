@@ -44,6 +44,9 @@ def agent_proxy(ctx: dict) -> Any:
         req = urllib.request.Request(url, data=data, method=method)
         req.add_header("Content-Type", "application/json")
         req.add_header("Authorization", "Bearer internal")
+        dcc_session_id = ctx.get("session_id", "")
+        if dcc_session_id:
+            req.add_header("X-DCC-Session-Id", dcc_session_id)
 
         with urllib.request.urlopen(req, timeout=30) as resp:
             resp_data = resp.read().decode("utf-8")
@@ -94,7 +97,9 @@ def agent_status(ctx: dict) -> Any:
 def register_session(ctx: dict) -> Any:
     """
     DCC 实例启动后调用，将自身的 session_id 和 MCP 服务端口注册到后端。
-    
+
+    sessionId 来源优先级：X-Session-Id 头 > body.sessionId
+
     请求体:
         {
             "sessionId": "uuid",
@@ -104,7 +109,7 @@ def register_session(ctx: dict) -> Any:
         }
     """
     body = ctx["body"]
-    session_id = body.get("sessionId", "")
+    session_id = ctx.get("session_id", "") or body.get("sessionId", "")
     mcp_port = body.get("mcpPort", 0)
     dcc_type = body.get("dccType", "unknown")
 
@@ -135,7 +140,7 @@ def list_sessions(ctx: dict) -> Any:
 @route("/api/v1/sessions/unregister", methods=["POST"])
 def unregister_session(ctx: dict) -> Any:
     body = ctx["body"]
-    session_id = body.get("sessionId", "")
+    session_id = ctx.get("session_id", "") or body.get("sessionId", "")
     server = ctx.get("server")
     if server and session_id in server._session_registry:
         del server._session_registry[session_id]
@@ -191,3 +196,50 @@ def agent_toggle(ctx: dict) -> Any:
 def agent_configure(ctx: dict) -> Any:
     """配置 Agent Server（占位）"""
     return {"success": True}
+
+
+@route("/api/v1/sessions/resolve-dcc", methods=["GET", "POST"])
+def resolve_dcc_context(ctx: dict) -> Any:
+    """
+    Resolve the DCC context for the current request.
+
+    When an Agent session needs to invoke DCC tools, it can call this
+    endpoint to discover which DCC instance is associated with the
+    current X-Session-Id header.
+
+    Returns:
+        dccSessionId, dccType, mcpPort, available (bool)
+    """
+    body = ctx.get("body") or {}
+    query = ctx.get("query") or {}
+    session_id = (
+        ctx.get("session_id", "")
+        or (query.get("sessionId", [""])[0] if isinstance(query.get("sessionId"), list) else query.get("sessionId", ""))
+        or body.get("sessionId", "")
+    )
+
+    server = ctx.get("server")
+    if not server or not session_id:
+        return {
+            "dccSessionId": "",
+            "dccType": "",
+            "mcpPort": 0,
+            "available": False,
+        }
+
+    session_info = server.get_session(session_id)
+    if not session_info:
+        return {
+            "dccSessionId": session_id,
+            "dccType": "",
+            "mcpPort": 0,
+            "available": False,
+        }
+
+    return {
+        "dccSessionId": session_id,
+        "dccType": session_info.get("dcc_type", "unknown"),
+        "dccVersion": session_info.get("dcc_version", ""),
+        "mcpPort": session_info.get("mcp_port", 0),
+        "available": bool(session_info.get("mcp_port", 0)),
+    }

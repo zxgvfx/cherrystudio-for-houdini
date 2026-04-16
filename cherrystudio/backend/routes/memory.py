@@ -15,7 +15,9 @@ from ...utils.logger import network_logger
 
 _log = network_logger
 
-_APP_DATA_DIR = os.path.join(os.path.expanduser("~"), ".cherrystudio")
+def _get_app_data_dir() -> str:
+    from ...core.paths import get_app_data_dir
+    return get_app_data_dir()
 
 
 @route("/api/v1/memory/list", methods=["POST"])
@@ -68,7 +70,8 @@ def memory_set_config(ctx: dict) -> Any:
     """保存全局记忆配置到 localStorage.json"""
     try:
         config_data = ctx["body"]
-        storage_path = os.path.join(_APP_DATA_DIR, "localStorage.json")
+        data_dir = _get_app_data_dir()
+        storage_path = os.path.join(data_dir, "localStorage.json")
         storage_data = {}
         if os.path.exists(storage_path):
             try:
@@ -77,7 +80,7 @@ def memory_set_config(ctx: dict) -> Any:
             except Exception:
                 pass
         storage_data["memoryConfig"] = config_data
-        os.makedirs(_APP_DATA_DIR, exist_ok=True)
+        os.makedirs(data_dir, exist_ok=True)
         with open(storage_path, "w", encoding="utf-8") as f:
             json.dump(storage_data, f, ensure_ascii=False, indent=2)
         return True

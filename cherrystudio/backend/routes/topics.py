@@ -14,14 +14,19 @@ from ...utils.logger import network_logger
 
 _log = network_logger
 
-_TOPICS_DIR = os.path.join(os.path.expanduser("~"), ".cherrystudio", "topics")
+
+def _topics_dir() -> str:
+    from ...core.paths import get_app_data_dir
+    d = os.path.join(get_app_data_dir(), "topics")
+    os.makedirs(d, exist_ok=True)
+    return d
 
 
 def _topic_path(topic_id: str) -> str:
-    os.makedirs(_TOPICS_DIR, exist_ok=True)
+    base = _topics_dir()
     # 防止目录穿越
     safe_id = os.path.basename(topic_id)
-    return os.path.join(_TOPICS_DIR, f"{safe_id}.json")
+    return os.path.join(base, f"{safe_id}.json")
 
 
 @route("/api/v1/topics/save", methods=["POST"])

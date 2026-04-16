@@ -36,10 +36,10 @@ def _load_manifest(plugin_dir: str) -> Optional[Dict[str, Any]]:
 def _merge_after_plugin_load():
     """
     Plugin modules use absolute imports (e.g. `from cherrystudio.backend.server import route`)
-    which may load a FRESH copy of server.py with a separate _routes dict.
+    which may load a FRESH copy of server.py with separate route registries.
     This function merges any new routes and MCP clients back into the real registries.
     """
-    from ..backend.server import _routes as main_routes
+    from ..backend.server import _routes as main_routes, _prefix_routes as main_prefix_routes
 
     # Merge routes from re-imported server module
     srv_mod = sys.modules.get("cherrystudio.backend.server")
@@ -50,6 +50,13 @@ def _merge_after_plugin_load():
                 if path not in main_routes:
                     main_routes[path] = methods
                     _log(f"[PluginLoader]   Merged route: {path}")
+
+        other_prefix_routes = getattr(srv_mod, "_prefix_routes", {})
+        if other_prefix_routes is not main_prefix_routes:
+            for prefix, methods in other_prefix_routes.items():
+                if prefix not in main_prefix_routes:
+                    main_prefix_routes[prefix] = methods
+                    _log(f"[PluginLoader]   Merged prefix route: {prefix}")
 
     # Merge MCP clients from re-imported mcp module
     try:

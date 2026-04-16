@@ -23,8 +23,9 @@ def _get_kb_service():
         _kb_lock_obj = threading.Lock()
     with _kb_lock_obj:
         if _kb_service is None:
+            from ...core.paths import get_app_data_dir
             from ...services.knowledge_base import KnowledgeBaseService
-            storage_path = os.path.join(os.path.expanduser("~"), ".cherrystudio", "knowledge_base")
+            storage_path = os.path.join(get_app_data_dir(), "knowledge_base")
             os.makedirs(storage_path, exist_ok=True)
             _kb_service = KnowledgeBaseService(storage_path)
         return _kb_service

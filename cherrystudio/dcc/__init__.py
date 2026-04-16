@@ -9,5 +9,6 @@ Cherry Studio DCC Integration Layer
 
 from .session import DCCSession
 from .houdini_mcp import HoudiniMCPServer
+from .maya_mcp import MayaMCPServer
 
-__all__ = ["DCCSession", "HoudiniMCPServer"]
+__all__ = ["DCCSession", "HoudiniMCPServer", "MayaMCPServer"]

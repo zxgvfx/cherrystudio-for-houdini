@@ -12,10 +12,10 @@ import os
 import uuid
 from typing import Any, Dict, List, Optional
 
+from cherrystudio.core.paths import get_app_data_dir
 from cherrystudio.utils.logger import network_logger
 
 _log = network_logger
-_APP_DATA_DIR = os.path.join(os.path.expanduser("~"), ".cherrystudio")
 
 SAM3_TOOL_DEFINITIONS = [
     {
@@ -194,14 +194,14 @@ def _handle_auto_segment(args: dict) -> dict:
         labels = [1] * len(pt_coords)
         mask_np, iou, stats = predictor.predict(pt_coords, labels)
 
-        os.makedirs(_APP_DATA_DIR, exist_ok=True)
+        os.makedirs(get_app_data_dir(), exist_ok=True)
         mask_id = str(uuid.uuid4())
-        mask_path = os.path.join(_APP_DATA_DIR, f"{mask_id}.png")
+        mask_path = os.path.join(get_app_data_dir(), f"{mask_id}.png")
         mask_img = Image.fromarray((mask_np.astype(np.uint8) * 255), mode="L")
         mask_img.save(mask_path)
 
         preview_id = str(uuid.uuid4())
-        preview_path = os.path.join(_APP_DATA_DIR, f"{preview_id}.png")
+        preview_path = os.path.join(get_app_data_dir(), f"{preview_id}.png")
         overlay = image_np.copy()
         overlay[mask_np] = (overlay[mask_np] * 0.5 + np.array([0, 255, 180]) * 0.5).astype(np.uint8)
         Image.fromarray(overlay).save(preview_path)
@@ -264,14 +264,14 @@ def _handle_generate_3d(args: dict) -> dict:
         if resp.status_code != 200:
             return {"isError": True, "content": [{"type": "text", "text": f"3D generation failed: {resp.status_code}"}]}
 
-        os.makedirs(_APP_DATA_DIR, exist_ok=True)
+        os.makedirs(get_app_data_dir(), exist_ok=True)
         model_id = str(uuid.uuid4())
-        raw_path = os.path.join(_APP_DATA_DIR, f"{model_id}_raw.ply")
+        raw_path = os.path.join(get_app_data_dir(), f"{model_id}_raw.ply")
         with open(raw_path, "wb") as f:
             f.write(resp.content)
 
         final_ext = ".glb"
-        final_path = os.path.join(_APP_DATA_DIR, f"{model_id}{final_ext}")
+        final_path = os.path.join(get_app_data_dir(), f"{model_id}{final_ext}")
         converted = _convert_to_glb(raw_path, final_path)
         if not converted:
             final_path = raw_path

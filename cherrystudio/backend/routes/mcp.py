@@ -85,7 +85,8 @@ def _load_active_server_configs() -> list:
 
     # 2) 用户配置（localStorage.json → Redux persist）
     try:
-        base_dir = os.path.join(os.path.expanduser("~"), ".cherrystudio")
+        from ...core.paths import get_app_data_dir
+        base_dir = get_app_data_dir()
         ls_path = os.path.join(base_dir, "localStorage.json")
         _dbg(f"[warmup] localStorage path: {ls_path}, exists={os.path.exists(ls_path)}")
         if os.path.exists(ls_path):
@@ -152,7 +153,8 @@ def _ensure_bin_sync():
     import shutil
     from pathlib import Path
 
-    local_bin = Path(os.path.expanduser("~")) / ".cherrystudio" / "bin"
+    from ...core.paths import get_bin_dir
+    local_bin = Path(get_bin_dir())
     shared_bin = Path("J:/vfxtools/piplineTD/models/packages/bin")
 
     uv_name = "uv.exe" if os.name == "nt" else "uv"
@@ -253,8 +255,8 @@ def _load_websearch_config() -> Optional[dict]:
       3) 中心化配置 centralizedWebSearchProviders
     """
     try:
-        base_dir = os.path.join(os.path.expanduser("~"), ".cherrystudio")
-        ls_path = os.path.join(base_dir, "localStorage.json")
+        from ...core.paths import get_app_data_dir as _get_data_dir
+        ls_path = os.path.join(_get_data_dir(), "localStorage.json")
 
         providers_list: list = []
         assistant_provider_id: str = ""
@@ -1545,11 +1547,15 @@ class MCPStdioClient:
             _dbg(f"[stdio:{self.server_id[:12]}] Wrapped as cmd /c: {[command] + args}")
 
         use_shell = False  # 始终使用 shell=False（.cmd 已通过 cmd /c 包装）
+        popen_kwargs = {}
+        if os.name == "nt":
+            popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
         _dbg(f"[stdio:{self.server_id[:12]}] Starting subprocess: {command} {args}")
         self.process = subprocess.Popen(
             [command] + args,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             env=env, cwd=self.cwd, bufsize=0, text=False, shell=use_shell,
+            **popen_kwargs,
         )
         _pm.register(self.process, f"mcp:{self.server_id[:16]}")
         threading.Thread(target=self._read_loop,   daemon=True, name=f"mcp-r-{self.server_id[:8]}").start()
@@ -2436,15 +2442,19 @@ def mcp_call_dcc(ctx: dict) -> Any:
     """
     通过 session 注册表，调用特定 DCC 实例的 MCP 工具。
 
+    sessionId 来源优先级：
+        1. HTTP 头 X-Session-Id（ctx["session_id"]）
+        2. 请求体 body.sessionId（向后兼容）
+
     请求体:
         {
-            "sessionId": "uuid-xxx",   // 目标 DCC 实例
+            "sessionId": "uuid-xxx",   // 目标 DCC 实例（可选，优先用 HTTP 头）
             "toolName":  "houdini_create_node",
             "arguments": { "parentPath": "/obj", "nodeType": "geo" }
         }
     """
     body = ctx["body"]
-    session_id = body.get("sessionId", "")
+    session_id = ctx.get("session_id", "") or body.get("sessionId", "")
     tool_name = body.get("toolName", "") or body.get("name", "")
     arguments = body.get("arguments") or body.get("args") or {}
     timeout = float(body.get("timeout", 30.0))
@@ -2485,6 +2495,71 @@ def mcp_call_dcc(ctx: dict) -> Any:
         return {"error": f"Cannot reach DCC: {e}"}
     except Exception as e:
         _log(f"[mcp/call-dcc] {e}")
+        return {"error": str(e)}
+
+
+@route("/api/v1/mcp/list-dcc-tools", methods=["GET", "POST"])
+def mcp_list_dcc_tools(ctx: dict) -> Any:
+    """
+    列出指定 DCC 实例上可用的 MCP 工具。
+
+    sessionId 来源优先级：
+        1. HTTP 头 X-Session-Id
+        2. query 参数 ?sessionId=xxx
+        3. 请求体 body.sessionId
+    """
+    body = ctx.get("body") or {}
+    query = ctx.get("query") or {}
+    session_id = (
+        ctx.get("session_id", "")
+        or (query.get("sessionId", [""])[0] if isinstance(query.get("sessionId"), list) else query.get("sessionId", ""))
+        or body.get("sessionId", "")
+    )
+    timeout = float(body.get("timeout", 10.0))
+
+    server = ctx.get("server")
+    if not server:
+        return {"error": "server context unavailable"}
+
+    if not session_id:
+        return {"error": "missing sessionId (use X-Session-Id header or ?sessionId= query)"}
+
+    session_info = server.get_session(session_id)
+    if not session_info:
+        return {"error": f"DCC session not found: {session_id}"}
+
+    mcp_port = session_info.get("mcp_port", 0)
+    if not mcp_port:
+        return {"error": f"DCC session has no MCP port: {session_id}"}
+
+    payload = json.dumps({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/list",
+        "params": {},
+    }).encode("utf-8")
+
+    try:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{mcp_port}",
+            data=payload,
+            method="POST",
+        )
+        req.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+            tools = result.get("result", result).get("tools", [])
+            return {
+                "ok": True,
+                "sessionId": session_id,
+                "dccType": session_info.get("dcc_type", "unknown"),
+                "tools": tools,
+            }
+    except urllib.error.URLError as e:
+        _log(f"[mcp/list-dcc-tools] Cannot reach DCC MCP on port {mcp_port}: {e}")
+        return {"error": f"Cannot reach DCC: {e}"}
+    except Exception as e:
+        _log(f"[mcp/list-dcc-tools] {e}")
         return {"error": str(e)}
 
 

@@ -16,9 +16,8 @@ class ConfigManager:
         return cls._instance
 
     def _init(self):
-        # 使用用户主目录下的 .cherrystudio 目录
-        base_dir = os.path.join(os.path.expanduser("~"), ".cherrystudio")
-        # 修改为使用 localStorage.json
+        from .paths import get_app_data_dir
+        base_dir = get_app_data_dir()
         self._user_config_path = os.path.join(base_dir, "localStorage.json")
         
         print(f"[ConfigManager] User Config Path (localStorage): {self._user_config_path}")

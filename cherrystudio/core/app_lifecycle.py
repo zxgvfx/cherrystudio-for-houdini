@@ -7,6 +7,32 @@ import os
 import sys
 
 
+def detect_dcc_type() -> str:
+    """
+    检测当前运行的 DCC 宿主类型。
+
+    Returns:
+        str: 'houdini' | 'maya' | 'blender' | 'standalone'
+    """
+    try:
+        import hou  # type: ignore
+        _ = hou.applicationVersionString()
+        return "houdini"
+    except Exception:
+        pass
+    try:
+        import maya.cmds  # type: ignore
+        return "maya"
+    except Exception:
+        pass
+    try:
+        import bpy  # type: ignore
+        return "blender"
+    except Exception:
+        pass
+    return "standalone"
+
+
 def is_running_inside_houdini() -> bool:
     """
     检查是否在 Houdini 环境中运行
@@ -63,10 +89,15 @@ def ensure_qtwebengine_initialized():
             os.environ["QTWEBENGINE_DISABLE_GPU"] = "1"
 
         # 根据 GPU 偏好设置标志
-        gpu_preferred = os.environ.get("QTWEBENGINE_DISABLE_GPU") not in {"1", "true", "True"}
+        gpu_disabled = os.environ.get("QTWEBENGINE_DISABLE_GPU") in {"1", "true", "True"}
+        is_dcc_host = detect_dcc_type() not in ("standalone",)
         desired = ["--no-sandbox"]
         
-        if gpu_preferred:
+        if is_dcc_host:
+            # DCC 内的 WebGL 目前不稳定，避免启用激进 GPU 标志导致宿主进程崩溃。
+            # 3D 预览失败时由前端组件降级展示提示，而不是拖垮 Houdini/Maya。
+            desired.append("--disable-gpu")
+        elif not gpu_disabled:
             desired.extend(["--ignore-gpu-blocklist", "--enable-gpu", "--enable-zero-copy"])
         else:
             desired.append("--disable-gpu")

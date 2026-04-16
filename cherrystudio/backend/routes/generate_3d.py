@@ -21,10 +21,10 @@ import uuid
 from typing import Any, Tuple
 
 from ..server import route
+from ...core.paths import get_app_data_dir
 from ...utils.logger import network_logger
 
 _log = network_logger
-_APP_DATA_DIR = os.path.join(os.path.expanduser("~"), ".cherrystudio")
 
 
 def _get_centralized_config() -> Tuple[str, str]:
@@ -344,8 +344,10 @@ def generate_3d_save(ctx: dict) -> Any:
 
     file_id = str(uuid.uuid4())
     ext = f".{fmt}"
-    os.makedirs(_APP_DATA_DIR, exist_ok=True)
-    file_path = os.path.join(_APP_DATA_DIR, f"{file_id}{ext}")
+    session_id = ctx.get("session_id", "") or None
+    app_data = get_app_data_dir(session_id=session_id)
+    os.makedirs(app_data, exist_ok=True)
+    file_path = os.path.join(app_data, f"{file_id}{ext}")
 
     if not _download_file(download_url, file_path):
         return {"error": "Failed to download 3D model file"}

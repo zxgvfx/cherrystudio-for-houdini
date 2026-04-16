@@ -48,55 +48,84 @@ except NameError:
             print(msg)
     _log = network_logger = _PrintLogger()  # type: ignore
 
-# 服务发现文件路径（Houdini 插件通过此文件获知服务端口）
-_PORT_FILE = os.path.join(os.path.expanduser("~"), ".cherrystudio", "backend.port")
-
 _instance: Optional["BackendService"] = None
 _lock = threading.Lock()
 
 
-def _write_port_file(port: int, host: str = "127.0.0.1"):
+def _write_port_file(port_file: str, port: int, host: str = "127.0.0.1"):
     """将监听端口写入发现文件"""
     try:
-        os.makedirs(os.path.dirname(_PORT_FILE), exist_ok=True)
-        with open(_PORT_FILE, "w") as f:
+        os.makedirs(os.path.dirname(port_file), exist_ok=True)
+        with open(port_file, "w") as f:
             f.write(f"{host}:{port}\n")
-        _log(f"[BackendService] Port file written: {_PORT_FILE} -> {host}:{port}")
+        _log(f"[BackendService] Port file written: {port_file} -> {host}:{port}")
     except Exception as e:
         _log(f"[BackendService] Failed to write port file: {e}")
 
 
-def _remove_port_file():
+def _remove_port_file(port_file: str):
     """服务退出时删除发现文件"""
     try:
-        if os.path.exists(_PORT_FILE):
-            os.remove(_PORT_FILE)
+        if os.path.exists(port_file):
+            os.remove(port_file)
     except Exception:
         pass
 
 
+def _probe_backend(host_port: str) -> str:
+    """Verify a host:port is a live Cherry Studio backend; return URL or ''."""
+    import urllib.request
+    try:
+        url = f"http://{host_port}/api/v1/config/merged"
+        req = urllib.request.Request(url, method="GET")
+        urllib.request.urlopen(req, timeout=2)
+        return f"http://{host_port}"
+    except Exception:
+        return ""
+
+
 def read_backend_url() -> str:
     """
-    读取独立后端服务的 URL（从发现文件）。
-    Houdini 插件调用此函数，找到已经运行的后端服务。
+    扫描所有 per-instance port 文件，返回第一个活跃后端的 URL。
+    同时兼容旧版单一 backend.port 文件。
     返回 '' 表示未发现运行中的服务。
     """
     try:
-        if not os.path.exists(_PORT_FILE):
-            return ""
-        with open(_PORT_FILE) as f:
-            content = f.read().strip()
-        if not content:
-            return ""
-        # 验证服务确实在运行
-        import urllib.request
-        url = f"http://{content}/api/v1/config/merged"
-        req = urllib.request.Request(url, method="GET")
-        urllib.request.urlopen(req, timeout=2)
-        return f"http://{content}"
+        from ..core.paths import list_port_files
     except Exception:
-        _remove_port_file()  # 文件存在但服务已停止，清理
-        return ""
+        list_port_files = None
+
+    # 1) 扫描 per-instance port 文件
+    if list_port_files is not None:
+        for pf in list_port_files():
+            try:
+                with open(pf) as f:
+                    content = f.read().strip()
+                if not content:
+                    continue
+                url = _probe_backend(content)
+                if url:
+                    return url
+                else:
+                    _remove_port_file(pf)
+            except Exception:
+                continue
+
+    # 2) 兼容旧版 backend.port
+    legacy_port_file = os.path.join(os.path.expanduser("~"), ".cherrystudio", "backend.port")
+    try:
+        if os.path.exists(legacy_port_file):
+            with open(legacy_port_file) as f:
+                content = f.read().strip()
+            if content:
+                url = _probe_backend(content)
+                if url:
+                    return url
+                _remove_port_file(legacy_port_file)
+    except Exception:
+        pass
+
+    return ""
 
 
 class BackendService:
@@ -114,6 +143,7 @@ class BackendService:
 
     def __init__(self):
         self._server: Optional[BackendHTTPServer] = None
+        self._port_file: Optional[str] = None
 
     # ── 单例（嵌入模式）──────────────────────────────────────────────────────
 
@@ -127,6 +157,16 @@ class BackendService:
 
     # ── 生命周期 ──────────────────────────────────────────────────────────────
 
+    def set_session_id(self, session_id: str):
+        """Set the session ID used for per-instance port file naming."""
+        try:
+            from ..core.paths import get_port_file
+            self._port_file = get_port_file(session_id)
+        except Exception:
+            self._port_file = os.path.join(
+                os.path.expanduser("~"), ".cherrystudio", "ports", f"{session_id}.port"
+            )
+
     def start(self, host: str = "127.0.0.1", port: int = 0) -> int:
         """
         嵌入模式启动：在后台线程运行，立即返回实际端口号。
@@ -136,10 +176,15 @@ class BackendService:
             _log(f"[BackendService] Already running on port {self._server.port}")
             return self._server.port
 
+        if self._port_file is None:
+            self._port_file = os.path.join(
+                os.path.expanduser("~"), ".cherrystudio", "ports", f"{os.getpid()}.port"
+            )
+
         _pm.init()
         self._server = BackendHTTPServer(host=host, port=port)
         actual_port = self._server.start()
-        _write_port_file(actual_port, host)
+        _write_port_file(self._port_file, actual_port, host)
         _log(f"[BackendService] Started (embedded) on {host}:{actual_port}")
         return actual_port
 
@@ -148,15 +193,20 @@ class BackendService:
         独立进程模式：阻塞运行直到收到 Ctrl+C / SIGTERM。
         适合用 uv run / python 直接运行此文件。
         """
+        if self._port_file is None:
+            self._port_file = os.path.join(
+                os.path.expanduser("~"), ".cherrystudio", "ports", f"{os.getpid()}.port"
+            )
+
         _pm.init()
         self._server = BackendHTTPServer(host=host, port=port)
         actual_port = self._server.start()
-        _write_port_file(actual_port, host)
+        _write_port_file(self._port_file, actual_port, host)
 
         print(f"\n{'='*55}")
         print(f"  Cherry Studio Backend Service")
         print(f"  Listening on : http://{host}:{actual_port}")
-        print(f"  Port file    : {_PORT_FILE}")
+        print(f"  Port file    : {self._port_file}")
         print(f"  API prefix   : /api/v1/")
         print(f"{'='*55}")
         print("  Press Ctrl+C to stop.\n")
@@ -182,7 +232,8 @@ class BackendService:
         if self._server:
             self._server.stop()
             self._server = None
-        _remove_port_file()
+        if self._port_file:
+            _remove_port_file(self._port_file)
 
     def is_running(self) -> bool:
         return self._server is not None and self._server.is_running()

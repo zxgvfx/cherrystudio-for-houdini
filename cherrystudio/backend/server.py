@@ -77,6 +77,7 @@ def _import_routes():
         openclaw,
         plugins,
         generate_3d,
+        generate_motion,
     )
 
     from ..plugins import load_all_plugins
