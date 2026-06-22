@@ -1,0 +1,17 @@
+import "./react-1FqkuScD.js";
+import { t as createLucideIcon } from "./createLucideIcon-BC_5i1E_.js";
+/**
+* @license lucide-react v0.525.0 - ISC
+*
+* This source code is licensed under the ISC license.
+* See the LICENSE file in the root directory of this source tree.
+*/
+var __iconNode = [["path", {
+	d: "M18 6 7 17l-5-5",
+	key: "116fxf"
+}], ["path", {
+	d: "m22 10-7.5 7.5L13 16",
+	key: "ke71qq"
+}]];
+var CheckCheck = createLucideIcon("check-check", __iconNode);
+export { __iconNode, CheckCheck as default };

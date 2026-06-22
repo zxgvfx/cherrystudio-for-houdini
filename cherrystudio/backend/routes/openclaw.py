@@ -586,7 +586,7 @@ def _sync_centralized_to_openclaw(config: dict) -> dict:
         models_list = []
         for m in cp.get("models", []):
             mid = m.get("id", "")
-            modality = m.get("primaryModality", "text")
+            modality = m.get("modality") or m.get("primaryModality", "text")
             entry: dict = {
                 "id": mid,
                 "name": m.get("name", mid),
@@ -1132,7 +1132,7 @@ def sync_config(ctx):
         api_type = "openai-completions"
         if provider.get("type") in anthropic_types:
             api_type = "anthropic-messages"
-        elif model.get("endpoint_type") == "anthropic":
+        elif (model.get("protocol") or model.get("endpoint_type")) == "anthropic":
             api_type = "anthropic-messages"
         elif provider.get("anthropicApiHost"):
             api_type = "anthropic-messages"
@@ -1159,7 +1159,7 @@ def sync_config(ctx):
                 "name": m.get("name", m.get("id", "")),
                 "contextWindow": 128000,
             }
-            if m.get("primaryModality") == "multimodal":
+            if (m.get("modality") or m.get("primaryModality")) == "multimodal":
                 m_entry["input"] = ["text", "image"]
             else:
                 m_entry["input"] = ["text"]

@@ -120,6 +120,57 @@ def _patch_gemini3_tool_history(url: str, body_bytes: bytes) -> bytes:
     return json.dumps(body, ensure_ascii=False).encode("utf-8")
 
 
+def _patch_gpt_image_request(url: str, body_bytes: bytes) -> bytes:
+    """Normalize OpenAI gpt-image request bodies before they hit upstream gateways."""
+    if not body_bytes:
+        return body_bytes
+
+    lower_url = url.lower()
+    if "/images/generations" not in lower_url and "/images/edits" not in lower_url:
+        return body_bytes
+
+    try:
+        body = json.loads(body_bytes)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return body_bytes
+
+    if not isinstance(body, dict):
+        return body_bytes
+
+    model = str(body.get("model", "")).lower().split("/")[-1]
+    if not model.startswith("gpt-image"):
+        return body_bytes
+
+    changed = False
+
+    # gpt-image models return b64_json by default and reject response_format.
+    if "response_format" in body:
+        body.pop("response_format", None)
+        changed = True
+
+    if model.startswith("gpt-image-2"):
+        # gpt-image-2 currently accepts a single output per request through OpenAI-compatible
+        # gateways; sending n > 1 commonly causes an opaque 400 response.
+        n = body.get("n")
+        if n is not None and n != 1:
+            body.pop("n", None)
+            changed = True
+
+        if body.get("background") == "transparent":
+            body.pop("background", None)
+            changed = True
+
+        if "input_fidelity" in body:
+            body.pop("input_fidelity", None)
+            changed = True
+
+    if changed:
+        _log(f"[network/fetch] normalized gpt-image request body for model={body.get('model')}")
+        return json.dumps(body, ensure_ascii=False).encode("utf-8")
+
+    return body_bytes
+
+
 def _sanitize_url(url: str) -> str:
     """
     对 URL 中的非 ASCII 字符做 percent-encoding，
@@ -1100,13 +1151,17 @@ def fetch_proxy(ctx: dict) -> Any:
     method = str(config.get("method", "GET")).upper()
     headers = config.get("headers") or {}
     body_data = config.get("body")
+    body_bytes_base64 = config.get("bodyBytesBase64")
     timeout = float(config.get("timeout", 30))
     is_stream = bool(config.get("stream", False))
     request_id = config.get("requestId", "")
 
     # 序列化请求体
     body_bytes = None
-    if body_data is not None:
+    if body_bytes_base64:
+        import base64
+        body_bytes = base64.b64decode(body_bytes_base64)
+    elif body_data is not None:
         if isinstance(body_data, (dict, list)):
             body_data = json.dumps(body_data)
         if isinstance(body_data, str):
@@ -1118,6 +1173,13 @@ def fetch_proxy(ctx: dict) -> Any:
     if body_bytes and method == "POST":
         try:
             body_bytes = _patch_gemini3_tool_history(url, body_bytes)
+        except Exception:
+            pass
+
+    # gpt-image: strip fields that OpenAI-compatible image gateways reject.
+    if body_bytes and method == "POST":
+        try:
+            body_bytes = _patch_gpt_image_request(url, body_bytes)
         except Exception:
             pass
 

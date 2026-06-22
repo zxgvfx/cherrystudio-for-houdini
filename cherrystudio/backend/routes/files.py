@@ -273,6 +273,25 @@ def _find_file_in_app_data(filename: str, session_id: str = "") -> str:
             candidate = os.path.join(sessions_dir, sid, filename)
             if os.path.isfile(candidate):
                 return candidate
+    # Cross-DCC fallback for historical files. A video may have been generated
+    # in standalone mode and later viewed from Houdini (or the reverse). Preview
+    # URLs only store the filename, so search the known app-data roots.
+    try:
+        from ...core.paths import get_base_dir
+
+        for dcc in ("standalone", "houdini", "maya", "blender"):
+            root = os.path.join(get_base_dir(), dcc)
+            candidate = os.path.join(root, filename)
+            if os.path.isfile(candidate):
+                return candidate
+            dcc_sessions = os.path.join(root, "sessions")
+            if os.path.isdir(dcc_sessions):
+                for sid in os.listdir(dcc_sessions):
+                    candidate = os.path.join(dcc_sessions, sid, filename)
+                    if os.path.isfile(candidate):
+                        return candidate
+    except Exception:
+        pass
     return ""
 
 # 应用资源目录（只读白名单）
@@ -750,40 +769,18 @@ def write_with_id(ctx: dict) -> Any:
     return {"ok": True}
 
 
-@route("/api/v1/files/serve", methods=["GET"])
-def file_serve(ctx: dict) -> Any:
-    """
-    直接以原始二进制格式提供文件（用于 PDF 预览等场景）。
-    GET /api/v1/files/serve?name=<filename>
-    filename 是 APP_DATA_DIR 下的文件名（如 uuid.pdf）。
-    """
-    handler = ctx["_handler"]
-    query = ctx.get("query", {})
-    name = query.get("name", [""])[0] if isinstance(query.get("name"), list) else query.get("name", "")
-    if not name:
-        handler.send_response(400)
-        handler.send_header("Content-Type", "text/plain")
-        handler.end_headers()
-        handler.wfile.write(b"missing 'name' query parameter")
-        return STREAMING_HANDLED
-
-    safe_name = os.path.basename(name)
-    session_id = ctx.get("session_id", "")
-    file_path = _find_file_in_app_data(safe_name, session_id)
-
-    if not file_path:
-        handler.send_response(404)
-        handler.send_header("Content-Type", "text/plain")
-        handler.end_headers()
-        handler.wfile.write(b"file not found")
-        return STREAMING_HANDLED
-
+def _stream_file_with_range(handler, ctx: dict, file_path: str, safe_name: str) -> Any:
+    """以二进制流式返回文件，支持 Range 请求（<video>/<audio> 拖动播放必需）。"""
     _EXTRA_MIME = {
         ".glb": "model/gltf-binary",
         ".gltf": "model/gltf+json",
         ".usdz": "model/vnd.usdz+zip",
         ".obj": "text/plain",
         ".ply": "application/octet-stream",
+        # 显式指定视频 MIME：Windows 上 mimetypes 依赖注册表，可能把 webm 猜成
+        # octet-stream 导致 <video> 不播放。
+        ".webm": "video/webm",
+        ".mp4": "video/mp4",
     }
     ext = os.path.splitext(file_path)[1].lower()
     mime_type = _EXTRA_MIME.get(ext)
@@ -792,12 +789,68 @@ def file_serve(ctx: dict) -> Any:
     if not mime_type:
         mime_type = "application/octet-stream"
 
+    # 大小写无关地读取 Range 请求头（<video> 等会发 Range 以支持拖动/边下边播）
+    req_headers = ctx.get("headers", {}) or {}
+    range_header = ""
+    for k, v in req_headers.items():
+        if k.lower() == "range":
+            range_header = v or ""
+            break
+
     try:
+        file_size = os.path.getsize(file_path)
+
+        # 处理 Range 请求：返回 206 Partial Content，<video> 才能稳定播放/拖动
+        if range_header.startswith("bytes="):
+            rng = range_header.split("=", 1)[1].split(",")[0].strip()
+            start_s, _, end_s = rng.partition("-")
+            try:
+                start = int(start_s) if start_s else 0
+            except ValueError:
+                start = 0
+            try:
+                end = int(end_s) if end_s else file_size - 1
+            except ValueError:
+                end = file_size - 1
+
+            # 后缀范围 bytes=-N（请求最后 N 字节）
+            if not start_s and end_s:
+                length = min(int(end_s), file_size)
+                start = file_size - length
+                end = file_size - 1
+
+            if start >= file_size or start > end:
+                handler.send_response(416)
+                handler.send_header("Content-Range", f"bytes */{file_size}")
+                handler.send_header("Access-Control-Allow-Origin", "*")
+                handler.end_headers()
+                return STREAMING_HANDLED
+
+            end = min(end, file_size - 1)
+            length = end - start + 1
+            with open(file_path, "rb") as f:
+                f.seek(start)
+                data = f.read(length)
+
+            handler.send_response(206)
+            handler.send_header("Content-Type", mime_type)
+            handler.send_header("Content-Length", str(length))
+            handler.send_header("Content-Range", f"bytes {start}-{end}/{file_size}")
+            handler.send_header("Accept-Ranges", "bytes")
+            handler.send_header("Content-Disposition", f'inline; filename="{safe_name}"')
+            handler.send_header("Access-Control-Allow-Origin", "*")
+            handler.end_headers()
+            handler.wfile.write(data)
+            handler.wfile.flush()
+            return STREAMING_HANDLED
+
+        # 无 Range：整文件 200，并声明支持 Range（让播放器后续可发 Range）
         with open(file_path, "rb") as f:
             data = f.read()
         handler.send_response(200)
         handler.send_header("Content-Type", mime_type)
         handler.send_header("Content-Length", str(len(data)))
+        handler.send_header("Accept-Ranges", "bytes")
         handler.send_header("Content-Disposition", f'inline; filename="{safe_name}"')
         handler.send_header("Access-Control-Allow-Origin", "*")
         handler.end_headers()
@@ -810,6 +863,98 @@ def file_serve(ctx: dict) -> Any:
         handler.end_headers()
         handler.wfile.write(str(e).encode("utf-8"))
     return STREAMING_HANDLED
+
+
+def _resolve_query_file(ctx: dict):
+    """从 ?name=xxx 解析出 (handler, safe_name, file_path)。出错时直接写响应并返回 None。"""
+    handler = ctx["_handler"]
+    query = ctx.get("query", {})
+    name = query.get("name", [""])[0] if isinstance(query.get("name"), list) else query.get("name", "")
+    if not name:
+        handler.send_response(400)
+        handler.send_header("Content-Type", "text/plain")
+        handler.end_headers()
+        handler.wfile.write(b"missing 'name' query parameter")
+        return None
+
+    safe_name = os.path.basename(name)
+    session_id = ctx.get("session_id", "")
+    file_path = _find_file_in_app_data(safe_name, session_id)
+
+    if not file_path:
+        handler.send_response(404)
+        handler.send_header("Content-Type", "text/plain")
+        handler.end_headers()
+        handler.wfile.write(b"file not found")
+        return None
+
+    return handler, safe_name, file_path
+
+
+@route("/api/v1/files/serve", methods=["GET"])
+def file_serve(ctx: dict) -> Any:
+    """
+    直接以原始二进制格式提供文件（用于 PDF 预览等场景）。
+    GET /api/v1/files/serve?name=<filename>
+    filename 是 APP_DATA_DIR 下的文件名（如 uuid.pdf）。
+    """
+    resolved = _resolve_query_file(ctx)
+    if resolved is None:
+        return STREAMING_HANDLED
+    handler, safe_name, file_path = resolved
+    return _stream_file_with_range(handler, ctx, file_path, safe_name)
+
+
+# 视频预览转码缓存后缀。QtWebEngine（开源 Chromium）不带 H.264 专有解码器，
+# 用户上传的 mp4/mov 等大多是 H.264，直接 serve 在 Houdini webview 里放不了，
+# 这里按需转成 WebM(VP9) 并缓存在源文件旁边。
+_PREVIEW_SUFFIX = ".preview.webm"
+
+# 浏览器/webview 可直接解码的容器，无需转码
+_DIRECT_PLAY_EXTS = {".webm", ".ogg", ".ogv"}
+
+
+@route("/api/v1/files/preview-video", methods=["GET"])
+def file_preview_video(ctx: dict) -> Any:
+    """
+    视频预览：按需把本地视频转码成 WebM 后以 Range 流式返回。
+    GET /api/v1/files/preview-video?name=<filename>
+
+    - name 指向 APP_DATA_DIR 下的视频文件（如 uuid.mp4）
+    - 已是 webm/ogg 时直接返回原文件
+    - 转码结果缓存为 <原文件>.preview.webm，二次播放零开销
+    - ffmpeg 不可用或转码失败时回退返回原文件（带 H.264 解码器的环境仍可播）
+    """
+    resolved = _resolve_query_file(ctx)
+    if resolved is None:
+        return STREAMING_HANDLED
+    handler, safe_name, file_path = resolved
+
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext in _DIRECT_PLAY_EXTS:
+        return _stream_file_with_range(handler, ctx, file_path, safe_name)
+
+    cache_path = file_path + _PREVIEW_SUFFIX
+    if not (os.path.isfile(cache_path) and os.path.getsize(cache_path) > 0):
+        try:
+            from .generate_video import _transcode_to_webm
+
+            _log(f"[files/preview-video] transcoding {file_path} -> {cache_path}")
+            ok, err = _transcode_to_webm(file_path, cache_path)
+            if not ok:
+                _log(f"[files/preview-video] transcode failed, fallback to original: {err}")
+                try:
+                    if os.path.exists(cache_path):
+                        os.remove(cache_path)
+                except Exception:
+                    pass
+                return _stream_file_with_range(handler, ctx, file_path, safe_name)
+        except Exception as e:
+            _log(f"[files/preview-video] transcode error, fallback to original: {e}")
+            return _stream_file_with_range(handler, ctx, file_path, safe_name)
+
+    preview_name = os.path.splitext(safe_name)[0] + ".webm"
+    return _stream_file_with_range(handler, ctx, cache_path, preview_name)
 
 
 # ─── 二进制工具安装（uv / bun）──────────────────────────────────────────────────

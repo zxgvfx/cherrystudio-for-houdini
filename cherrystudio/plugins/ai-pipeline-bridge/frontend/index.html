@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Pipeline Bridge</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #111217;
+      --panel: #1b1d25;
+      --panel-2: #232633;
+      --text: #ececf3;
+      --muted: #a8adbd;
+      --accent: #8fb7ff;
+      --danger: #ff9c9c;
+      --border: #303443;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background: radial-gradient(circle at 20% 0%, #1e2433 0, var(--bg) 42%);
+      color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    body { padding: 28px; }
+    main { max-width: 1120px; margin: 0 auto; }
+    header { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
+    h1 { margin: 0 0 8px; font-size: 28px; letter-spacing: .2px; }
+    p { margin: 0; color: var(--muted); line-height: 1.55; }
+    .status {
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: rgba(27, 29, 37, .8);
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .toolbar { display: flex; gap: 12px; margin: 18px 0 20px; }
+    input {
+      flex: 1;
+      min-width: 220px;
+      padding: 12px 14px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--panel);
+      color: var(--text);
+      outline: none;
+    }
+    input:focus { border-color: var(--accent); }
+    button {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--panel-2);
+      color: var(--text);
+      padding: 10px 14px;
+      cursor: pointer;
+    }
+    button:hover { border-color: var(--accent); color: white; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 14px;
+    }
+    .card {
+      display: flex;
+      flex-direction: column;
+      min-height: 190px;
+      padding: 18px;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: rgba(27, 29, 37, .92);
+      box-shadow: 0 12px 30px rgba(0, 0, 0, .16);
+    }
+    .card h2 { margin: 0 0 8px; font-size: 18px; }
+    .card .id { color: var(--accent); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }
+    .card .desc { margin-top: 10px; color: var(--muted); font-size: 14px; }
+    .tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0; }
+    .tag {
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 3px 8px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .card footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: auto;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .primary {
+      background: linear-gradient(135deg, #4877ff, #7759ff);
+      border-color: transparent;
+      color: #fff;
+      font-weight: 600;
+    }
+    .empty, pre#error {
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: rgba(27, 29, 37, .92);
+      padding: 22px;
+      color: var(--muted);
+    }
+    pre#error {
+      color: var(--danger);
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>AI Pipeline 工作流</h1>
+        <p>从当前 ai-pipeline server 自动读取 workflow。新增 workflow 后不需要再新增 CherryStudio 插件。</p>
+      </div>
+      <div id="status" class="status">正在连接...</div>
+    </header>
+
+    <section class="toolbar">
+      <input id="search" type="search" placeholder="搜索名称、workflow_id 或 tag" />
+      <button id="refresh" type="button">刷新</button>
+    </section>
+
+    <section id="content" class="grid"></section>
+    <pre id="error" hidden></pre>
+  </main>
+  <script>
+    const state = {
+      apiBase: "",
+      bridgeBase: window.location.origin.replace(/\/+$/, ""),
+      workflows: [],
+      query: "",
+    };
+
+    const els = {
+      status: document.getElementById("status"),
+      content: document.getElementById("content"),
+      error: document.getElementById("error"),
+      search: document.getElementById("search"),
+      refresh: document.getElementById("refresh"),
+    };
+
+    function setStatus(text) {
+      els.status.textContent = text;
+    }
+
+    function showError(error) {
+      els.error.hidden = false;
+      els.error.textContent = error && error.message ? error.message : String(error);
+      els.content.innerHTML = "";
+      setStatus("连接失败");
+    }
+
+    function launchWorkflow(workflowId) {
+      const url = `${state.apiBase}/launch/?workflow_id=${encodeURIComponent(workflowId)}&bridge_base=${encodeURIComponent(state.bridgeBase)}`;
+      window.location.href = url;
+    }
+
+    function text(value, fallback = "") {
+      const s = value == null ? "" : String(value);
+      return s.trim() || fallback;
+    }
+
+    function matchesQuery(wf) {
+      const q = state.query.trim().toLowerCase();
+      if (!q) return true;
+      const haystack = [
+        wf.id,
+        wf.name,
+        wf.description,
+        ...(Array.isArray(wf.tags) ? wf.tags : []),
+      ].join(" ").toLowerCase();
+      return haystack.includes(q);
+    }
+
+    function render() {
+      els.error.hidden = true;
+      els.content.innerHTML = "";
+      const items = state.workflows.filter(matchesQuery);
+      setStatus(`${items.length}/${state.workflows.length} 个 workflow`);
+
+      if (!items.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = state.workflows.length ? "没有匹配的 workflow。" : "当前 server 没有注册 workflow。";
+        els.content.appendChild(empty);
+        return;
+      }
+
+      for (const wf of items) {
+        const card = document.createElement("article");
+        card.className = "card";
+
+        const title = document.createElement("h2");
+        title.textContent = text(wf.name, wf.id);
+
+        const id = document.createElement("div");
+        id.className = "id";
+        id.textContent = `${wf.id}@${wf.version || "latest"}`;
+
+        const desc = document.createElement("p");
+        desc.className = "desc";
+        desc.textContent = text(wf.description, "无描述");
+
+        const tags = document.createElement("div");
+        tags.className = "tags";
+        for (const tag of Array.isArray(wf.tags) ? wf.tags : []) {
+          const el = document.createElement("span");
+          el.className = "tag";
+          el.textContent = tag;
+          tags.appendChild(el);
+        }
+
+        const footer = document.createElement("footer");
+        const meta = document.createElement("span");
+        const inputs = Array.isArray(wf.inputs) ? wf.inputs.length : 0;
+        meta.textContent = `${wf.source || "workflow"} · ${inputs} 个输入`;
+        const button = document.createElement("button");
+        button.className = "primary";
+        button.type = "button";
+        button.textContent = "打开";
+        button.addEventListener("click", () => launchWorkflow(wf.id));
+        footer.append(meta, button);
+
+        card.append(title, id, desc, tags, footer);
+        els.content.appendChild(card);
+      }
+    }
+
+    async function load() {
+      setStatus("正在连接...");
+      els.error.hidden = true;
+      try {
+        const healthResponse = await fetch("/api/v1/plugins/ai-pipeline-bridge/health");
+        const health = await healthResponse.json();
+        if (!healthResponse.ok || health.error || !health.available) {
+          throw new Error(health.error || health.detail || `HTTP ${healthResponse.status}`);
+        }
+        state.apiBase = String(health.api_base || "").replace(/\/+$/, "");
+        if (!state.apiBase) throw new Error("ai-pipeline api_base 为空");
+
+        const params = new URLSearchParams(window.location.search);
+        const workflowId = params.get("workflow_id");
+        if (workflowId) {
+          launchWorkflow(workflowId);
+          return;
+        }
+
+        const workflowsResponse = await fetch("/api/v1/plugins/ai-pipeline-bridge/workflows");
+        const payload = await workflowsResponse.json();
+        if (!workflowsResponse.ok || payload.error) {
+          throw new Error(payload.error || `HTTP ${workflowsResponse.status}`);
+        }
+        state.workflows = Array.isArray(payload.workflows) ? payload.workflows : [];
+        render();
+      } catch (error) {
+        showError(error);
+      }
+    }
+
+    els.search.addEventListener("input", (event) => {
+      state.query = event.target.value || "";
+      render();
+    });
+    els.refresh.addEventListener("click", load);
+    load();
+  </script>
+</body>
+</html>

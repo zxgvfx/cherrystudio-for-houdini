@@ -82,13 +82,71 @@ def _resolve_api(body: dict) -> Tuple[str, str]:
     return api_host, api_key
 
 
+def _ensure_video_data_url(video_data: str) -> str:
+    """Normalize a base64 video payload into a `data:video/<x>;base64,<data>` URL.
+
+    The promptHMR upstream validates `video_base64` with a strict data-URL regex,
+    so a raw base64 string must be wrapped with a supported video MIME prefix.
+    """
+    if video_data.startswith("data:"):
+        return video_data
+    return f"data:video/mp4;base64,{video_data}"
+
+
+def _submit_motion_video_json(api_host: str, api_key: str, model: str, prompt: str,
+                              n: int, duration: float, seeds: Any,
+                              video_data_url: str) -> dict:
+    """Submit a video-to-motion task (e.g. promptHMR) via JSON `video_base64`.
+
+    Matches the upstream contract: POST /v1/tasks/submit with a JSON body whose
+    `video_base64` is a data URL and `prompt` is non-empty.
+    """
+    url = f"{api_host.rstrip('/')}/v1/tasks/submit"
+
+    payload: dict = {
+        "model": model,
+        "prompt": prompt or "generate motion from the input video",
+        "video_base64": video_data_url,
+        "n": n,
+        "duration": duration,
+    }
+    if seeds:
+        payload["seeds"] = seeds
+
+    payload_bytes = json.dumps(payload).encode("utf-8")
+    _log(f"[generate-motion] Submitting (video JSON) to {url}, model={model}, "
+         f"payload_size={len(payload_bytes)}")
+
+    opener = _build_opener(url)
+    req = urllib.request.Request(url, data=payload_bytes, method="POST")
+    req.add_header("Authorization", f"Bearer {api_key}")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("User-Agent", "Cherry Studio")
+
+    resp = opener.open(req, timeout=120)
+    resp_body = resp.read().decode("utf-8")
+    data = json.loads(resp_body)
+    _log(f"[generate-motion] Submit (video JSON) response: {resp_body[:500]}")
+    task_id = data.get("task_id")
+    if not task_id:
+        return {"error": f"No task_id in response: {resp_body[:300]}"}
+    return {"ok": True, "task_id": task_id, "status": data.get("status", "pending")}
+
+
 @route("/api/v1/generate-motion/submit", methods=["POST"])
 def generate_motion_submit(ctx: dict) -> Any:
-    """Submit a text-to-motion task via hy-motion API.
+    """Submit a motion task.
+
+    Two input modes (auto-detected by the presence of `video_data`):
+      - text-to-motion (hy-motion): JSON body with `prompt`
+      - video-to-motion (promptHMR): `video_data` (base64, raw or data URL) is
+        forwarded upstream as JSON `video_base64` (a data URL). Works for both a
+        direct connection and through the Higress gateway.
 
     Request body (JSON):
         {
-            "prompt": "a person walking forward",
+            "prompt": "a person walking forward",   # optional when video_data given
+            "video_data": "data:video/mp4;base64,...",  # optional
             "n": 4,
             "duration": 2.0,
             "seeds": [42, 123, 456, 789],
@@ -98,9 +156,10 @@ def generate_motion_submit(ctx: dict) -> Any:
     """
     body = ctx["body"]
 
-    prompt = body.get("prompt", "").strip()
-    if not prompt:
-        return {"error": "missing prompt"}
+    prompt = (body.get("prompt") or "").strip()
+    video_data = (body.get("video_data") or body.get("video") or "").strip()
+    if not prompt and not video_data:
+        return {"error": "missing prompt or video_data"}
 
     n = int(body.get("n", 4))
     duration = float(body.get("duration", 2.0))
@@ -111,6 +170,29 @@ def generate_motion_submit(ctx: dict) -> Any:
     if not api_host or not api_key:
         return {"error": "No API configuration found for motion generation"}
 
+    # video-to-motion → JSON with `video_base64` (data URL)
+    if video_data:
+        try:
+            video_data_url = _ensure_video_data_url(video_data)
+        except Exception as e:
+            return {"error": f"Invalid video_data: {e}"}
+        try:
+            return _submit_motion_video_json(
+                api_host, api_key, model, prompt, n, duration, seeds, video_data_url
+            )
+        except urllib.error.HTTPError as e:
+            err_body = ""
+            try:
+                err_body = e.read().decode("utf-8", errors="replace")[:500]
+            except Exception:
+                pass
+            _log(f"[generate-motion] Submit (video JSON) HTTP {e.code}: {err_body}")
+            return {"error": f"Submit failed ({e.code}): {err_body}"}
+        except Exception as e:
+            _log(f"[generate-motion] Submit (video JSON) failed: {e}")
+            return {"error": str(e)}
+
+    # text-to-motion → JSON
     url = f"{api_host.rstrip('/')}/v1/tasks/submit"
     _log(f"[generate-motion] Submitting to {url}, model={model}, n={n}, duration={duration}")
 
@@ -209,9 +291,12 @@ def generate_motion_poll(ctx: dict) -> Any:
                 or data.get("fbx_files")
                 or []
             )
-            fbx_files = [f for f in files if f.lower().endswith(".fbx")]
-            result["files"] = fbx_files
-            _log(f"[generate-motion] Task {task_id} completed, files: {fbx_files}")
+            # Keep only web-previewable 3D outputs: FBX (hy-motion) and GLB (promptHMR).
+            motion_files = [
+                f for f in files if f.lower().endswith((".fbx", ".glb"))
+            ]
+            result["files"] = motion_files
+            _log(f"[generate-motion] Task {task_id} completed, files: {motion_files}")
 
         elif status in ("failed", "failure", "error", "cancelled"):
             result["status"] = "failed"
@@ -238,10 +323,13 @@ def generate_motion_poll(ctx: dict) -> Any:
 
 @route("/api/v1/generate-motion/save", methods=["POST"])
 def generate_motion_save(ctx: dict) -> Any:
-    """Download and save a single FBX file from a completed motion task.
+    """Download and save a single motion/3D file from a completed task.
+
+    Supports FBX (hy-motion) and GLB (promptHMR); the output extension/format is
+    derived from the upstream filename.
 
     Request body (JSON):
-        { "task_id": "...", "filename": "xxx.fbx", "apiHost": "...", "apiKey": "..." }
+        { "task_id": "...", "filename": "xxx.glb", "apiHost": "...", "apiKey": "..." }
     """
     body = ctx["body"]
     task_id = body.get("task_id", "").strip()
@@ -262,8 +350,11 @@ def generate_motion_save(ctx: dict) -> Any:
     )
     _log(f"[generate-motion] Downloading {download_url}")
 
+    # Derive extension/format from the upstream filename (default to .fbx).
+    ext = os.path.splitext(filename)[1].lower() or ".fbx"
+    fmt = ext.lstrip(".")
+
     file_id = str(uuid.uuid4())
-    ext = ".fbx"
     session_id = ctx.get("session_id", "") or None
     app_data = get_app_data_dir(session_id=session_id)
     os.makedirs(app_data, exist_ok=True)
@@ -275,7 +366,7 @@ def generate_motion_save(ctx: dict) -> Any:
     file_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
     _log(f"[generate-motion] Saved: {file_path} ({file_size} bytes)")
 
-    origin_name = filename if filename.lower().endswith(".fbx") else f"{filename}.fbx"
+    origin_name = filename if filename.lower().endswith(ext) else f"{filename}{ext}"
 
     return {
         "ok": True,
@@ -289,5 +380,5 @@ def generate_motion_save(ctx: dict) -> Any:
             "type": "model_3d",
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         },
-        "format": "fbx",
+        "format": fmt,
     }

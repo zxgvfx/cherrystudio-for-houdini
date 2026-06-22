@@ -1,19 +1,18 @@
 {
-  "version": "1.0.0",
-  "lastUpdated": "2026-02-03",
+  "version": "2.0.0",
+  "lastUpdated": "2026-06-17",
   "knowledgeBaseSource": "J:/vfxtools/piplineTD/models/knowledge_base/vectors",
   "proxy": {
     "bypassRules": "localhost,127.0.0.1,::1,*.ccc.net,192.168.*.*"
   },
   "pythonVenv": "C:\\coco\\.venv",
-  "developerUsers": ["zhaopeng", "zhangxugang"],
+  "developerUsers": ["zhaopeng", "zhangxugang", "wangjiaqi", "weifei", "zhangxuqiang", "wangbinglu"],
   "developerPasswordHash": "667282499d40d5935c6b80672ea0a875477ada7b3b093aa2fc428f862216d3e0",
   "defaultModels": {
     "defaultModel": {
       "id": "doubao-seed-1-6",
       "provider": "centralized-openai"
     },
-
     "quickModel": {
       "id": "doubao-seed-1-6",
       "provider": "centralized-openai"
@@ -28,132 +27,174 @@
       "id": "centralized-openai",
       "name": "Coco",
       "type": "openai",
-      "apiHost": "http://higress.ccc.net",
-      "apiKey": "52fc482d-364b-40bc-9589-9918520c9d3e",
+      "apiHost": "http://new-api.ccc.net:3000",
+      "apiKey": "sk-771X7iDsUJY1rACoI6nTDZBepVM8vxpC27uUocyq2wEqkeBC",
       "icon": "",
       "models": [
-
-
         {
-          "id": "gpt-5.3-codex",
-          "name": "gpt-5.3-codex",
-          "modelId": "gpt-5.3-codex",
+          "id": "gpt-5.5",
+          "name": "gpt-5.5",
+          "modelId": "gpt-5.5",
           "isCentralized": true,
-          "primaryModality": "text",
-
-          "supported_text_delta": true
+          "modality": "text"
         },
         {
-          "id": "deepseek-v3.2-thinking",
-          "name": "deepseek-v3.2-thinking",
-          "modelId": "deepseek-v3.2-thinking",
+          "id": "claude-opus-4-8",
+          "name": "claude-opus-4-8",
+          "modelId": "claude-opus-4-8",
           "isCentralized": true,
-          "primaryModality": "text",
-
-          "supported_text_delta": true
+          "modality": "multimodal"
         },
         {
-          "id": "qwen3-vl-plus",
-          "name": "qwen3-vl-plus",
-          "modelId": "qwen3-vl-plus",
+          "id": "qwen3.5-397b-a17b",
+          "name": "qwen3.5-397b-a17b",
+          "modelId": "qwen3.5-397b-a17b",
           "isCentralized": true,
-          "primaryModality": "multimodal",
-
-          "supported_text_delta": true
+          "modality": "multimodal"
+        },
+        {
+          "id": "DeepSeek-V4-Pro",
+          "name": "DeepSeek-V4-Pro",
+          "modelId": "DeepSeek-V4-Pro",
+          "isCentralized": true,
+          "modality": "text"
         },
         {
           "id": "doubao-seed-1-8-251228",
           "name": "doubao-seed-1-8-251228",
           "modelId": "doubao-seed-1-8-251228",
           "isCentralized": true,
-          "primaryModality": "multimodal",
-          "supported_text_delta": true
+          "modality": "multimodal"
+        },
+        {
+          "id": "MiniMax-M2.5",
+          "name": "MiniMax-M2.5",
+          "modelId": "MiniMax-M2.5",
+          "isCentralized": true,
+          "modality": "text"
+        },
+        {
+          "id": "glm-5",
+          "name": "glm-5",
+          "modelId": "glm-5",
+          "isCentralized": true,
+          "modality": "text"
         },
         {
           "id": "bge-m3:567m",
           "name": "bge-m3:567m",
           "modelId": "bge-m3:567m",
           "isCentralized": true,
-          "primaryModality": "embedding"
+          "modality": "embedding"
         },
         {
           "id": "doubao-seed-1-6",
           "name": "doubao-seed-1-6",
           "modelId": "doubao-seed-1-6",
           "isCentralized": true,
-          "primaryModality": "text",
-          "supported_text_delta": true
+          "modality": "text"
         },
         {
-          "id": "doubao-seedream-4-5-251128",
-          "name": "doubao-seedream-4-5-251128",
-          "modelId": "doubao-seedream-4-5-251128",
+          "id": "gpt-image-2",
+          "name": "gpt-image-2",
+          "modelId": "gpt-image-2",
           "isCentralized": true,
-          "primaryModality": "image",
-          "supported_text_delta": true
+          "modality": "image",
+          "protocol": "image-generation"
         },
         {
-          "id": "gemini-3.1-flash-image-preview",
-          "name": "gemini-3.1-flash-image-preview",
-          "modelId": "gemini-3.1-flash-image-preview",
+          "id": "gemini-3.5-flash",
+          "name": "gemini-3.5-flash",
+          "modelId": "gemini-3.5-flash",
           "isCentralized": true,
-          "primaryModality": "multimodal",
-          "supported_text_delta": true
+          "modality": "multimodal"
         },
         {
           "id": "claude-haiku-4-5-20251001",
           "name": "claude-haiku-4-5-20251001",
           "modelId": "claude-haiku-4-5-20251001",
           "isCentralized": true,
-          "primaryModality": "multimodal",
-          "supported_text_delta": true
+          "modality": "multimodal"
         },
         {
           "id": "nano-banana-pro",
           "name": "nano-banana-pro",
           "modelId": "nano-banana-pro",
           "isCentralized": true,
-          "primaryModality": "image",
-          "endpoint_type": "openai",
-          "supported_text_delta": true
+          "modality": "image",
+          "protocol": "openai"
         },
         {
-          "id": "gemini-3.1-pro-preview-thinking",
-          "name": "gemini-3.1-pro-preview-thinking",
-          "modelId": "gemini-3.1-pro-preview-thinking",
+          "id": "nano-banana-pro-2k",
+          "name": "nano-banana-pro-2k",
+          "modelId": "nano-banana-pro-2k",
           "isCentralized": true,
-          "primaryModality": "multimodal",
-          "endpoint_type": "openai",
-          "supported_text_delta": true
+          "modality": "image",
+          "protocol": "image-generation"
         },
         {
-          "id": "gpt-image-1.5",
-          "name": "gpt-image-1.5",
-          "modelId": "gpt-image-1.5",
+          "id": "nano-banana-pro-4k",
+          "name": "nano-banana-pro-4k",
+          "modelId": "nano-banana-pro-4k",
           "isCentralized": true,
-          "primaryModality": "image",
-          "endpoint_type": "openai",
-          "supported_text_delta": true
+          "modality": "image",
+          "protocol": "image-generation"
+        },
+        {
+          "id": "gemini-3.1-flash-lite",
+          "name": "gemini-3.1-flash-lite",
+          "modelId": "gemini-3.1-flash-lite",
+          "isCentralized": true,
+          "modality": "multimodal"
+        },
+        {
+          "id": "nano-banana-2",
+          "name": "nano-banana-2",
+          "modelId": "nano-banana-2",
+          "isCentralized": true,
+          "modality": "image",
+          "protocol": "image-generation"
         },
         {
           "id": "hi3dgen",
           "name": "Hi3DGen",
           "modelId": "hi3dgen",
           "isCentralized": true,
-          "primaryModality": "model_3d",
-          "supported_text_delta": false
+          "modality": "model_3d"
         },
         {
           "id": "hy-motion-1.0",
           "name": "HY-Motion-1.0",
           "modelId": "hy-motion-1.0",
           "isCentralized": true,
-          "primaryModality": "motion",
-          "supported_text_delta": false
+          "modality": "motion"
+        },
+        {
+          "id": "MiniMax-Hailuo-02_512P_6",
+          "name": "MiniMax-Hailuo-02_512P_6",
+          "modelId": "MiniMax-Hailuo-02_512P_6",
+          "isCentralized": true,
+          "modality": "video"
+        }
+      ]
+    },
+    {
+      "id": "promptHMR-openai",
+      "name": "promptHMR",
+      "type": "openai",
+      "apiHost": "http://192.168.21.225:8000/",
+      "apiKey": "123456",
+      "icon": "",
+      "models": [
+        {
+          "id": "prompthmr",
+          "name": "prompthmr",
+          "modelId": "prompthmr",
+          "isCentralized": true,
+          "modality": "motion"
         }
       ]
     }
-
   ],
   "mcpServers": [
     {
@@ -169,6 +210,21 @@
         "JIRA_PERSONAL_TOKE": "<your-jira-token>",
         "CONFLUENCE_URL": "http://wiki.ccc.net",
         "CONFLUENCE_PERSONAL_TOKEN": "<your-confluence-token>"
+      },
+      "isCentralized": true,
+      "isActive": true
+    },
+    {
+      "id": "coco",
+      "name": "coco",
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "coco-mcp"
+      ],
+      "env": {
+        "STORAGE_MODE": "unc",
+        "SHARED_DIR": "W:/Public/TD/zhangxuqiang/temp/upload"
       },
       "isCentralized": true,
       "isActive": true

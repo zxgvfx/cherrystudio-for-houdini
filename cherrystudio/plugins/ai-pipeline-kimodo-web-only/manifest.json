@@ -1,0 +1,23 @@
+{
+  "id": "ai-pipeline-kimodo-web-only",
+  "name": "Kimodo Web",
+  "version": "0.2.0",
+  "description": "在 CherryStudio 内启动 ai-pipeline 工作流 kimodo-web-only（NVIDIA Kimodo）。本目录仅 manifest + 薄前端，打开后跳转到 ai-pipeline /launch/。配置：PIPELINE_API_BASE 或 ~/.cherrystudio/ai-pipeline-bridge.json",
+  "icon": "activity",
+  "launcher": {
+    "enabled": true,
+    "type": "webview",
+    "label": "Kimodo Motion",
+    "category": "motion",
+    "pinnable": true,
+    "entry": {
+      "action": "route",
+      "url": "/plugins/ai-pipeline-kimodo-web-only"
+    }
+  },
+  "backend_routes": "backend/routes.py",
+  "output_types": ["motion", "animation"],
+  "dependencies": {
+    "servers": ["ai_pipeline_api:9331"]
+  }
+}

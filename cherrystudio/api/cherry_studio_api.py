@@ -2038,7 +2038,7 @@ pause >nul
             # 不能是 MIME 类型如 'image/png'
             IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'}
             VIDEO_EXTS = {'.mp4', '.avi', '.mov', '.wmv', '.flv', '.mkv'}
-            AUDIO_EXTS = {'.mp3', '.wav', '.ogg', '.flac', '.aac'}
+            AUDIO_EXTS = {'.mp3', '.wav', '.ogg', '.flac', '.aac', '.m4a'}
             TEXT_EXTS = {
                 '.txt', '.md', '.json', '.js', '.ts', '.py', '.html', '.css',
                 '.xml', '.yaml', '.yml', '.ini', '.cfg', '.conf', '.log',
@@ -2584,9 +2584,13 @@ pause >nul
             method = str(config.get("method", "GET")).upper()
             headers = config.get("headers", {})
             data = config.get("body")
+            body_bytes_base64 = config.get("bodyBytesBase64")
             timeout = config.get("timeout", 15.0)
             body_bytes = None
-            if data is not None:
+            if body_bytes_base64:
+                import base64
+                body_bytes = base64.b64decode(body_bytes_base64)
+            elif data is not None:
                 if isinstance(data, dict):
                     data = json.dumps(data)
                 if isinstance(data, str):
@@ -7329,4 +7333,3 @@ pause >nul
         except Exception as e:
             _log(f"knowledgeBaseCheckQuota error: {e}")
             return json.dumps({"withinQuota": True})
-

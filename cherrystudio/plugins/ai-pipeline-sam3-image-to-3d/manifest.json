@@ -1,0 +1,23 @@
+{
+  "id": "ai-pipeline-sam3-image-to-3d",
+  "name": "SAM3 图生 3D",
+  "version": "0.1.0",
+  "description": "ai-pipeline 工作流 sam3-image-to-3d（选图 → SAM3 → 3D）。本插件仅提供 Cherry 入口，打开后跳转到 ai-pipeline /launch/。配置：PIPELINE_API_BASE 或 ~/.cherrystudio/ai-pipeline-bridge.json",
+  "icon": "cube",
+  "launcher": {
+    "enabled": true,
+    "type": "webview",
+    "label": "SAM3 图生 3D",
+    "category": "3d",
+    "pinnable": true,
+    "entry": {
+      "action": "route",
+      "url": "/plugins/ai-pipeline-sam3-image-to-3d"
+    }
+  },
+  "backend_routes": "backend/routes.py",
+  "output_types": ["model_3d", "image"],
+  "dependencies": {
+    "servers": ["ai_pipeline_api:9331"]
+  }
+}

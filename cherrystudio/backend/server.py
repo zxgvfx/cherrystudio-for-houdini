@@ -78,6 +78,7 @@ def _import_routes():
         plugins,
         generate_3d,
         generate_motion,
+        generate_video,
     )
 
     from ..plugins import load_all_plugins

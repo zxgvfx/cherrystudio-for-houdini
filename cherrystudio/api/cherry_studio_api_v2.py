@@ -1642,7 +1642,7 @@ class CherryStudioAPI(QObject):
 
     _IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'}
     _VIDEO_EXTS = {'.mp4', '.avi', '.mov', '.wmv', '.flv', '.mkv'}
-    _AUDIO_EXTS = {'.mp3', '.wav', '.ogg', '.flac', '.aac'}
+    _AUDIO_EXTS = {'.mp3', '.wav', '.ogg', '.flac', '.aac', '.m4a'}
     _DOCUMENT_EXTS = {'.pdf', '.doc', '.docx', '.pptx', '.xlsx', '.odt', '.odp', '.ods'}
     _TEXT_EXTS = {
         '.txt', '.md', '.json', '.js', '.ts', '.tsx', '.jsx', '.py', '.html',

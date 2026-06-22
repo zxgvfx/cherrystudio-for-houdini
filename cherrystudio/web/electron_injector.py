@@ -3584,34 +3584,53 @@ def get_early_logger_fix_script() -> str:
                 
                 // 导出 IndexedDB 到文件
                 window.__exportIndexedDB = function() {
-                    const openRequest = window.indexedDB.open('CherryStudio');
-                    openRequest.onsuccess = function(event) {
-                        const db = event.target.result;
-                        const storeNames = Array.from(db.objectStoreNames);
-                        
-                        const exportData = { version: db.version, stores: {} };
-                        const tx = db.transaction(storeNames, 'readonly');
-                        let completed = 0;
-                        
-                        storeNames.forEach(function(storeName) {
-                            const store = tx.objectStore(storeName);
-                            const getAllRequest = store.getAll();
-                            
-                            getAllRequest.onsuccess = function() {
-                                exportData.stores[storeName] = getAllRequest.result;
-                                completed++;
+                    try {
+                        const openRequest = window.indexedDB.open('CherryStudio');
+                        openRequest.onsuccess = function(event) {
+                            try {
+                                const db = event.target.result;
+                                const storeNames = Array.from(db.objectStoreNames);
                                 
-                                if (completed === storeNames.length) {
-                                    const jsonData = JSON.stringify(exportData);
-                                    if (window.qt && window.qt.api && window.qt.api.fileWrite) {
-                                        window.qt.api.fileWrite('indexedDB.json', jsonData);
-                                    }
+                                // 如果数据库还没有任何 objectStore（Dexie schema 尚未初始化完成），
+                                // 直接关闭并跳过导出，否则 transaction() 会抛出
+                                // "The storeNames parameter was empty" 的 InvalidAccessError。
+                                if (!storeNames || storeNames.length === 0) {
+                                    db.close();
+                                    return;
                                 }
-                            };
-                        });
-                        
-                        db.close();
-                    };
+                                
+                                const exportData = { version: db.version, stores: {} };
+                                const tx = db.transaction(storeNames, 'readonly');
+                                let completed = 0;
+                                
+                                storeNames.forEach(function(storeName) {
+                                    const store = tx.objectStore(storeName);
+                                    const getAllRequest = store.getAll();
+                                    
+                                    getAllRequest.onsuccess = function() {
+                                        exportData.stores[storeName] = getAllRequest.result;
+                                        completed++;
+                                        
+                                        if (completed === storeNames.length) {
+                                            const jsonData = JSON.stringify(exportData);
+                                            if (window.qt && window.qt.api && window.qt.api.fileWrite) {
+                                                window.qt.api.fileWrite('indexedDB.json', jsonData);
+                                            }
+                                        }
+                                    };
+                                });
+                                
+                                db.close();
+                            } catch (e) {
+                                console.error('[Qt] __exportIndexedDB inner error:', e && e.message);
+                            }
+                        };
+                        openRequest.onerror = function(event) {
+                            console.error('[Qt] __exportIndexedDB open error:', event.target.error);
+                        };
+                    } catch (e) {
+                        console.error('[Qt] __exportIndexedDB outer error:', e && e.message);
+                    }
                 };
                 
                 // 导入 IndexedDB 从文件

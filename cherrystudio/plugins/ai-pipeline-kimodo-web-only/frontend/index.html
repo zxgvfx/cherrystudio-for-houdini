@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Kimodo Motion — AI Pipeline</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #141418; color: #e8e8ef; font-family: system-ui, sans-serif; }
+    body { display: grid; place-items: center; }
+    pre { white-space: pre-wrap; color: #ff8b8b; max-width: 720px; padding: 24px; }
+  </style>
+</head>
+<body>
+  <p>正在打开 AI Pipeline...</p>
+  <pre id="error" hidden></pre>
+  <script>
+    (async () => {
+      const workflowId = "kimodo-web-only";
+      try {
+        const response = await fetch("/api/v1/plugins/ai-pipeline-bridge/health");
+        const data = await response.json();
+        if (!response.ok || data.error || !data.available) {
+          throw new Error(data.error || data.detail || `HTTP ${response.status}`);
+        }
+        const apiBase = String(data.api_base || "").replace(/\/+$/, "");
+        if (!apiBase) throw new Error("ai-pipeline api_base 为空");
+        const bridgeBase = window.location.origin.replace(/\/+$/, "");
+        window.location.replace(
+          `${apiBase}/launch/?workflow_id=${encodeURIComponent(workflowId)}&bridge_base=${encodeURIComponent(bridgeBase)}`
+        );
+      } catch (error) {
+        document.querySelector("p").textContent = "打开失败";
+        const el = document.getElementById("error");
+        el.hidden = false;
+        el.textContent = error && error.message ? error.message : String(error);
+      }
+    })();
+  </script>
+</body>
+</html>

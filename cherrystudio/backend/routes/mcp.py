@@ -1106,12 +1106,12 @@ def _get_api_config():
 
 
 def _get_model_info(model_id: str) -> dict:
-    """Look up a model's config (primaryModality, endpoint_type, etc.) from centralized-config.json."""
+    """Look up a model's config (modality, protocol, etc.) from centralized-config.json."""
     _, _, models = _get_api_config()
     for m in models:
         if m.get("id") == model_id or m.get("modelId") == model_id:
             return m
-    return {"primaryModality": "text"}
+    return {"modality": "text"}
 
 
 def _ask_model_http(url: str, body: dict, api_key: str, timeout: int = 120) -> dict:
@@ -1414,13 +1414,14 @@ def _ask_model(arguments: dict) -> dict:
                 "content": [{"type": "text", "text": "No API configuration found in centralized-config.json"}]}
 
     model_info = _get_model_info(model_id)
-    modality = model_info.get("primaryModality", "text")
-    endpoint_type = model_info.get("endpoint_type", "")
-    _dbg(f"[ask_model] model={model_id}, modality={modality}, endpoint_type={endpoint_type}")
+    # New schema uses `modality` / `protocol`; fall back to legacy names for safety.
+    modality = model_info.get("modality") or model_info.get("primaryModality", "text")
+    protocol = model_info.get("protocol") or model_info.get("endpoint_type", "")
+    _dbg(f"[ask_model] model={model_id}, modality={modality}, protocol={protocol}")
 
-    # endpoint_type == "openai" means the model uses chat completions API,
-    # even if primaryModality is "image" (e.g. nano-banana-pro, gpt-image-1.5)
-    use_images_api = (modality == "image" and endpoint_type != "openai")
+    # protocol == "openai" means the model uses chat completions API,
+    # even if modality is "image" (e.g. nano-banana-pro, gpt-image-1.5)
+    use_images_api = (modality == "image" and protocol != "openai")
 
     if use_images_api:
         return _ask_model_image(
