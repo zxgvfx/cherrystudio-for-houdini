@@ -25,6 +25,7 @@
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
     body { padding: 28px; }
+    body.embedded { padding: 0; height: 100vh; overflow: hidden; }
     main { max-width: 1120px; margin: 0 auto; }
     header { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
     h1 { margin: 0 0 8px; font-size: 28px; letter-spacing: .2px; }
@@ -110,10 +111,42 @@
       color: var(--danger);
       white-space: pre-wrap;
     }
+    .pipeline-shell {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg);
+    }
+    .pipeline-shell.hidden { display: none; }
+    .pipeline-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(17, 18, 23, .96);
+    }
+    .pipeline-url {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 12px;
+    }
+    .pipeline-frame {
+      width: 100%;
+      flex: 1;
+      border: 0;
+      background: #0b0c10;
+    }
   </style>
 </head>
 <body>
-  <main>
+  <main id="launcher">
     <header>
       <div>
         <h1>AI Pipeline 工作流</h1>
@@ -130,20 +163,40 @@
     <section id="content" class="grid"></section>
     <pre id="error" hidden></pre>
   </main>
+
+  <section id="pipeline-shell" class="pipeline-shell hidden">
+    <div class="pipeline-bar">
+      <button id="back-list" type="button">工作流列表</button>
+      <button id="reload-frame" type="button">刷新当前页</button>
+      <button id="open-external" type="button">外部打开</button>
+      <div id="pipeline-url" class="pipeline-url"></div>
+    </div>
+    <iframe id="pipeline-frame" class="pipeline-frame" title="AI Pipeline" allow="clipboard-read; clipboard-write; fullscreen"></iframe>
+  </section>
   <script>
+    const LAST_URL_KEY = "aiPipelineBridgeLastUrl";
     const state = {
       apiBase: "",
       bridgeBase: window.location.origin.replace(/\/+$/, ""),
       workflows: [],
       query: "",
+      currentUrl: "",
     };
 
     const els = {
+      body: document.body,
+      launcher: document.getElementById("launcher"),
       status: document.getElementById("status"),
       content: document.getElementById("content"),
       error: document.getElementById("error"),
       search: document.getElementById("search"),
       refresh: document.getElementById("refresh"),
+      shell: document.getElementById("pipeline-shell"),
+      frame: document.getElementById("pipeline-frame"),
+      pipelineUrl: document.getElementById("pipeline-url"),
+      backList: document.getElementById("back-list"),
+      reloadFrame: document.getElementById("reload-frame"),
+      openExternal: document.getElementById("open-external"),
     };
 
     function setStatus(text) {
@@ -157,9 +210,34 @@
       setStatus("连接失败");
     }
 
+    function rememberUrl(url) {
+      if (!url) return;
+      state.currentUrl = url;
+      els.pipelineUrl.textContent = url;
+      try { localStorage.setItem(LAST_URL_KEY, url); } catch (_) {}
+    }
+
+    function openPipelineUrl(url) {
+      rememberUrl(url);
+      els.frame.src = url;
+      els.launcher.hidden = true;
+      els.shell.classList.remove("hidden");
+      els.body.classList.add("embedded");
+    }
+
+    function showLauncher() {
+      els.frame.removeAttribute("src");
+      state.currentUrl = "";
+      try { localStorage.removeItem(LAST_URL_KEY); } catch (_) {}
+      history.replaceState(null, "", window.location.pathname);
+      els.body.classList.remove("embedded");
+      els.shell.classList.add("hidden");
+      els.launcher.hidden = false;
+    }
+
     function launchWorkflow(workflowId) {
       const url = `${state.apiBase}/launch/?workflow_id=${encodeURIComponent(workflowId)}&bridge_base=${encodeURIComponent(state.bridgeBase)}`;
-      window.location.href = url;
+      openPipelineUrl(url);
     }
 
     function text(value, fallback = "") {
@@ -252,6 +330,13 @@
           return;
         }
 
+        const restore = params.get("restore") !== "0";
+        const lastUrl = restore ? localStorage.getItem(LAST_URL_KEY) : "";
+        if (lastUrl && /^https?:\/\//i.test(lastUrl)) {
+          openPipelineUrl(lastUrl);
+          return;
+        }
+
         const workflowsResponse = await fetch("/api/v1/plugins/ai-pipeline-bridge/workflows");
         const payload = await workflowsResponse.json();
         if (!workflowsResponse.ok || payload.error) {
@@ -269,6 +354,21 @@
       render();
     });
     els.refresh.addEventListener("click", load);
+    els.backList.addEventListener("click", () => {
+      if (confirm("回到工作流列表？当前 AI Pipeline 页面会关闭，但 run 不会停止。")) showLauncher();
+    });
+    els.reloadFrame.addEventListener("click", () => {
+      if (state.currentUrl) els.frame.src = state.currentUrl;
+    });
+    els.openExternal.addEventListener("click", () => {
+      if (state.currentUrl) window.open(state.currentUrl, "_blank", "noopener");
+    });
+    window.addEventListener("message", (event) => {
+      const msg = event.data;
+      if (!msg || typeof msg !== "object") return;
+      if (msg.type !== "ai-pipeline:navigate" || !msg.url) return;
+      rememberUrl(String(msg.url));
+    });
     load();
   </script>
 </body>

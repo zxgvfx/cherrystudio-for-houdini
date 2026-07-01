@@ -26,7 +26,7 @@
         if (!apiBase) throw new Error("ai-pipeline api_base 为空");
         const bridgeBase = window.location.origin.replace(/\/+$/, "");
         window.location.replace(
-          `${apiBase}/launch/?workflow_id=${encodeURIComponent(workflowId)}&bridge_base=${encodeURIComponent(bridgeBase)}`
+          `${bridgeBase}/plugins-ui/ai-pipeline-bridge/?workflow_id=${encodeURIComponent(workflowId)}`
         );
       } catch (error) {
         document.querySelector("p").textContent = "打开失败";
