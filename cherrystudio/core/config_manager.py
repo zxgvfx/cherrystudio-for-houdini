@@ -3,6 +3,8 @@ import json
 import logging
 import datetime
 
+from .newapi_provisioning import newapi_provisioning_service
+
 # 配置日志
 _log = logging.getLogger('ConfigManager')
 
@@ -44,15 +46,18 @@ class ConfigManager:
         
         self._config = None
         
-        # 初始化时立即加载，以便确认逻辑执行
-        self.load()
+        # 配置按需加载。避免应用启动阶段多次读取配置时重复触发 NewAPI provisioning。
 
     def load(self):
         """加载并合并配置"""
+        if self._config is not None:
+            return self._config
+
         # 1. 加载中心化配置 (只读)
         centralized = {"models": [], "mcpServers": [], "version": "1.0.0", "providers": [], "webSearchProviders": []}
         if self._centralized_config_path and os.path.exists(self._centralized_config_path):
             try:
+                print(f"[NewAPI Provisioning] centralized config path: {self._centralized_config_path}")
                 with open(self._centralized_config_path, 'r', encoding='utf-8') as f:
                     centralized = json.load(f)
                     # 标记为只读
@@ -62,6 +67,22 @@ class ConfigManager:
                         s["isCentralized"] = True
                     for w in centralized.get("webSearchProviders", []):
                         w["isCentralized"] = True
+                    provisioned_providers = []
+                    for p in centralized.get("providers", []):
+                        p["isCentralized"] = True
+                        _log.info(
+                            "Centralized provider loaded: id=%s apiKeyMode=%s provisioning=%s",
+                            p.get("id"),
+                            p.get("apiKeyMode"),
+                            bool(p.get("provisioning")),
+                        )
+                        print(
+                            "[NewAPI Provisioning] provider "
+                            f"id={p.get('id')} apiKeyMode={p.get('apiKeyMode')} "
+                            f"provisioning={bool(p.get('provisioning'))}"
+                        )
+                        provisioned_providers.append(newapi_provisioning_service.provision_provider(p))
+                    centralized["providers"] = provisioned_providers
                 _log.info(f"Loaded centralized config from {self._centralized_config_path}")
             except Exception as e:
                 _log.error(f"Failed to load centralized config: {e}")
@@ -130,6 +151,7 @@ class ConfigManager:
 
     def reload(self):
         """重新加载配置"""
+        self._config = None
         return self.load()
 
     def update_user_models(self, models):
