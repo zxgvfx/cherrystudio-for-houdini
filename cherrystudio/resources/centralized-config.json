@@ -28,7 +28,18 @@
       "name": "Coco",
       "type": "openai",
       "apiHost": "http://new-api.ccc.net:3000",
-      "apiKey": "sk-771X7iDsUJY1rACoI6nTDZBepVM8vxpC27uUocyq2wEqkeBC",
+      "apiKeyMode": "per-user-provisioned",
+      "provisioning": {
+        "provider": "newapi",
+        "endpoint": "http://new-api.ccc.net:8080/provision",
+        "secret": "REPLACE_WITH_PROVISION_SHARED_SECRET",
+        "tokenName": "cherrystudio-default",
+        "group": "default",
+        "initialQuotaUsd": 0,
+        "topupUsd": 100,
+        "unlimitedQuota": true,
+        "usernameSource": "local-config"
+      },
       "icon": "",
       "models": [
         {
