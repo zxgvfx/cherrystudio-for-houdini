@@ -1,0 +1,16 @@
+import { t as createLucideIcon } from "./createLucideIcon-BC_5i1E_.js";
+/**
+* @license lucide-react v0.525.0 - ISC
+*
+* This source code is licensed under the ISC license.
+* See the LICENSE file in the root directory of this source tree.
+*/
+var __iconNode = [["path", {
+	d: "M18 6 6 18",
+	key: "1bl5f8"
+}], ["path", {
+	d: "m6 6 12 12",
+	key: "d8bk6v"
+}]];
+var X = createLucideIcon("x", __iconNode);
+export { __iconNode as n, X as t };

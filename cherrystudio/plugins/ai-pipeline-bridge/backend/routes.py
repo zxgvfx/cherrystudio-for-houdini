@@ -208,9 +208,10 @@ def open_gui(ctx: dict) -> Any:
 
 @route("/api/v1/plugins/ai-pipeline-bridge/workflows", methods=["GET"])
 def list_workflows(ctx: dict) -> Any:
-    """列出 ai-pipeline 所有可用工作流，前端用于"接力下一工作流"选择面板。
+    """列出 ai-pipeline 可用工作流，前端用于工作流目录。
 
     透传到 ai-pipeline ``GET /api/workflows``。可选 ``?tag=`` 过滤。
+    默认 ``latest=true``（每个 id 只保留最新版）；传 ``?latest=0`` 可列全部版本。
 
     取代了上一版按节点推荐的 ``/next-suggestions``——现在编排是工作流级的，
     bridge 不预设"哪些工作流可以接力哪些"，由用户从全部工作流里选。
@@ -219,10 +220,22 @@ def list_workflows(ctx: dict) -> Any:
     tag = query.get("tag")
     if isinstance(tag, list):
         tag = tag[0] if tag else None
+    latest = query.get("latest")
+    if latest is None:
+        latest_only = True
+    elif isinstance(latest, list):
+        latest_only = str(latest[0]).lower() not in ("0", "false", "no")
+    else:
+        latest_only = str(latest).lower() not in ("0", "false", "no")
     api_base = _api_base()
     url = f"{api_base}/api/workflows"
+    qs: list[str] = []
     if tag:
-        url += f"?tag={urllib.parse.quote(str(tag))}"
+        qs.append(f"tag={urllib.parse.quote(str(tag))}")
+    if latest_only:
+        qs.append("latest=true")
+    if qs:
+        url += "?" + "&".join(qs)
     try:
         with urllib.request.urlopen(url, timeout=10) as resp:
             payload = json.loads(resp.read().decode("utf-8"))

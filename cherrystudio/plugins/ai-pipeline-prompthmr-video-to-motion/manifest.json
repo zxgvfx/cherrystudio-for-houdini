@@ -1,0 +1,23 @@
+{
+  "id": "ai-pipeline-prompthmr-video-to-motion",
+  "name": "PromptHMR 视频生动作",
+  "version": "0.1.0",
+  "description": "ai-pipeline 工作流 prompthmr-video-to-motion（选视频 → PromptHMR → GLB → FBX）。本插件仅提供 Cherry 入口，打开后跳转到 ai-pipeline /launch/。配置：PIPELINE_API_BASE 或 ~/.cherrystudio/ai-pipeline-bridge.json",
+  "icon": "activity",
+  "launcher": {
+    "enabled": true,
+    "type": "webview",
+    "label": "PromptHMR 视频生动作",
+    "category": "motion",
+    "pinnable": true,
+    "entry": {
+      "action": "route",
+      "url": "/plugins/ai-pipeline-prompthmr-video-to-motion"
+    }
+  },
+  "backend_routes": "backend/routes.py",
+  "output_types": ["motion", "model_3d", "animation"],
+  "dependencies": {
+    "servers": ["ai_pipeline_api:9331"]
+  }
+}

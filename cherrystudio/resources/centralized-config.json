@@ -1,6 +1,6 @@
 {
-  "version": "2.0.0",
-  "lastUpdated": "2026-06-17",
+  "version": "2.1.0",
+  "lastUpdated": "2026-07-09",
   "knowledgeBaseSource": "J:/vfxtools/piplineTD/models/knowledge_base/vectors",
   "proxy": {
     "bypassRules": "localhost,127.0.0.1,::1,*.ccc.net,192.168.*.*"
@@ -10,168 +10,250 @@
   "developerPasswordHash": "667282499d40d5935c6b80672ea0a875477ada7b3b093aa2fc428f862216d3e0",
   "defaultModels": {
     "defaultModel": {
-      "id": "doubao-seed-1-6",
-      "provider": "centralized-openai"
+      "id": "deepseek-v4-flash@vapi",
+      "provider": "coco-vapi"
     },
     "quickModel": {
-      "id": "doubao-seed-1-6",
-      "provider": "centralized-openai"
+      "id": "deepseek-v4-flash@vapi",
+      "provider": "coco-vapi"
     },
     "translateModel": {
-      "id": "doubao-seed-1-6",
-      "provider": "centralized-openai"
+      "id": "deepseek-v4-flash@vapi",
+      "provider": "coco-vapi"
     }
   },
   "providers": [
     {
-      "id": "centralized-openai",
-      "name": "Coco",
+      "id": "coco-vapi",
+      "name": "Coco · VAPI",
+      "type": "openai",
+      "apiHost": "http://new-api.ccc.net:3000",
+      "anthropicCacheControl": {
+        "tokenThreshold": 1024,
+        "cacheSystemMessage": true,
+        "cacheLastNMessages": 1
+      },
+      "apiKeyMode": "per-user-provisioned",
+      "provisioning": {
+        "provider": "newapi",
+        "endpoint": "http://new-api.ccc.net:9898/provision",
+        "secret": "HStUcAPKrGHn-h1yPK8i4sSCR5sx_E0GOKcvT10L7Mk",
+        "tokenName": "cherrystudio-vapi",
+        "group": "vapi",
+        "initialQuotaUsd": 0,
+        "topupUsd": 100,
+        "unlimitedQuota": true,
+        "usernameSource": "local-config",
+        "costTracking": {
+          "enabled": true,
+          "currency": "¥"
+        }
+      },
+      "icon": "",
+      "models": [
+        {
+          "id": "gpt-5.6-sol@vapi",
+          "name": "gpt-5.6-sol",
+          "modelId": "gpt-5.6-sol@vapi",
+          "isCentralized": true,
+          "modality": "multimodal",
+          "endpoint_type": "openai-response"
+        },
+        {
+          "id": "gpt-5.6-terra@vapi",
+          "name": "gpt-5.6-terra",
+          "modelId": "gpt-5.6-terra@vapi",
+          "isCentralized": true,
+          "modality": "multimodal",
+          "endpoint_type": "openai-response"
+        },
+        {
+          "id": "gpt-5.6-luna@vapi",
+          "name": "gpt-5.6-luna",
+          "modelId": "gpt-5.6-luna@vapi",
+          "isCentralized": true,
+          "modality": "multimodal",
+          "endpoint_type": "openai-response"
+        },
+        {
+          "id": "claude-opus-4-8@vapi",
+          "name": "claude-opus-4-8",
+          "modelId": "claude-opus-4-8@vapi",
+          "isCentralized": true,
+          "modality": "multimodal"
+        },
+        {
+          "id": "deepseek-v4-flash@vapi",
+          "name": "deepseek-v4-flash",
+          "modelId": "deepseek-v4-flash@vapi",
+          "isCentralized": true,
+          "modality": "text"
+        },
+        {
+          "id": "deepseek-v4-pro@vapi",
+          "name": "deepseek-v4-pro",
+          "modelId": "deepseek-v4-pro@vapi",
+          "isCentralized": true,
+          "modality": "text"
+        },
+        {
+          "id": "glm-5.2@vapi",
+          "name": "glm-5.2",
+          "modelId": "glm-5.2@vapi",
+          "isCentralized": true,
+          "modality": "text"
+        },
+        {
+          "id": "gpt-image-2@vapi",
+          "name": "gpt-image-2",
+          "modelId": "gpt-image-2@vapi",
+          "isCentralized": true,
+          "modality": "image",
+          "protocol": "image-generation"
+        },
+        {
+          "id": "gemini-3.5-flash@vapi",
+          "name": "gemini-3.5-flash",
+          "modelId": "gemini-3.5-flash@vapi",
+          "isCentralized": true,
+          "modality": "multimodal"
+        },
+        {
+          "id": "claude-sonnet-5@vapi",
+          "name": "claude-sonnet-5",
+          "modelId": "claude-sonnet-5@vapi",
+          "isCentralized": true,
+          "modality": "multimodal"
+        },
+        {
+          "id": "nano-banana-pro@vapi",
+          "name": "nano-banana-pro",
+          "modelId": "nano-banana-pro@vapi",
+          "isCentralized": true,
+          "modality": "image",
+          "protocol": "image-generation"
+        }
+      ]
+    },
+    {
+      "id": "coco-rightcode",
+      "name": "Coco · Code",
       "type": "openai",
       "apiHost": "http://new-api.ccc.net:3000",
       "apiKeyMode": "per-user-provisioned",
       "provisioning": {
         "provider": "newapi",
-        "endpoint": "http://new-api.ccc.net:8080/provision",
-        "secret": "REPLACE_WITH_PROVISION_SHARED_SECRET",
+        "endpoint": "http://new-api.ccc.net:9898/provision",
+        "secret": "HStUcAPKrGHn-h1yPK8i4sSCR5sx_E0GOKcvT10L7Mk",
+        "tokenName": "cherrystudio-rightcode",
+        "group": "rightcode",
+        "initialQuotaUsd": 0,
+        "topupUsd": 100,
+        "unlimitedQuota": true,
+        "usernameSource": "local-config",
+        "costTracking": {
+          "enabled": true,
+          "currency": "¥"
+        }
+      },
+      "icon": "",
+      "models": [
+        {
+          "id": "nano-banana-pro@rc",
+          "name": "nano-banana-pro",
+          "modelId": "nano-banana-pro@rc",
+          "isCentralized": true,
+          "modality": "image",
+          "protocol": "image-generation"
+        },
+        {
+          "id": "nano-banana-2@rc",
+          "name": "nano-banana-2",
+          "modelId": "nano-banana-2@rc",
+          "isCentralized": true,
+          "modality": "image",
+          "protocol": "image-generation"
+        },
+        {
+          "id": "gpt-image-2@rc",
+          "name": "gpt-image-2",
+          "modelId": "gpt-image-2@rc",
+          "isCentralized": true,
+          "modality": "image",
+          "protocol": "image-generation"
+        },
+        {
+          "id": "gpt-image-2-vip@rc",
+          "name": "gpt-image-2-vip",
+          "modelId": "gpt-image-2-vip@rc",
+          "isCentralized": true,
+          "modality": "image",
+          "protocol": "image-generation"
+        }
+      ]
+    },
+    {
+      "id": "coco-openrouter",
+      "name": "Coco · Router",
+      "type": "openai",
+      "apiHost": "http://new-api.ccc.net:3000",
+      "apiKeyMode": "per-user-provisioned",
+      "provisioning": {
+        "provider": "newapi",
+        "endpoint": "http://new-api.ccc.net:9898/provision",
+        "secret": "HStUcAPKrGHn-h1yPK8i4sSCR5sx_E0GOKcvT10L7Mk",
+        "tokenName": "cherrystudio-openrouter",
+        "group": "openrouter",
+        "initialQuotaUsd": 0,
+        "topupUsd": 100,
+        "unlimitedQuota": true,
+        "usernameSource": "local-config",
+        "costTracking": {
+          "enabled": true,
+          "currency": "¥"
+        }
+      },
+      "icon": "",
+      "models": [
+
+        {
+          "id": "inclusionai/ling-3.0-flash:free",
+          "name": "ling-3.0-flash:free",
+          "modelId": "inclusionai/ling-3.0-flash:free",
+          "isCentralized": true,
+          "modality": "text"
+        }
+      ]
+    },
+    {
+      "id": "coco-default",
+      "name": "Coco · Default",
+      "type": "openai",
+      "apiHost": "http://new-api.ccc.net:3000",
+      "apiKeyMode": "per-user-provisioned",
+      "provisioning": {
+        "provider": "newapi",
+        "endpoint": "http://new-api.ccc.net:9898/provision",
+        "secret": "HStUcAPKrGHn-h1yPK8i4sSCR5sx_E0GOKcvT10L7Mk",
         "tokenName": "cherrystudio-default",
         "group": "default",
         "initialQuotaUsd": 0,
         "topupUsd": 100,
         "unlimitedQuota": true,
-        "usernameSource": "local-config"
+        "usernameSource": "local-config",
+        "costTracking": {
+          "enabled": true,
+          "currency": "¥"
+        }
       },
       "icon": "",
       "models": [
         {
-          "id": "gpt-5.5",
-          "name": "gpt-5.5",
-          "modelId": "gpt-5.5",
-          "isCentralized": true,
-          "modality": "text"
-        },
-        {
-          "id": "claude-opus-4-8",
-          "name": "claude-opus-4-8",
-          "modelId": "claude-opus-4-8",
-          "isCentralized": true,
-          "modality": "multimodal"
-        },
-        {
-          "id": "qwen3.5-397b-a17b",
-          "name": "qwen3.5-397b-a17b",
-          "modelId": "qwen3.5-397b-a17b",
-          "isCentralized": true,
-          "modality": "multimodal"
-        },
-        {
-          "id": "DeepSeek-V4-Pro",
-          "name": "DeepSeek-V4-Pro",
-          "modelId": "DeepSeek-V4-Pro",
-          "isCentralized": true,
-          "modality": "text"
-        },
-        {
-          "id": "doubao-seed-1-8-251228",
-          "name": "doubao-seed-1-8-251228",
-          "modelId": "doubao-seed-1-8-251228",
-          "isCentralized": true,
-          "modality": "multimodal"
-        },
-        {
-          "id": "MiniMax-M2.5",
-          "name": "MiniMax-M2.5",
-          "modelId": "MiniMax-M2.5",
-          "isCentralized": true,
-          "modality": "text"
-        },
-        {
-          "id": "glm-5",
-          "name": "glm-5",
-          "modelId": "glm-5",
-          "isCentralized": true,
-          "modality": "text"
-        },
-        {
           "id": "bge-m3:567m",
-          "name": "bge-m3:567m",
+          "name": "bge-m3:567m:free",
           "modelId": "bge-m3:567m",
           "isCentralized": true,
           "modality": "embedding"
-        },
-        {
-          "id": "doubao-seed-1-6",
-          "name": "doubao-seed-1-6",
-          "modelId": "doubao-seed-1-6",
-          "isCentralized": true,
-          "modality": "text"
-        },
-        {
-          "id": "gpt-image-2",
-          "name": "gpt-image-2",
-          "modelId": "gpt-image-2",
-          "isCentralized": true,
-          "modality": "image",
-          "protocol": "image-generation"
-        },
-        {
-          "id": "gemini-3.5-flash",
-          "name": "gemini-3.5-flash",
-          "modelId": "gemini-3.5-flash",
-          "isCentralized": true,
-          "modality": "multimodal"
-        },
-        {
-          "id": "claude-haiku-4-5-20251001",
-          "name": "claude-haiku-4-5-20251001",
-          "modelId": "claude-haiku-4-5-20251001",
-          "isCentralized": true,
-          "modality": "multimodal"
-        },
-        {
-          "id": "nano-banana-pro",
-          "name": "nano-banana-pro",
-          "modelId": "nano-banana-pro",
-          "isCentralized": true,
-          "modality": "image",
-          "protocol": "openai"
-        },
-        {
-          "id": "nano-banana-pro-2k",
-          "name": "nano-banana-pro-2k",
-          "modelId": "nano-banana-pro-2k",
-          "isCentralized": true,
-          "modality": "image",
-          "protocol": "image-generation"
-        },
-        {
-          "id": "nano-banana-pro-4k",
-          "name": "nano-banana-pro-4k",
-          "modelId": "nano-banana-pro-4k",
-          "isCentralized": true,
-          "modality": "image",
-          "protocol": "image-generation"
-        },
-        {
-          "id": "gemini-3.1-flash-lite",
-          "name": "gemini-3.1-flash-lite",
-          "modelId": "gemini-3.1-flash-lite",
-          "isCentralized": true,
-          "modality": "multimodal"
-        },
-        {
-          "id": "nano-banana-2",
-          "name": "nano-banana-2",
-          "modelId": "nano-banana-2",
-          "isCentralized": true,
-          "modality": "image",
-          "protocol": "image-generation"
-        },
-        {
-          "id": "hi3dgen",
-          "name": "Hi3DGen",
-          "modelId": "hi3dgen",
-          "isCentralized": true,
-          "modality": "model_3d"
         },
         {
           "id": "hy-motion-1.0",
@@ -179,13 +261,6 @@
           "modelId": "hy-motion-1.0",
           "isCentralized": true,
           "modality": "motion"
-        },
-        {
-          "id": "MiniMax-Hailuo-02_512P_6",
-          "name": "MiniMax-Hailuo-02_512P_6",
-          "modelId": "MiniMax-Hailuo-02_512P_6",
-          "isCentralized": true,
-          "modality": "video"
         }
       ]
     },
@@ -193,7 +268,7 @@
       "id": "promptHMR-openai",
       "name": "promptHMR",
       "type": "openai",
-      "apiHost": "http://192.168.21.225:8000/",
+      "apiHost": "http://192.168.160.103:8000/",
       "apiKey": "123456",
       "icon": "",
       "models": [
@@ -203,6 +278,90 @@
           "modelId": "prompthmr",
           "isCentralized": true,
           "modality": "motion"
+        }
+      ]
+    },
+    {
+      "id": "coco-atl",
+      "name": "Coco · Atl",
+      "type": "openai",
+      "apiHost": "http://new-api.ccc.net:3000",
+      "anthropicCacheControl": {
+        "tokenThreshold": 1024,
+        "cacheSystemMessage": true,
+        "cacheLastNMessages": 1
+      },
+      "apiKeyMode": "per-user-provisioned",
+      "provisioning": {
+        "provider": "newapi",
+        "endpoint": "http://new-api.ccc.net:9898/provision",
+        "secret": "HStUcAPKrGHn-h1yPK8i4sSCR5sx_E0GOKcvT10L7Mk",
+        "tokenName": "cherrystudio-atlascloud",
+        "group": "atlascloud",
+        "initialQuotaUsd": 0,
+        "topupUsd": 100,
+        "unlimitedQuota": true,
+        "usernameSource": "local-config",
+        "costTracking": {
+          "enabled": true,
+          "currency": "¥"
+        }
+      },
+      "icon": "",
+      "models": [
+        {
+          "id": "deepseek-ai/deepseek-v4-flash@atl",
+          "name": "deepseek-v4-flash",
+          "modelId": "deepseek-ai/deepseek-v4-flash@atl",
+          "isCentralized": true,
+          "modality": "text"
+        },
+        {
+          "id": "gpt-image-2@atl",
+          "name": "gpt-image-2",
+          "modelId": "gpt-image-2@atl",
+          "isCentralized": true,
+          "modality": "image",
+          "protocol": "image-generation"
+        },
+        {
+          "id": "seedream-v5.0-lite@atl",
+          "name": "seedream-v5.0-lite",
+          "modelId": "seedream-v5.0-lite@atl",
+          "isCentralized": true,
+          "modality": "image",
+          "protocol": "image-generation"
+        },
+        {
+          "id": "seedream-v5.0-pro@atl",
+          "name": "seedream-v5.0-pro",
+          "modelId": "seedream-v5.0-pro@atl",
+          "isCentralized": true,
+          "modality": "image",
+          "protocol": "image-generation"
+        },
+        {
+          "id": "nano-banana-pro@atl",
+          "name": "nano-banana-pro",
+          "modelId": "nano-banana-pro@atl",
+          "isCentralized": true,
+          "modality": "image",
+          "protocol": "image-generation"
+        },
+        {
+          "id": "nano-banana-2@atl",
+          "name": "nano-banana-2",
+          "modelId": "nano-banana-2@atl",
+          "isCentralized": true,
+          "modality": "image",
+          "protocol": "image-generation"
+        },
+        {
+          "id": "seedance-2.0-mini@atl",
+          "name": "seedance-2.0-mini",
+          "modelId": "seedance-2.0-mini@atl",
+          "isCentralized": true,
+          "modality": "video"
         }
       ]
     }
@@ -221,21 +380,6 @@
         "JIRA_PERSONAL_TOKE": "<your-jira-token>",
         "CONFLUENCE_URL": "http://wiki.ccc.net",
         "CONFLUENCE_PERSONAL_TOKEN": "<your-confluence-token>"
-      },
-      "isCentralized": true,
-      "isActive": true
-    },
-    {
-      "id": "coco",
-      "name": "coco",
-      "type": "stdio",
-      "command": "uvx",
-      "args": [
-        "coco-mcp"
-      ],
-      "env": {
-        "STORAGE_MODE": "unc",
-        "SHARED_DIR": "W:/Public/TD/zhangxuqiang/temp/upload"
       },
       "isCentralized": true,
       "isActive": true

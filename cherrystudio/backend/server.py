@@ -66,6 +66,7 @@ def _import_routes():
         files,
         topics,
         config as config_route,
+        newapi_cost,
         knowledge_base,
         agent,
         mcp,

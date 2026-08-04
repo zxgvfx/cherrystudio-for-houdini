@@ -150,7 +150,7 @@
     <header>
       <div>
         <h1>AI Pipeline 工作流</h1>
-        <p>从当前 ai-pipeline server 自动读取 workflow。新增 workflow 后不需要再新增 CherryStudio 插件。</p>
+        <p>从当前 ai-pipeline server 自动读取 workflow（默认仅最新版）。点击「打开」进入 server 的 Launch 页填写参数与上传文件。</p>
       </div>
       <div id="status" class="status">正在连接...</div>
     </header>
@@ -235,8 +235,27 @@
       els.launcher.hidden = false;
     }
 
-    function launchWorkflow(workflowId) {
-      const url = `${state.apiBase}/launch/?workflow_id=${encodeURIComponent(workflowId)}&bridge_base=${encodeURIComponent(state.bridgeBase)}`;
+    /** 统计 Launch 页会展示的输入项：legacy inputs + parameters(target=input)。 */
+    function inputCount(wf) {
+      const names = new Set();
+      for (const inp of Array.isArray(wf.inputs) ? wf.inputs : []) {
+        if (inp && inp.name) names.add(inp.name);
+      }
+      for (const param of Array.isArray(wf.parameters) ? wf.parameters : []) {
+        if (!param || param.target !== "input") continue;
+        const key = param.path || param.name;
+        if (key) names.add(key);
+      }
+      return names.size;
+    }
+
+    function launchWorkflow(workflowId, workflowVersion) {
+      const qs = new URLSearchParams({
+        workflow_id: workflowId,
+        bridge_base: state.bridgeBase,
+      });
+      if (workflowVersion) qs.set("version", workflowVersion);
+      const url = `${state.apiBase}/launch/?${qs.toString()}`;
       openPipelineUrl(url);
     }
 
@@ -297,13 +316,13 @@
 
         const footer = document.createElement("footer");
         const meta = document.createElement("span");
-        const inputs = Array.isArray(wf.inputs) ? wf.inputs.length : 0;
+        const inputs = inputCount(wf);
         meta.textContent = `${wf.source || "workflow"} · ${inputs} 个输入`;
         const button = document.createElement("button");
         button.className = "primary";
         button.type = "button";
         button.textContent = "打开";
-        button.addEventListener("click", () => launchWorkflow(wf.id));
+        button.addEventListener("click", () => launchWorkflow(wf.id, wf.version || ""));
         footer.append(meta, button);
 
         card.append(title, id, desc, tags, footer);
@@ -326,7 +345,7 @@
         const params = new URLSearchParams(window.location.search);
         const workflowId = params.get("workflow_id");
         if (workflowId) {
-          launchWorkflow(workflowId);
+          launchWorkflow(workflowId, params.get("version") || "");
           return;
         }
 
