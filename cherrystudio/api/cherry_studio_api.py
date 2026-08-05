@@ -23,6 +23,8 @@ from PySide6.QtCore import QObject, Slot, Signal
 
 from ..version import APP_VERSION, APP_PLATFORM, APP_ARCH
 from .agent_server import AgentServer
+from .agent_runtime_manager import NodeAgentRuntime, is_node_available
+from .agent_permission_bridge import PermissionBridge
 from .agent_message_store import get_session_history, persist_exchange
 from ..utils.logger import network_logger
 from ..core.config_manager import config_manager
@@ -593,8 +595,8 @@ class CherryStudioAPI(QObject):
     _stream_buffers = {}
     _stream_locks = {}
 
-    # Agent 服务器实例
-    _agent_server: AgentServer = None
+    # Agent 服务器实例（NodeAgentRuntime 或回退用的 AgentServer，二者接口一致）
+    _agent_server = None
     _agent_server_lock = threading.Lock()
 
     def __init__(self, parent=None):
@@ -2256,6 +2258,25 @@ pause >nul
             return "null"
 
     @Slot(str, result=str)
+    def readFileAsBase64(self, file_path: str) -> str:
+        """读取任意本地文件并以 base64 返回（用于 Phase 4 Skills 的
+        ``installFromZip``：浏览器端只有一个本地路径，没有 ``File`` 对象，
+        需要 Python 直接读盘再转发给 sidecar）。
+
+        返回 JSON：``{"base64": "..."}`` 或 ``{"error": "..."}"``。
+        """
+        try:
+            if not file_path or not os.path.isfile(file_path):
+                return json.dumps({"error": f"File not found: {file_path}"})
+            import base64
+            with open(file_path, 'rb') as f:
+                raw_data = f.read()
+            return json.dumps({"base64": base64.b64encode(raw_data).decode('utf-8')})
+        except Exception as e:
+            _log(f"[readFileAsBase64] Error reading {file_path}: {e}")
+            return json.dumps({"error": str(e)})
+
+    @Slot(str, result=str)
     def saveBase64Image(self, base64_data_json: str) -> str:
         """保存 base64 图片到应用数据目录
         
@@ -3814,6 +3835,46 @@ pause >nul
             _log(f"Error loading apiServer config: {e}")
             return {"host": "127.0.0.1", "port": 0, "apiKey": "default-key", "enabled": False}
 
+    def _create_agent_backend(self):
+        """创建 Agent 后端实例。
+
+        优先使用真实的 ``@anthropic-ai/claude-agent-sdk`` Node.js sidecar
+        (``agent_runtime_manager.NodeAgentRuntime``)，在工具执行/权限/Skills
+        发现等方面与桌面版官方 Agent 行为对齐；如果当前环境没有可用的
+        Node.js(``is_node_available()`` 为 False)，则回退到纯 Python 重新
+        实现的 ``AgentServer``，保证在没有 Node 环境时 Agent 功能依然可用。
+
+        两者都实现相同的 ``start/stop/is_running/get_port`` 接口，因此
+        ``apiServerStart/Restart/agentApiProxy`` 等调用方无需关心具体实现。
+        """
+        config = self._get_api_server_config()
+        api_key = config.get("apiKey") or ""
+        if is_node_available():
+            _log("[AgentBackend] Using Node.js agent-runtime sidecar (real claude-agent-sdk)")
+            return NodeAgentRuntime(providers_loader=self._load_providers_from_localstorage, api_key=api_key)
+        _log("[AgentBackend] Node.js not found, falling back to legacy Python AgentServer")
+        return AgentServer(providers_loader=self._load_providers_from_localstorage)
+
+    def _start_permission_bridge_if_needed(self):
+        """Phase 3：仅 Node sidecar 暴露 `/v1/agent-permission-events`，
+        因此只在当前后端是 ``NodeAgentRuntime`` 时启动权限审批桥接。
+        """
+        if not isinstance(CherryStudioAPI._agent_server, NodeAgentRuntime):
+            return
+        try:
+            PermissionBridge.instance().start(
+                get_port=lambda: (CherryStudioAPI._agent_server.get_port() if CherryStudioAPI._agent_server else 0),
+                get_api_key=lambda: (self._get_api_server_config().get('apiKey') or ''),
+            )
+        except Exception as e:
+            _log(f"[AgentBackend] Failed to start PermissionBridge: {e}")
+
+    def _stop_permission_bridge(self):
+        try:
+            PermissionBridge.instance().stop()
+        except Exception as e:
+            _log(f"[AgentBackend] Failed to stop PermissionBridge: {e}")
+
     @Slot(result=str)
     def apiServerStatus(self) -> str:
         """获取 API 服务器状态"""
@@ -3866,9 +3927,8 @@ pause >nul
 
                 print("[apiServerStart] Attempting to start Agent Server...")
                 _log("[apiServerStart] Attempting to start Agent Server...")
-                # 创建并启动服务器
-                providers_loader = self._load_providers_from_localstorage
-                CherryStudioAPI._agent_server = AgentServer(providers_loader=providers_loader)
+                # 创建并启动服务器（优先 Node sidecar，否则回退纯 Python 实现）
+                CherryStudioAPI._agent_server = self._create_agent_backend()
 
                 # 尝试启动 - 使用动态端口
                 try:
@@ -3890,6 +3950,7 @@ pause >nul
 
                 if success:
                     _log(f"[apiServerStart] ✓ Agent server started successfully on port {port}")
+                    self._start_permission_bridge_if_needed()
                     return json.dumps({
                         "running": True,
                         "port": port,
@@ -3922,16 +3983,17 @@ pause >nul
         try:
             with CherryStudioAPI._agent_server_lock:
                 # 先停止
+                self._stop_permission_bridge()
                 if CherryStudioAPI._agent_server:
                     CherryStudioAPI._agent_server.stop()
                     CherryStudioAPI._agent_server = None
 
                 # 再启动
-                providers_loader = self._load_providers_from_localstorage
-                CherryStudioAPI._agent_server = AgentServer(providers_loader=providers_loader)
+                CherryStudioAPI._agent_server = self._create_agent_backend()
                 success, port = CherryStudioAPI._agent_server.start(host='127.0.0.1', port=0)
 
                 if success:
+                    self._start_permission_bridge_if_needed()
                     return json.dumps({
                         "running": True,
                         "port": port,
@@ -3960,6 +4022,7 @@ pause >nul
         """停止 API 服务器"""
         try:
             with CherryStudioAPI._agent_server_lock:
+                self._stop_permission_bridge()
                 if CherryStudioAPI._agent_server:
                     CherryStudioAPI._agent_server.stop()
                     CherryStudioAPI._agent_server = None
@@ -4015,7 +4078,9 @@ pause >nul
             req_data = json.dumps(body).encode('utf-8') if body else None
             req = urllib.request.Request(url, data=req_data, method=method)
             req.add_header('Content-Type', 'application/json')
-            req.add_header('Authorization', 'Bearer internal')
+            # 转发真实配置的 API Key（sidecar/AgentServer 若未配置 key 则会跳过校验）
+            api_key = self._get_api_server_config().get('apiKey') or 'internal'
+            req.add_header('Authorization', f'Bearer {api_key}')
 
             try:
                 with urllib.request.urlopen(req, timeout=30.0) as resp:

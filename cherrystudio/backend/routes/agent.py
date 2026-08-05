@@ -17,11 +17,18 @@ _log = network_logger
 
 # Agent Server 引用（由 service_runner 或 Qt 层注入）
 _agent_server = None
+# 与 _agent_server 配套的真实 API Key（用户在 ApiServerSettings 里配置的），
+# 而不是硬编码的 "internal" —— Node agent-runtime sidecar（NodeAgentRuntime）
+# 会严格校验 Authorization 头是否等于启动时传入的 API_KEY，回退用的纯 Python
+# AgentServer 则只检查 Bearer 前缀是否存在，因此传真实 key 对两种后端都兼容。
+_agent_api_key = ""
 
 
-def set_agent_server(server):
-    global _agent_server
+def set_agent_server(server, api_key: str = None):
+    global _agent_server, _agent_api_key
     _agent_server = server
+    if api_key is not None:
+        _agent_api_key = api_key
 
 
 @route("/api/v1/agent/proxy", methods=["POST"])
@@ -43,7 +50,7 @@ def agent_proxy(ctx: dict) -> Any:
         data = json.dumps(req_body).encode("utf-8") if req_body else None
         req = urllib.request.Request(url, data=data, method=method)
         req.add_header("Content-Type", "application/json")
-        req.add_header("Authorization", "Bearer internal")
+        req.add_header("Authorization", f"Bearer {_agent_api_key or 'internal'}")
         dcc_session_id = ctx.get("session_id", "")
         if dcc_session_id:
             req.add_header("X-DCC-Session-Id", dcc_session_id)

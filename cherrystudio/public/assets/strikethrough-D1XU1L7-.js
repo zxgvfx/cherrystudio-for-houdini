@@ -1,3 +1,0 @@
-import "./react-1FqkuScD.js";
-import { n as __iconNode, t as Strikethrough } from "./strikethrough-CcyLLJH1.js";
-export { __iconNode, Strikethrough as default };

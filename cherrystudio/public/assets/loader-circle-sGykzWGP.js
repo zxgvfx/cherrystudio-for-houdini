@@ -1,0 +1,13 @@
+import { t as createLucideIcon } from "./createLucideIcon-D-8HobrW.js";
+/**
+* @license lucide-react v0.525.0 - ISC
+*
+* This source code is licensed under the ISC license.
+* See the LICENSE file in the root directory of this source tree.
+*/
+var __iconNode = [["path", {
+	d: "M21 12a9 9 0 1 1-6.219-8.56",
+	key: "13zald"
+}]];
+var LoaderCircle = createLucideIcon("loader-circle", __iconNode);
+export { __iconNode as n, LoaderCircle as t };

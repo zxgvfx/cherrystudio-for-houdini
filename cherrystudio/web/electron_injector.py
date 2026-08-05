@@ -2513,10 +2513,245 @@ def get_electron_api_script(theme: str = 'light') -> str:
         storeSyncApi.onUpdate = storeSyncApi.onUpdate || function () { return resolved(undefined); };
         
         // AgentTools API
+        // Phase 3: 权限审批的主流程是 Python 后台线程订阅 sidecar 的
+        // `/v1/agent-permission-events` SSE 并弹出 PySide6 原生对话框直接回传
+        // sidecar，完全绕开前端；这里保留 respondToPermission 只是为了兼容前端
+        // 万一自行触发的审批 UI（例如未来接入 IPC 推送 pending 权限到
+        // toolPermissions store 的场景），通过 agentApiProxy 转发到 sidecar 的
+        // 审批接口。
         var agentToolsApi = ensureNamespace('agentTools');
-        agentToolsApi.respondToPermission = agentToolsApi.respondToPermission || function (payload) {
-            console.warn('[Qt] agentTools.respondToPermission called - agent tool approval not supported in Qt runtime');
-            return resolved({ success: false });
+        agentToolsApi.respondToPermission = function (payload) {
+            try {
+                var requestId = payload && payload.requestId;
+                if (!requestId) {
+                    console.warn('[Qt] agentTools.respondToPermission: missing requestId');
+                    return resolved({ success: false, message: 'missing requestId' });
+                }
+                if (!(window.qt && window.qt.api && window.qt.api.agentApiProxy)) {
+                    console.warn('[Qt] agentTools.respondToPermission: agentApiProxy bridge unavailable');
+                    return resolved({ success: false, message: 'agentApiProxy unavailable' });
+                }
+                var request = {
+                    method: 'POST',
+                    path: '/v1/agent-permission-events/' + encodeURIComponent(requestId) + '/respond',
+                    body: {
+                        behavior: payload.behavior,
+                        updatedInput: payload.updatedInput,
+                        message: payload.message
+                    }
+                };
+                return window.qt.api.agentApiProxy(JSON.stringify(request)).then(function (raw) {
+                    try {
+                        var data = (typeof raw === 'string' && raw) ? JSON.parse(raw) : null;
+                        if (data && data.error) {
+                            return { success: false, message: data.error };
+                        }
+                    } catch (parseErr) {
+                        // 204 No Content -> agentApiProxy 返回空字符串，不是错误
+                    }
+                    return { success: true };
+                }).catch(function (e) {
+                    console.error('[Qt] agentTools.respondToPermission failed:', e);
+                    return { success: false, message: String(e) };
+                });
+            } catch (e) {
+                console.error('[Qt] agentTools.respondToPermission error:', e);
+                return resolved({ success: false, message: String(e) });
+            }
+        };
+
+        // AgentSessionStream API
+        // 桌面版通过 Electron 主进程广播 AgentSessionStream_Chunk /
+        // AgentSession_Changed IPC 事件，让"未打开该会话窗口时在后台跑完的
+        // headless 任务"（例如 Scheduler 定时任务/心跳）也能通知渲染进程刷新
+        // UI。Houdini 单窗口架构没有等价的主进程广播——真正的对话流式数据是
+        // 渲染进程直接 fetch() sidecar 的 SSE 拿到的（见 messageThunk.ts），
+        // 这里只需要提供安全的空实现，避免 useSessionChanged/useSessionStream
+        // 等 Hook 里 `window.api.agentSessionStream.onXxx(...)` 因为该命名空间
+        // 整体缺失而抛出 TypeError，导致整个智能体页面崩溃。
+        var agentSessionStreamApi = ensureNamespace('agentSessionStream');
+        agentSessionStreamApi.subscribe = agentSessionStreamApi.subscribe || function (sessionId) {
+            return resolved(undefined);
+        };
+        agentSessionStreamApi.unsubscribe = agentSessionStreamApi.unsubscribe || function (sessionId) {
+            return resolved(undefined);
+        };
+        agentSessionStreamApi.abort = agentSessionStreamApi.abort || function (sessionId) {
+            return resolved(undefined);
+        };
+        agentSessionStreamApi.onChunk = agentSessionStreamApi.onChunk || function (callback) {
+            return function () {};
+        };
+        agentSessionStreamApi.onSessionChanged = agentSessionStreamApi.onSessionChanged || function (callback) {
+            return function () {};
+        };
+
+        // Phase 4: Skills 商店 —— 直连 sidecar 的 /v1/skills REST，
+        // 通过 agentApiProxy 转发（沿用与 AgentApiClient houdiniRequest 相同的桥接方式）。
+        function _skillApiCall(method, path, body) {
+            if (!(window.qt && window.qt.api && window.qt.api.agentApiProxy)) {
+                return Promise.reject(new Error('agentApiProxy bridge unavailable'));
+            }
+            var request = { method: method, path: path, body: body !== undefined ? body : null };
+            return window.qt.api.agentApiProxy(JSON.stringify(request)).then(function (raw) {
+                var data;
+                try {
+                    data = (typeof raw === 'string' && raw) ? JSON.parse(raw) : raw;
+                } catch (e) {
+                    data = raw; // 非 JSON 响应（例如 skill 文件的 text/plain 内容），原样返回
+                }
+                if (data && typeof data === 'object' && data.error) {
+                    var msg = typeof data.error === 'string' ? data.error : (data.error.message || JSON.stringify(data.error));
+                    throw new Error(msg);
+                }
+                return data;
+            });
+        }
+
+        function _toInstalledSkill(raw) {
+            if (!raw) return raw;
+            return {
+                id: raw.id,
+                name: raw.name || raw.folder || raw.id,
+                description: raw.description ?? null,
+                folderName: raw.folder || raw.id,
+                source: 'local',
+                sourceUrl: null,
+                namespace: null,
+                author: null,
+                tags: [],
+                contentHash: raw.id,
+                isEnabled: raw.enabled !== false,
+                createdAt: raw.installedAt ? new Date(raw.installedAt).getTime() : Date.now(),
+                updatedAt: raw.installedAt ? new Date(raw.installedAt).getTime() : Date.now()
+            };
+        }
+
+        var skillApi = ensureNamespace('skill');
+        skillApi.list = function (agentId) {
+            return _skillApiCall('GET', '/v1/skills').then(function (result) {
+                var skills = (result && result.data) || [];
+                if (!agentId) {
+                    return { success: true, data: skills.map(_toInstalledSkill) };
+                }
+                // 按 agent 维度覆盖 isEnabled（对应官方 per-agent Skill_Toggle 语义）。
+                return _skillApiCall('GET', '/v1/agents/' + encodeURIComponent(agentId)).then(function (agent) {
+                    var enabledIds = (agent && agent.configuration && agent.configuration.enabled_skills) || [];
+                    var enabledSet = {};
+                    enabledIds.forEach(function (id) { enabledSet[id] = true; });
+                    var data = skills.map(function (s) {
+                        var mapped = _toInstalledSkill(s);
+                        mapped.isEnabled = !!enabledSet[s.id];
+                        return mapped;
+                    });
+                    return { success: true, data: data };
+                }).catch(function () {
+                    return { success: true, data: skills.map(_toInstalledSkill) };
+                });
+            }).catch(function (e) {
+                console.error('[Qt] skill.list error:', e);
+                return { success: false, error: String(e) };
+            });
+        };
+        skillApi.install = function (_options) {
+            // 官方在线技能市场（claude-plugins.dev / skills.sh / clawhub.ai）搜索安装
+            // 未在 Houdini sidecar 中实现，仅支持本地目录/zip 安装。
+            console.warn('[Qt] skill.install (marketplace installSource) not supported in Qt runtime; use installFromDirectory/installFromZip instead.');
+            return resolved({ success: false, error: 'Marketplace skill install is not supported in the Houdini runtime.' });
+        };
+        skillApi.uninstall = function (skillId) {
+            return _skillApiCall('DELETE', '/v1/skills/' + encodeURIComponent(skillId)).then(function () {
+                return { success: true, data: undefined };
+            }).catch(function (e) {
+                console.error('[Qt] skill.uninstall error:', e);
+                return { success: false, error: String(e) };
+            });
+        };
+        skillApi.toggle = function (options) {
+            var skillId = options && options.skillId;
+            var agentId = options && options.agentId;
+            var isEnabled = !!(options && options.isEnabled);
+            if (!skillId || !agentId) {
+                return resolved({ success: false, error: 'skillId and agentId are required' });
+            }
+            return _skillApiCall('PATCH', '/v1/agents/' + encodeURIComponent(agentId) + '/skills/' + encodeURIComponent(skillId), { enabled: isEnabled })
+                .then(function () {
+                    return _skillApiCall('GET', '/v1/skills').then(function (result) {
+                        var skills = (result && result.data) || [];
+                        var found = skills.filter(function (s) { return s.id === skillId; })[0];
+                        var mapped = found ? _toInstalledSkill(found) : null;
+                        if (mapped) mapped.isEnabled = isEnabled;
+                        return { success: true, data: mapped };
+                    });
+                })
+                .catch(function (e) {
+                    console.error('[Qt] skill.toggle error:', e);
+                    return { success: false, error: String(e) };
+                });
+        };
+        skillApi.installFromDirectory = function (options) {
+            var directoryPath = options && options.directoryPath;
+            if (!directoryPath) return resolved({ success: false, error: 'directoryPath is required' });
+            return _skillApiCall('POST', '/v1/skills/install-from-directory', { path: directoryPath })
+                .then(function (skill) { return { success: true, data: _toInstalledSkill(skill) }; })
+                .catch(function (e) {
+                    console.error('[Qt] skill.installFromDirectory error:', e);
+                    return { success: false, error: String(e) };
+                });
+        };
+        skillApi.installFromZip = function (options) {
+            var zipFilePath = options && options.zipFilePath;
+            if (!zipFilePath) return resolved({ success: false, error: 'zipFilePath is required' });
+            if (!(window.qt && window.qt.api && window.qt.api.readFileAsBase64)) {
+                return resolved({ success: false, error: 'readFileAsBase64 bridge unavailable' });
+            }
+            return window.qt.api.readFileAsBase64(zipFilePath).then(function (raw) {
+                var parsed = (typeof raw === 'string') ? JSON.parse(raw) : raw;
+                if (parsed && parsed.error) {
+                    throw new Error(parsed.error);
+                }
+                return _skillApiCall('POST', '/v1/skills/install-from-zip-base64', { dataBase64: parsed.base64 });
+            }).then(function (skill) {
+                return { success: true, data: _toInstalledSkill(skill) };
+            }).catch(function (e) {
+                console.error('[Qt] skill.installFromZip error:', e);
+                return { success: false, error: String(e) };
+            });
+        };
+        skillApi.readSkillFile = function (skillId, filename) {
+            return _skillApiCall('GET', '/v1/skills/' + encodeURIComponent(skillId) + '/files/' + filename.split('/').map(encodeURIComponent).join('/'))
+                .then(function (text) {
+                    return { success: true, data: typeof text === 'string' ? text : JSON.stringify(text) };
+                })
+                .catch(function (e) {
+                    console.error('[Qt] skill.readSkillFile error:', e);
+                    return { success: false, error: String(e) };
+                });
+        };
+        skillApi.listFiles = function (skillId) {
+            return _skillApiCall('GET', '/v1/skills/' + encodeURIComponent(skillId) + '/files')
+                .then(function (result) {
+                    var files = (result && result.data) || [];
+                    var nodes = files.map(function (relPath) {
+                        return { name: relPath.split('/').pop(), path: relPath, type: 'file' };
+                    });
+                    return { success: true, data: nodes };
+                })
+                .catch(function (e) {
+                    console.error('[Qt] skill.listFiles error:', e);
+                    return { success: false, error: String(e) };
+                });
+        };
+        skillApi.listLocal = function (workdir) {
+            if (!workdir) return resolved({ success: false, error: 'Invalid workdir' });
+            return _skillApiCall('GET', '/v1/skills/list-local?workdir=' + encodeURIComponent(workdir))
+                .then(function (result) {
+                    return { success: true, data: (result && result.data) || [] };
+                })
+                .catch(function (e) {
+                    console.error('[Qt] skill.listLocal error:', e);
+                    return { success: false, error: String(e) };
+                });
         };
         
         // 强制覆盖 memory API - 确保在 post-load 阶段也正确设置
