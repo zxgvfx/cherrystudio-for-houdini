@@ -149,7 +149,9 @@ class Scheduler {
       }
     }
 
-    let session = task.session_id ? this.db.getSession(agent.id, task.session_id) : null;
+    // v2.0 parity: `reuseSession` off (default) means every fire gets a fresh
+    // session; only continue the sticky one when the task opted in.
+    let session = (task.reuse_session && task.session_id) ? this.db.getSession(agent.id, task.session_id) : null;
     if (!session) {
       session = this.db.createSession(agent.id, {
         name: isHeartbeat ? 'Heartbeat' : `[Task] ${task.name}`,

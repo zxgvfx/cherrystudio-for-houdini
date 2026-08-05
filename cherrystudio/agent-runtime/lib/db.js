@@ -125,7 +125,10 @@ class AgentDb {
     // NOT EXISTS, so we probe and ignore "duplicate column" errors).
     for (const stmt of [
       "ALTER TABLE scheduled_tasks ADD COLUMN session_id TEXT",
-      "ALTER TABLE agents ADD COLUMN soul_workspace TEXT"
+      "ALTER TABLE agents ADD COLUMN soul_workspace TEXT",
+      // v2.0 parity: `ScheduledTaskEntitySchema.reuseSession` — off by default, so a
+      // fresh session is created per fire unless the caller opts in. See scheduler.js.
+      "ALTER TABLE scheduled_tasks ADD COLUMN reuse_session INTEGER NOT NULL DEFAULT 0"
     ]) {
       try {
         this.db.exec(stmt);
@@ -408,7 +411,10 @@ class AgentDb {
       name: 'heartbeat',
       prompt: '__heartbeat__',
       schedule_type: 'interval',
-      schedule_value: value
+      schedule_value: value,
+      // Heartbeat predates the reuseSession toggle and has always kept one
+      // long-lived session across fires (soul-mode continuity depends on it).
+      reuse_session: 1
     });
   }
 
@@ -423,8 +429,8 @@ class AgentDb {
     this.db
       .prepare(
         `INSERT INTO scheduled_tasks
-        (id, agent_id, name, prompt, schedule_type, schedule_value, timeout_minutes, channel_ids, status, created_at, updated_at)
-        VALUES (@id, @agent_id, @name, @prompt, @schedule_type, @schedule_value, @timeout_minutes, @channel_ids, 'active', @created_at, @updated_at)`
+        (id, agent_id, name, prompt, schedule_type, schedule_value, timeout_minutes, channel_ids, reuse_session, status, created_at, updated_at)
+        VALUES (@id, @agent_id, @name, @prompt, @schedule_type, @schedule_value, @timeout_minutes, @channel_ids, @reuse_session, 'active', @created_at, @updated_at)`
       )
       .run({
         id,
@@ -435,6 +441,7 @@ class AgentDb {
         schedule_value: task.schedule_value,
         timeout_minutes: task.timeout_minutes ?? 2,
         channel_ids: JSON.stringify(task.channel_ids || []),
+        reuse_session: task.reuse_session ? 1 : 0,
         created_at: ts,
         updated_at: ts
       });
@@ -447,10 +454,12 @@ class AgentDb {
     const merged = { ...existing, ...patch, updated_at: nowIso() };
     if (patch.channel_ids) merged.channel_ids = JSON.stringify(patch.channel_ids);
     if ('timeout_minutes' in patch) merged.timeout_minutes = patch.timeout_minutes ?? 2;
+    if ('reuse_session' in patch) merged.reuse_session = patch.reuse_session ? 1 : 0;
     this.db
       .prepare(
         `UPDATE scheduled_tasks SET name=@name, prompt=@prompt, agent_id=@agent_id, schedule_type=@schedule_type,
          schedule_value=@schedule_value, timeout_minutes=@timeout_minutes, channel_ids=@channel_ids,
+         reuse_session=@reuse_session,
          next_run=@next_run, last_run=@last_run, last_result=@last_result, status=@status, updated_at=@updated_at
          WHERE id=@id`
       )
@@ -573,6 +582,7 @@ function rowToTask(row) {
     schedule_value: row.schedule_value,
     timeout_minutes: row.timeout_minutes ?? 2,
     channel_ids: safeJson(row.channel_ids, []),
+    reuse_session: !!row.reuse_session,
     next_run: row.next_run ?? null,
     last_run: row.last_run ?? null,
     last_result: row.last_result ?? null,

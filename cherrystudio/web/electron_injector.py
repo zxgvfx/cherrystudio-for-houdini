@@ -484,587 +484,245 @@ def get_electron_api_script(theme: str = 'light') -> str:
     }})();
     
     // 注入基础 window.api
+    // ==========================================================================
+    // window.api — 完整对齐 Cherry Studio v2.0 的 window.api 形状
+    // (对应 web/src/preload/preload.ts 里 `const api = {{...}}`)
+    // 每个方法都通过 window.qt.api.<method>() 转发到 Python 侧
+    // (cherrystudio/api/cherry_studio_api_v2.py)，Proxy 会自动路由到后端 /api/v1/qt/invoke。
+    // ==========================================================================
     if (!window.api) {{
+        async function __qtCallJson(method, fallback, ...args) {{
+            try {{
+                const r = await window.qt?.api?.[method]?.(...args);
+                if (r === undefined || r === null) return fallback;
+                return (typeof r === 'string') ? JSON.parse(r) : r;
+            }} catch (e) {{
+                console.error('[Qt] window.qt.api.' + method + ' error:', e);
+                return fallback;
+            }}
+        }}
+
         window.api = {{
-            getDiskInfo: async (p) => {{ 
-                try {{ 
-                    return JSON.parse(await window.qt?.api?.getDiskInfo(p)) 
-                }} catch(e) {{ 
-                    return {{ total: 0, free: 0 }} 
-                }} 
+            setSpellCheckLanguages: async (languages) => {{ try {{ await window.qt?.api?.setSpellCheckLanguages?.(JSON.stringify(languages || [])); }} catch(e) {{}} }},
+            setLaunchOnBoot: async (isActive) => {{ try {{ await window.qt?.api?.setLaunchOnBoot?.(!!isActive); }} catch(e) {{}} }},
+            select: async (options) => {{ return await __qtCallJson('fileSelect', null, JSON.stringify(options || {{}})); }},
+            hasWritePermission: async (path) => {{ try {{ return !!(await window.qt?.api?.hasWritePermission?.(path)); }} catch(e) {{ return true; }} }},
+            resolvePath: async (path) => {{ try {{ return (await window.qt?.api?.resolvePathV2?.(path)) || path; }} catch(e) {{ return path; }} }},
+            isPathInside: async (childPath, parentPath) => {{ try {{ return !!(await window.qt?.api?.isPathInside?.(childPath, parentPath)); }} catch(e) {{ return false; }} }},
+            application: {{
+                preventQuit: async (reason) => {{ try {{ return await window.qt?.api?.applicationPreventQuit?.(reason || ''); }} catch(e) {{ return 'houdini-noop'; }} }},
+                allowQuit: async (holdId) => {{ try {{ await window.qt?.api?.applicationAllowQuit?.(holdId); }} catch(e) {{}} }},
+                relaunch: async (options) => {{ try {{ await window.qt?.api?.applicationRelaunch?.(JSON.stringify(options || {{}})); }} catch(e) {{}} }}
             }},
-            getAppInfo: async () => {{ 
-                try {{ 
-                    return JSON.parse(await window.qt?.api?.getAppInfo()) 
-                }} catch(e) {{ 
-                    return {{ version: '{APP_VERSION}', platform: '{APP_PLATFORM}', arch: '{APP_ARCH}' }} 
-                }} 
+            getCacheSize: async () => {{ return await __qtCallJson('getCacheSizeV2', {{ size: 0, count: 0 }}); }},
+            clearCache: async () => {{ try {{ return !!(await window.qt?.api?.clearCacheV2?.()); }} catch(e) {{ return true; }} }},
+            system: {{
+                getHostname: async () => {{ try {{ return (await window.qt?.api?.getHostname?.()) || 'houdini'; }} catch(e) {{ return 'houdini'; }} }}
             }},
-            fs: {{
-                read: async (pathOrUrl, encoding) => {{
-                    try {{
-                        const content = await window.qt?.api?.fileRead?.(pathOrUrl);
-                        return content || '';
-                    }} catch(e) {{
-                        console.error('[Qt] fs.read error:', e);
-                        return '';
-                    }}
-                }},
-                readText: async (pathOrUrl) => {{
-                    try {{
-                        const content = await window.qt?.api?.fileRead?.(pathOrUrl);
-                        return content || '';
-                    }} catch(e) {{
-                        console.error('[Qt] fs.readText error:', e);
-                        return '';
-                    }}
-                }},
+            zip: {{
+                decompress: async (text) => {{ try {{ return await window.qt?.api?.zipDecompress?.(String(text || '')); }} catch(e) {{ return ''; }} }}
             }},
-            setLanguage: (lang) => {{
-                try {{
-                    localStorage.setItem('language', lang);
-                }} catch(e) {{}}
-            }},
-            codeTools: {{
-                getAvailableTerminals: async () => {{
-                    try {{
-                        const result = await window.qt?.api?.codeToolsGetAvailableTerminals?.();
-                        return result ? JSON.parse(result) : [];
-                    }} catch(e) {{
-                        console.error('[Qt] codeTools.getAvailableTerminals error:', e);
-                        return [];
-                    }}
-                }},
-                run: async (tool, model, directory, env, options) => {{
-                    try {{
-                        const envStr = JSON.stringify(env || {{}});
-                        const optionsStr = JSON.stringify(options || {{}});
-                        const resultStr = await window.qt?.api?.codeToolsRun?.(tool, model, directory, envStr, optionsStr);
-                        return resultStr ? JSON.parse(resultStr) : {{ success: false, message: 'Unknown error' }};
-                    }} catch(e) {{
-                        console.error('[Qt] codeTools.run error:', e);
-                        return {{ success: false, message: e.message || String(e) }};
-                    }}
-                }},
-                setCustomTerminalPath: async (terminalId, path) => {{
-                    try {{
-                        return await window.qt?.api?.codeToolsSetCustomTerminalPath?.(terminalId, path);
-                    }} catch(e) {{
-                        return false;
-                    }}
-                }},
-                getCustomTerminalPath: async (terminalId) => {{
-                    try {{
-                        return await window.qt?.api?.codeToolsGetCustomTerminalPath?.(terminalId);
-                    }} catch(e) {{
-                        return "";
-                    }}
-                }},
-                removeCustomTerminalPath: async (terminalId) => {{
-                    try {{
-                        return await window.qt?.api?.codeToolsRemoveCustomTerminalPath?.(terminalId);
-                    }} catch(e) {{
-                        return false;
-                    }}
-                }}
-            }},
-            trace: {{
-                saveData: async (topicId) => {{ return true; }},
-                getData: async (topicId, traceId, modelName) => {{ return null; }},
-                saveEntity: async (entity) => {{ return true; }},
-                updateTokenUsage: async (traceId, tokenUsage) => {{}},
-                tokenUsage: async (spanId, tokenUsage) => {{}},
-                addStreamMessage: async (spanId, modelName, context, chunk) => {{}},
-                endSpan: async (spanId, output, context) => {{}},
-                cleanHistory: async (topicId, traceId, modelName) => {{}},
-                cleanTopic: async (topicId, traceId) => {{}},
-                openWindow: async (topicId, traceId, autoOpen, modelName) => {{}},
-                setTraceWindowTitle: async (title) => {{}},
-                addEndMessage: async (spanId, modelName, context) => {{}},
-                bindTopic: async (topicId, traceId) => {{}}
-            }},
-            cherryai: {{
-                generateSignature: async (params) => {{
-                    // CherryAI 签名功能占位
-                    return '';
-                }}
+            backup: {{
+                restore: async (path) => {{ try {{ return !!(await window.qt?.api?.backupRestore?.(path)); }} catch(e) {{ return false; }} }},
+                backup: async (fileName, destinationPath, skipBackupFile) => {{ try {{ return !!(await window.qt?.api?.backupBackup?.(fileName || '', destinationPath || '', !!skipBackupFile)); }} catch(e) {{ return false; }} }},
+                backupToWebdav: async (webdavConfig) => {{ return await __qtCallJson('backupBackupToWebdav', {{ success: false, error: 'webdav backup failed' }}, JSON.stringify(webdavConfig || {{}})); }},
+                restoreFromWebdav: async (webdavConfig) => {{ try {{ await window.qt?.api?.backupRestoreFromWebdav?.(JSON.stringify(webdavConfig || {{}})); }} catch(e) {{}} }},
+                listWebdavFiles: async (webdavConfig) => {{ return await __qtCallJson('backupListWebdavFiles', [], JSON.stringify(webdavConfig || {{}})); }},
+                checkConnection: async (webdavConfig) => {{ try {{ return !!(await window.qt?.api?.backupCheckWebdavConnection?.(JSON.stringify(webdavConfig || {{}}))); }} catch(e) {{ return false; }} }},
+                createDirectory: async (webdavConfig, path, options) => {{ try {{ await window.qt?.api?.backupCreateWebdavDirectory?.(JSON.stringify(webdavConfig || {{}}), path, JSON.stringify(options || {{}})); }} catch(e) {{}} }},
+                deleteWebdavFile: async (fileName, webdavConfig) => {{ try {{ await window.qt?.api?.backupDeleteWebdavFile?.(fileName, JSON.stringify(webdavConfig || {{}})); }} catch(e) {{}} }},
+                backupToLocalDir: async (fileName, localConfig) => {{ return await __qtCallJson('backupBackupToLocalDir', '', fileName || '', JSON.stringify(localConfig || {{}})); }},
+                restoreFromLocalBackup: async (fileName, localBackupDir) => {{ try {{ await window.qt?.api?.backupRestoreFromLocalBackup?.(fileName, localBackupDir || ''); }} catch(e) {{}} }},
+                listLocalBackupFiles: async (localBackupDir) => {{ return await __qtCallJson('backupListLocalBackupFiles', [], localBackupDir || ''); }},
+                deleteLocalBackupFile: async (fileName, localBackupDir) => {{ try {{ await window.qt?.api?.backupDeleteLocalBackupFile?.(fileName, localBackupDir || ''); }} catch(e) {{}} }},
+                checkWebdavConnection: async (webdavConfig) => {{ try {{ return !!(await window.qt?.api?.backupCheckWebdavConnection?.(JSON.stringify(webdavConfig || {{}}))); }} catch(e) {{ return false; }} }},
+                backupToS3: async (s3Config) => {{ return await __qtCallJson('backupBackupToS3', {{ success: false, error: 's3 backup failed' }}, JSON.stringify(s3Config || {{}})); }},
+                restoreFromS3: async (s3Config) => {{ try {{ await window.qt?.api?.backupRestoreFromS3?.(JSON.stringify(s3Config || {{}})); }} catch(e) {{}} }},
+                listS3Files: async (s3Config) => {{ return await __qtCallJson('backupListS3Files', [], JSON.stringify(s3Config || {{}})); }},
+                deleteS3File: async (fileName, s3Config) => {{ try {{ await window.qt?.api?.backupDeleteS3File?.(fileName, JSON.stringify(s3Config || {{}})); }} catch(e) {{}} }},
+                createLanTransferBackup: async (data, destinationPath) => {{ return await __qtCallJson('backupCreateLanTransferBackup', '', data, destinationPath || ''); }},
+                deleteLanTransferBackup: async (filePath) => {{ try {{ await window.qt?.api?.backupDeleteLanTransferBackup?.(filePath); }} catch(e) {{}} }}
             }},
             file: {{
-                read: async (fileId, detectEncoding) => {{
-                    try {{
-                        if (fileId && fileId.endsWith('.pdf')) {{
-                            console.log('[Qt] file.read PDF:', fileId);
-                        }}
-                        const content = await window.qt?.api?.fileRead?.(fileId);
-                        if (fileId && fileId.endsWith('.pdf')) {{
-                            console.log('[Qt] file.read PDF result:', (content || '').length, 'chars');
-                        }}
-                        return content || '';
-                    }} catch(e) {{
-                        console.error('[Qt] file.read error:', fileId, e);
-                        return '';
-                    }}
+                select: async (options) => {{ return await __qtCallJson('fileSelect', null, JSON.stringify(options || {{}})); }},
+                createInternalEntry: async (params) => {{
+                    const r = await __qtCallJson('fileCreateInternalEntry', null, JSON.stringify(params || {{}}));
+                    if (r && r.error) throw new Error(r.error);
+                    return r;
                 }},
+                ensureExternalEntry: async (params) => {{
+                    const r = await __qtCallJson('fileEnsureExternalEntry', null, JSON.stringify(params || {{}}));
+                    if (r && r.error) throw new Error(r.error);
+                    return r;
+                }},
+                getPhysicalPath: async (params) => {{ return await __qtCallJson('fileGetPhysicalPath', null, JSON.stringify(params || {{}})); }},
+                permanentDelete: async (handle) => {{ try {{ await window.qt?.api?.filePermanentDelete?.(JSON.stringify(handle || {{}})); }} catch(e) {{}} }},
+                runSweep: async () => {{ try {{ await window.qt?.api?.fileRunSweep?.(); }} catch(e) {{}} }},
+                deleteExternalFile: async (filePath) => {{ try {{ await window.qt?.api?.fileDeleteExternalFile?.(filePath); }} catch(e) {{}} }},
+                deleteExternalDir: async (dirPath) => {{ try {{ await window.qt?.api?.fileDeleteExternalDir?.(dirPath); }} catch(e) {{}} }},
+                move: async (path, newPath) => {{ try {{ await window.qt?.api?.fileMove?.(path, newPath); }} catch(e) {{}} }},
+                moveDir: async (dirPath, newDirPath) => {{ try {{ await window.qt?.api?.fileMoveDir?.(dirPath, newDirPath); }} catch(e) {{}} }},
+                rename: async (path, newName) => {{ try {{ await window.qt?.api?.fileRename?.(path, newName); }} catch(e) {{}} }},
+                renameDir: async (dirPath, newName) => {{ try {{ await window.qt?.api?.fileRenameDir?.(dirPath, newName); }} catch(e) {{}} }},
+                readExternal: async (filePath, detectEncoding) => {{ try {{ return await window.qt?.api?.fileRead?.(filePath); }} catch(e) {{ return ''; }} }},
+                get: async (filePath) => {{ return await __qtCallJson('fileGetV2', null, filePath); }},
+                createTempFile: async (fileName) => {{ try {{ return (await window.qt?.api?.fileCreateTempFile?.(fileName)) || fileName; }} catch(e) {{ return fileName; }} }},
+                mkdir: async (dirPath) => {{ try {{ await window.qt?.api?.fileMkdir?.(dirPath); }} catch(e) {{}} }},
                 write: async (filePath, data) => {{
                     try {{
                         const content = typeof data === 'string' ? data : new TextDecoder().decode(data);
-                        return await window.qt?.api?.fileWrite?.(filePath, content);
-                    }} catch(e) {{
-                        return false;
-                    }}
+                        await window.qt?.api?.fileWrite?.(filePath, content);
+                    }} catch(e) {{ console.error('[Qt] file.write error:', e); }}
                 }},
-                writeWithId: async (id, content) => {{
+                open: async (options) => {{ return await __qtCallJson('fileSelect', null, JSON.stringify(options || {{}})); }},
+                openPath: async (path) => {{ try {{ await window.qt?.api?.openPath?.(path); }} catch(e) {{}} }},
+                save: async (path, content, options) => {{
                     try {{
-                        return await window.qt?.api?.fileWriteWithId?.(id, content);
-                    }} catch(e) {{
-                        return false;
-                    }}
+                        const text = typeof content === 'string' ? content : new TextDecoder().decode(content);
+                        await window.qt?.api?.fileWrite?.(path, text);
+                        return path;
+                    }} catch(e) {{ console.error('[Qt] file.save error:', e); return null; }}
                 }},
-                base64Image: async (fileId) => {{
+                selectFolder: async (options) => {{ try {{ return await window.qt?.api?.selectFolder?.(); }} catch(e) {{ return null; }} }},
+                saveImage: async (name, data) => {{ return await __qtCallJson('saveImage', false, name || 'image', data || ''); }},
+                binaryImage: async (fileId) => {{
                     try {{
                         const result = await window.qt?.api?.binaryImage?.(fileId);
-                        if (!result || result === 'null') {{
-                            console.error('[Qt] base64Image: binaryImage returned null for', fileId);
-                            return {{ mime: 'image/png', base64: '', data: '' }};
-                        }}
-                        const parsed = JSON.parse(result);
-                        // 后端已返回正确的 {{mime, base64, data}} 格式
-                        // 兼容旧格式: 如果后端还是返回 {{data, format}}，则做映射
-                        const mime = parsed.mime || ('image/' + (parsed.format || 'png'));
-                        const base64 = parsed.base64 || parsed.data || '';
-                        const dataUrl = parsed.data && parsed.data.startsWith('data:')
-                            ? parsed.data
-                            : ('data:' + mime + ';base64,' + base64);
-                        return {{ mime, base64, data: dataUrl }};
-                    }} catch(e) {{
-                        console.error('[Qt] base64Image error:', e);
-                        return {{ mime: 'image/png', base64: '', data: '' }};
-                    }}
-                }},
-                base64File: async (fileId) => {{
-                    try {{
-                        const _bu = window.__CHERRY_BACKEND_URL || '';
-                        const _sid = window.__CHERRY_SESSION_ID || '';
-                        const resp = await fetch(_bu + '/api/v1/files/base64-file', {{
-                            method: 'POST',
-                            headers: {{ 'Content-Type': 'application/json', 'X-Session-Id': _sid }},
-                            body: JSON.stringify({{ path: fileId }})
-                        }});
-                        const result = await resp.json();
-                        if (result.error) {{
-                            console.error('[Qt] base64File error:', result.error);
-                            return {{ data: '', mime: 'application/octet-stream' }};
-                        }}
-                        return {{ data: result.data || '', mime: result.mime || 'application/octet-stream' }};
-                    }} catch(e) {{
-                        console.error('[Qt] base64File error:', e);
-                        return {{ data: '', mime: 'application/octet-stream' }};
-                    }}
-                }},
-                pdfToImages: async (fileId, options) => {{
-                    try {{
-                        console.log('[Qt] pdfToImages called:', fileId);
-                        const _bu = window.__CHERRY_BACKEND_URL || '';
-                        const _sid = window.__CHERRY_SESSION_ID || '';
-                        const resp = await fetch(_bu + '/api/v1/files/pdf-to-images', {{
-                            method: 'POST',
-                            headers: {{ 'Content-Type': 'application/json', 'X-Session-Id': _sid }},
-                            body: JSON.stringify({{ path: fileId, dpi: options?.dpi || 150, maxPages: options?.maxPages || 20 }})
-                        }});
-                        const result = await resp.json();
-                        if (result.error) {{
-                            console.error('[Qt] pdfToImages error:', result.error);
-                            return {{ images: [], hasText: false }};
-                        }}
-                        return {{ images: result.images || [], hasText: !!result.hasText }};
-                    }} catch(e) {{
-                        console.error('[Qt] pdfToImages error:', e);
-                        return {{ images: [], hasText: false }};
-                    }}
-                }},
-                pdfOcr: async (fileId, options) => {{
-                    try {{
-                        console.log('[Qt] pdfOcr called:', fileId);
-                        const _bu = window.__CHERRY_BACKEND_URL || '';
-                        const _sid = window.__CHERRY_SESSION_ID || '';
-                        const resp = await fetch(_bu + '/api/v1/files/pdf-ocr', {{
-                            method: 'POST',
-                            headers: {{ 'Content-Type': 'application/json', 'X-Session-Id': _sid }},
-                            body: JSON.stringify({{
-                                path: fileId,
-                                model: options?.model,
-                                dpi: options?.dpi || 100,
-                                maxPages: options?.maxPages || 10,
-                                batchSize: options?.batchSize || 1
-                            }})
-                        }});
-                        const result = await resp.json();
-                        if (result.error) {{
-                            console.error('[Qt] pdfOcr error:', result.error);
-                            return {{ content: '', pages: 0, method: 'error' }};
-                        }}
-                        return result;
-                    }} catch(e) {{
-                        console.error('[Qt] pdfOcr error:', e);
-                        return {{ content: '', pages: 0, method: 'error' }};
-                    }}
-                }},
-                saveImage: async (name, data) => {{
-                    try {{
-                        const result = await window.qt?.api?.saveImage?.(name || 'image', data || '');
-                        return result ? JSON.parse(result) : null;
-                    }} catch(e) {{
-                        console.error('[Qt] saveImage error:', e);
-                        return null;
-                    }}
-                }},
-                saveBase64Image: async (base64Data) => {{
-                    try {{
-                        const result = await window.qt?.api?.saveBase64Image?.(base64Data || '');
                         if (!result || result === 'null') return null;
-                        const parsed = JSON.parse(result);
-                        if (parsed.error) {{
-                            console.error('[Qt] saveBase64Image error:', parsed.error);
-                            return null;
-                        }}
-                        return parsed;
-                    }} catch(e) {{
-                        console.error('[Qt] saveBase64Image error:', e);
-                        return null;
-                    }}
-                }},
-                savePastedImage: async (imageData, extension) => {{
-                    try {{
-                        // imageData 是 Uint8Array，需要转为 base64 传输
-                        let base64Str = '';
-                        if (imageData instanceof Uint8Array || imageData instanceof ArrayBuffer) {{
-                            const bytes = new Uint8Array(imageData);
-                            let binary = '';
-                            for (let i = 0; i < bytes.length; i++) {{
-                                binary += String.fromCharCode(bytes[i]);
-                            }}
-                            base64Str = btoa(binary);
-                        }} else if (typeof imageData === 'string') {{
-                            base64Str = imageData;
-                        }}
-                        const result = await window.qt?.api?.savePastedImage?.(base64Str, extension || '.png');
-                        if (!result || result === 'null') return null;
-                        const parsed = JSON.parse(result);
-                        if (parsed.error) {{
-                            console.error('[Qt] savePastedImage error:', parsed.error);
-                            return null;
-                        }}
-                        return parsed;
-                    }} catch(e) {{
-                        console.error('[Qt] savePastedImage error:', e);
-                        return null;
-                    }}
-                }},
-                getPathForFile: (file) => {{
-                    try {{
-                        return file.path || '';
-                    }} catch(e) {{
-                        return '';
-                    }}
-                }},
-                get: async (filePath) => {{
-                    // 简化实现：返回基本文件元数据
-                    try {{
-                        return {{
-                            id: filePath,
-                            name: filePath.split(/[\\/]/).pop() || '',
-                            path: filePath,
-                            size: 0,
-                            type: 'file'
-                        }};
-                    }} catch(e) {{
-                        return null;
-                    }}
-                }}
-            }},
-            topic: {{
-                save: async (topicId, data) => {{
-                    try {{
-                        return await window.qt?.api?.topicSave?.(topicId, data);
-                    }} catch(e) {{
-                        return false;
-                    }}
-                }},
-                load: async (topicId) => {{
-                    try {{
-                        return await window.qt?.api?.topicLoad?.(topicId);
-                    }} catch(e) {{
-                        return '';
-                    }}
-                }},
-                delete: async (topicId) => {{
-                    try {{
-                        return await window.qt?.api?.topicDelete?.(topicId);
-                    }} catch(e) {{
-                        return false;
-                    }}
-                }},
-                list: async () => {{
-                    try {{
-                        const result = await window.qt?.api?.topicList?.();
-                        return result ? JSON.parse(result) : [];
-                    }} catch(e) {{
-                        return [];
-                    }}
-                }}
-            }},
-            logToMain: (source, level, message, data) => {{ 
-                try {{ 
-                    // 将参数序列化为 JSON 字符串
-                    var payload = JSON.stringify({{
-                        source: source || {{}},
-                        level: level || 0,
-                        message: message || '',
-                        data: data || []
-                    }});
-                    window.qt?.api?.logToMain?.(payload);
-                }} catch(e) {{
-                    console.error('[Qt] logToMain error:', e);
-                }} 
-            }},
-            setTheme: (theme) => {{ 
-                try {{ 
-                    // 调用 Python 保存设置
-                    window.qt?.api?.setTheme(theme);
-                    
-                    // 更新本地样式
-                    localStorage.setItem('settings.theme', theme);
-                    localStorage.setItem('theme', theme);
-                    document.documentElement.setAttribute('theme-mode', theme);
-                    if (document.body) {{
-                        document.body.setAttribute('theme-mode', theme);
-                    }}
-                    return true;
-                }} catch(e) {{
-                    return false;
-                }} 
-            }},
-            isFullScreen: async () => {{ 
-                try {{ 
-                    return await window.qt?.api?.isFullScreen() 
-                }} catch(e) {{ 
-                    return false 
-                }} 
-            }},
-            getPath: async (name) => {{ 
-                try {{ 
-                    return await window.qt?.api?.getPath?.(name) 
-                }} catch(e) {{ 
-                    return '' 
-                }} 
-            }},
-            getLocale: async () => {{ 
-                try {{ 
-                    return await window.qt?.api?.getLocale?.() 
-                }} catch(e) {{ 
-                    return 'zh-CN' 
-                }} 
-            }},
-            getTheme: async () => {{ 
-                try {{ 
-                    return await window.qt?.api?.getTheme?.() 
-                }} catch(e) {{ 
-                    return 'light' 
-                }} 
-            }},
-            getSystemFonts: async () => {{ 
-                try {{ 
-                    const r = await window.qt?.api?.getSystemFonts?.(); 
-                    return (typeof r==='string')? JSON.parse(r): (r||[]) 
-                }} catch(e) {{ 
-                    return ["Microsoft YaHei","SimHei","SimSun","Consolas","Arial"] 
-                }} 
-            }},
-            openWebsite: async (url) => {{ 
-                try {{ 
-                    await window.qt?.api?.openWebsite?.(url) 
-                }} catch(e) {{}} 
-            }},
-            openPath: async (path) => {{ 
-                try {{ 
-                    return await window.qt?.api?.openPath?.(path) 
-                }} catch(e) {{ 
-                    console.error('[Qt] openPath error:', e);
-                    return false;
-                }} 
-            }},
-            installBunBinary: async () => {{ 
-                try {{ 
-                    return await window.qt?.api?.installBunBinary?.() 
-                }} catch(e) {{ 
-                    console.error('[Qt] installBunBinary error:', e);
-                    throw new Error('Failed to install bun: ' + (e.message || String(e)));
-                }} 
-            }},
-            installUVBinary: async () => {{ 
-                try {{ 
-                    return await window.qt?.api?.installUVBinary?.() 
-                }} catch(e) {{ 
-                    console.error('[Qt] installUVBinary error:', e);
-                    throw new Error('Failed to install uv: ' + (e.message || String(e)));
-                }} 
-            }},
-            isBinaryExist: async (binary) => {{ 
-                try {{ 
-                    return await window.qt?.api?.isBinaryExist?.(binary) 
-                }} catch(e) {{ 
-                    return false 
-                }} 
-            }},
-            getDataPathFromArgs: async () => {{ 
-                try {{ 
-                    return await window.qt?.api?.getDataPathFromArgs?.() 
-                }} catch(e) {{ 
-                    return '' 
-                }} 
-            }},
-            isMaximized: async () => {{ 
-                try {{ 
-                    return await window.qt?.api?.isMaximized?.() 
-                }} catch(e) {{ 
-                    return false 
-                }} 
-            }},
-            clearCache: async () => {{ 
-                try {{ 
-                    return await window.qt?.api?.clearCache?.() 
-                }} catch(e) {{ 
-                    return true 
-                }} 
-            }},
-            getCacheSize: async () => {{ 
-                try {{ 
-                    const r = await window.qt?.api?.getCacheSize?.();
-                    return (typeof r==='string')? JSON.parse(r): (r||{{ size: 0, count: 0 }})
-                }} catch(e) {{ 
-                    return {{ size: 0, count: 0 }} 
-                }} 
-            }},
-            getAppVersion: async () => {{ 
-                try {{ 
-                    return await window.qt?.api?.getAppVersion?.() 
-                }} catch(e) {{ 
-                    return '{APP_VERSION}' 
-                }} 
-            }},
-            setProxy: async (proxyUrl, bypassRules) => {{ 
-                try {{ 
-                    const config = JSON.stringify({{ proxyUrl: proxyUrl || '', bypassRules: bypassRules || '' }});
-                    return await window.qt?.api?.setProxy?.(config) 
-                }} catch(e) {{ 
-                    console.warn('[setProxy] Error:', e);
-                    return true 
-                }} 
-            }},
-            isProxyManaged: async () => {{ 
-                // 检查代理是否由系统托管（硬编码配置）
-                try {{ 
-                    const proxy = await window.qt?.api?.getProxy?.();
-                    if (proxy) {{
-                        const config = JSON.parse(proxy);
-                        return config._managed === true;
-                    }}
-                }} catch(e) {{ 
-                    console.warn('[isProxyManaged] Error:', e);
-                }} 
-                return false;
-            }},
-            getPlatform: async () => {{ 
-                try {{ 
-                    return await window.qt?.api?.getPlatform?.() 
-                }} catch(e) {{ 
-                    return '{APP_PLATFORM}' 
-                }} 
-            }},
-            getArch: async () => {{ 
-                try {{ 
-                    return await window.qt?.api?.getArch?.() 
-                }} catch(e) {{ 
-                    return '{APP_ARCH}' 
-                }} 
-            }},
-            reload: () => {{ 
-                try {{ 
-                    location.reload() 
-                }} catch(e) {{}} 
-            }},
-            handleZoomFactor: async (delta, reset) => {{
-                const change = typeof delta === 'number' ? delta : 0;
-                const doReset = typeof reset === 'boolean' ? reset : false;
-                try {{
-                    const result = await window.qt?.api?.handleZoomFactor?.(change, doReset);
-                    if (typeof result === 'string') {{
                         return JSON.parse(result);
-                    }}
-                    return result ?? 1.0;
-                }} catch (e) {{
-                    console.error('[Qt] handleZoomFactor error:', e);
-                    return 1.0;
+                    }} catch(e) {{ console.error('[Qt] file.binaryImage error:', e); return null; }}
+                }},
+                getPathForFile: (file) => {{ try {{ return file.path || ''; }} catch(e) {{ return ''; }} }},
+                listDirectory: async (dirPath, options) => {{ return await __qtCallJson('fileListDirectory', [], dirPath, JSON.stringify(options || {{}})); }},
+                listDirectoryEntries: async (dirPath, options) => {{ return await __qtCallJson('fileListDirectoryEntries', [], dirPath, JSON.stringify(options || {{}})); }},
+                checkFileName: async (dirPath, fileName, isFile) => {{ try {{ return !!(await window.qt?.api?.fileCheckFileName?.(dirPath, fileName, !!isFile)); }} catch(e) {{ return true; }} }},
+                validateNotesDirectory: async (dirPath) => {{ try {{ return !!(await window.qt?.api?.fileValidateNotesDirectory?.(dirPath)); }} catch(e) {{ return false; }} }},
+                batchUploadMarkdown: async (filePaths, targetPath) => {{ try {{ await window.qt?.api?.fileBatchUploadMarkdown?.(JSON.stringify(filePaths || []), targetPath || ''); }} catch(e) {{}} }},
+                showInFolder: async (path) => {{ try {{ await window.qt?.api?.fileShowInFolder?.(path); }} catch(e) {{}} }}
+            }},
+            fs: {{
+                read: async (pathOrUrl, encoding) => {{ try {{ return (await window.qt?.api?.fileRead?.(pathOrUrl)) || ''; }} catch(e) {{ return ''; }} }},
+                readText: async (pathOrUrl) => {{ try {{ return (await window.qt?.api?.fileRead?.(pathOrUrl)) || ''; }} catch(e) {{ return ''; }} }}
+            }},
+            tree: {{
+                create: async (rootPath, options) => {{
+                    const r = await __qtCallJson('fileTreeCreate', null, rootPath, JSON.stringify(options || {{}}));
+                    if (r && r.error) throw new Error(r.error);
+                    return r;
+                }},
+                dispose: async (treeId) => {{ try {{ await window.qt?.api?.fileTreeDispose?.(treeId); }} catch(e) {{}} }},
+                rename: async (treeId, oldPath, newPath) => {{ try {{ return !!(await window.qt?.api?.fileTreeRename?.(treeId, oldPath, newPath)); }} catch(e) {{ return false; }} }}
+            }},
+            command: {{
+                showNativePopupMenu: async (model, anchor) => {{ try {{ await window.qt?.api?.commandShowNativePopupMenu?.(JSON.stringify(model || {{}}), JSON.stringify(anchor || {{}})); }} catch(e) {{}} }}
+            }},
+            aes: {{
+                decrypt: async (encryptedData, iv, secretKey) => {{ try {{ return (await window.qt?.api?.aesDecrypt?.(encryptedData, iv, secretKey)) || ''; }} catch(e) {{ return ''; }} }}
+            }},
+            shell: {{
+                openExternal: async (url, options) => {{ try {{ await window.qt?.api?.openExternal?.(url); }} catch(e) {{ console.error('[Qt] shell.openExternal error:', e); }} }}
+            }},
+            copilot: {{
+                getAuthMessage: async (headers) => {{
+                    const r = await __qtCallJson('copilotGetAuthMessage', null, JSON.stringify(headers || {{}}));
+                    if (r && r.error) throw new Error(r.error);
+                    return r;
+                }},
+                getCopilotToken: async (device_code, headers) => {{
+                    const r = await __qtCallJson('copilotGetCopilotToken', null, device_code, JSON.stringify(headers || {{}}));
+                    if (r && r.error) throw new Error(r.error);
+                    return r;
+                }},
+                saveCopilotToken: async (access_token) => {{ try {{ await window.qt?.api?.copilotSaveCopilotToken?.(access_token); }} catch(e) {{}} }},
+                getToken: async (headers) => {{
+                    const r = await __qtCallJson('copilotGetToken', null, JSON.stringify(headers || {{}}));
+                    if (r && r.error) throw new Error(r.error);
+                    return r;
+                }},
+                logout: async () => {{ try {{ await window.qt?.api?.copilotLogout?.(); }} catch(e) {{}} }},
+                getUser: async (token) => {{
+                    const r = await __qtCallJson('copilotGetUser', null, token);
+                    if (r && r.error) throw new Error(r.error);
+                    return r;
                 }}
             }},
-            getGitBashPathInfo: async () => {{
-                try {{
-                    const r = await window.qt?.api?.getGitBashPathInfo?.();
-                    return (typeof r==='string')? JSON.parse(r): (r||{{path: null, source: null}});
-                }} catch(e) {{
-                    console.error('[Qt] getGitBashPathInfo error:', e);
-                    return {{path: null, source: null}};
-                }}
+            externalApps: {{
+                detectInstalled: async () => {{ return await __qtCallJson('externalAppsDetectInstalled', []); }}
             }},
-            config: {{
-                set: async (key, value, isNotify) => {{ 
-                    try {{ 
-                        // 暂不支持细粒度配置 set
-                        return true 
-                    }} catch(e) {{ return false }} 
-                }},
-                get: async (key) => {{ 
-                    try {{ 
-                        // 暂不支持细粒度配置 get
-                        return null 
-                    }} catch(e) {{ return null }} 
-                }},
-                getMergedConfig: async () => {{
+            nutstore: {{
+                getSSOUrl: async () => {{ try {{ return (await window.qt?.api?.nutstoreGetSsoUrl?.()) || ''; }} catch(e) {{ return ''; }} }},
+                decryptToken: async (token) => {{ try {{ return (await window.qt?.api?.nutstoreDecryptToken?.(token)) || ''; }} catch(e) {{ return ''; }} }},
+                getDirectoryContents: async (token, path) => {{ return await __qtCallJson('nutstoreGetDirectoryContents', [], token, path); }}
+            }},
+            quoteToMainWindow: async (text) => {{ try {{ await window.qt?.api?.quoteToMainWindow?.(text); }} catch(e) {{}} }},
+            trace: {{
+                getData: async (topicId, traceId) => {{ return null; }},
+                cleanLocalData: async () => {{}}
+            }},
+            shortcut: {{
+                onRegistrationConflict: (callback) => {{ return function() {{}}; }}
+            }},
+            cache: {{
+                broadcastSync: (message) => {{ /* Houdini 场景通常单窗口，暂不支持跨窗口广播 */ }},
+                onSync: (callback) => {{ return function() {{}}; }},
+                getAllShared: async () => {{ return await __qtCallJson('cacheGetAllShared', {{}}); }}
+            }},
+            storageMonitor: {{
+                getHealth: async () => {{ return await __qtCallJson('storageMonitorGetHealth', {{ level: 'ok', freeBytes: 0, totalBytes: 0, checkedAt: Date.now() }}); }},
+                onHealthChange: (callback) => {{ return function() {{}}; }}
+            }},
+            preference: {{
+                get: async (key) => {{ return await __qtCallJson('preferenceGet', undefined, key); }},
+                set: async (key, value) => {{ try {{ await window.qt?.api?.preferenceSet?.(key, JSON.stringify(value === undefined ? null : value)); }} catch(e) {{ console.error('[Qt] preference.set error:', e); }} }},
+                getMultipleRaw: async (keys) => {{ return await __qtCallJson('preferenceGetMultipleRaw', {{}}, JSON.stringify(keys || [])); }},
+                setMultiple: async (updates) => {{ try {{ await window.qt?.api?.preferenceSetMultiple?.(JSON.stringify(updates || {{}})); }} catch(e) {{ console.error('[Qt] preference.setMultiple error:', e); }} }},
+                getAll: async () => {{ return await __qtCallJson('preferenceGetAll', {{}}); }},
+                subscribe: async (keys) => {{ /* 无跨进程 push 机制，前端读取仍走 get/getAll */ }},
+                onChanged: (callback) => {{ return function() {{}}; }}
+            }},
+            dataApi: {{
+                request: async (req) => {{
                     try {{
-                        const result = await window.qt?.api?.configGetMergedConfig?.();
-                        return result ? JSON.parse(result) : null;
+                        const r = await window.qt?.api?.dataApiRequest?.(JSON.stringify(req || {{}}));
+                        return r ? JSON.parse(r) : {{ id: req?.id || '', status: 500, error: {{ code: 'INTERNAL', message: 'no response' }}, metadata: {{ duration: 0, timestamp: Date.now() }} }};
                     }} catch(e) {{
-                        console.error('[Qt] config.getMergedConfig error:', e);
-                        return null;
+                        return {{ id: req?.id || '', status: 500, error: {{ code: 'INTERNAL', message: String(e) }}, metadata: {{ duration: 0, timestamp: Date.now() }} }};
                     }}
                 }},
-                reload: async () => {{
+                onDataChanged: (callback) => {{ return function() {{}}; }}
+            }},
+            ipcApi: {{
+                request: async (route, input, meta) => {{
                     try {{
-                        const result = await window.qt?.api?.configReload?.();
-                        return result ? JSON.parse(result) : null;
+                        const r = await window.qt?.api?.ipcApiRequest?.(route, JSON.stringify(input === undefined ? null : input));
+                        return r ? JSON.parse(r) : {{ ok: false, error: {{ code: 'INTERNAL', message: 'no response' }} }};
                     }} catch(e) {{
-                        console.error('[Qt] config.reload error:', e);
-                        return null;
+                        return {{ ok: false, error: {{ code: 'INTERNAL', message: String(e) }} }};
                     }}
                 }},
-                updateUserModels: async (models) => {{
-                    try {{
-                        const result = await window.qt?.api?.configUpdateUserModels?.(JSON.stringify(models));
-                        return result ? JSON.parse(result) : null;
-                    }} catch(e) {{
-                        console.error('[Qt] config.updateUserModels error:', e);
-                        return null;
-                    }}
+                on: (event, callback) => {{ return function() {{}}; }}
+            }},
+            skill: {{
+                readSkillFile: async (skillId, filename) => {{ return await __qtCallJson('skillReadFile', {{ success: false, error: 'skill read failed' }}, skillId, filename); }},
+                listFiles: async (skillId) => {{ return await __qtCallJson('skillListFiles', {{ success: false, error: 'skill list failed' }}, skillId); }}
+            }},
+            lanTransfer: {{
+                startScan: async () => {{ return await __qtCallJson('lanTransferStartScan', {{ services: [], isScanning: false, lastUpdatedAt: Date.now() }}); }},
+                stopScan: async () => {{ return await __qtCallJson('lanTransferStopScan', {{ services: [], isScanning: false, lastUpdatedAt: Date.now() }}); }},
+                connect: async (payload) => {{
+                    const r = await __qtCallJson('lanTransferConnect', null, JSON.stringify(payload || {{}}));
+                    if (r && r.error) throw new Error(r.error);
+                    return r;
                 }},
-                updateUserMcpServers: async (servers) => {{
-                    try {{
-                        const result = await window.qt?.api?.configUpdateUserMcpServers?.(JSON.stringify(servers));
-                        return result ? JSON.parse(result) : null;
-                    }} catch(e) {{
-                        console.error('[Qt] config.updateUserMcpServers error:', e);
-                        return null;
-                    }}
-                }}
+                disconnect: async () => {{ try {{ await window.qt?.api?.lanTransferDisconnect?.(); }} catch(e) {{}} }},
+                onServicesUpdated: (callback) => {{ return function() {{}}; }},
+                onClientEvent: (callback) => {{ return function() {{}}; }},
+                sendFile: async (filePath) => {{
+                    const r = await __qtCallJson('lanTransferSendFile', null, filePath);
+                    if (r && r.error) throw new Error(r.error);
+                    return r;
+                }},
+                cancelTransfer: async () => {{ try {{ await window.qt?.api?.lanTransferCancelTransfer?.(); }} catch(e) {{}} }}
             }}
         }};
     }}

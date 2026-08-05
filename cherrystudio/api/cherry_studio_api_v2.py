@@ -21,6 +21,8 @@ Cherry Studio API (v2) - 薄代理层（DCC/Qt 侧）
 import os
 import sys
 import json
+import re
+import socket
 import threading
 import uuid
 import zipfile
@@ -29,9 +31,11 @@ import shutil
 import tempfile
 import subprocess
 import time
+from datetime import datetime, timezone
 from typing import Optional
 from pathlib import Path
 from urllib import request as _urllib_request, error as _urllib_error
+from urllib.parse import quote as _url_quote
 
 from PySide6.QtCore import QObject, Slot
 
@@ -114,6 +118,7 @@ class CherryStudioAPI(QObject):
         self._proxy_bypass_rules: str = ""
         self._hardcoded_proxy: bool = False
         self._apply_secure_proxy()
+        self._IPC_API_ROUTES: dict = self._build_ipc_api_routes()
 
     # ── 后端服务注入 ─────────────────────────────────────────────────────────
 
@@ -1700,6 +1705,1115 @@ class CherryStudioAPI(QObject):
     @Slot(str, result=str)
     def shellExec(self, cmd_json: str) -> str:
         return json.dumps({"error": "not implemented in thin client"})
+
+    # =========================================================================
+    # Cherry Studio v2.0 window.api 桥接层
+    #
+    # v2.0 把渲染进程能力面收敛到一个稳定的 `window.api` 形状（见
+    # web/src/preload/preload.ts）。以下方法都是它们在 Houdini/Qt 侧的
+    # Python 实现，通过 electron_injector.py 里重写的 window.api 转发到这里。
+    # 尚未移植的复杂领域功能（webdav/S3 备份、Copilot、Nutstore、局域网传输等）
+    # 先返回明确的"不支持"结果，而不是让渲染进程挂起等待一个永远不会到来的响应。
+    # =========================================================================
+
+    # ── Preference Store（对应 v2.0 PreferenceService）──────────────────────
+    # 持久化到 <app_data_dir>/preferences.json，进程内用一份内存缓存 + 锁。
+
+    _preference_lock = threading.Lock()
+    _preference_cache: Optional[dict] = None
+
+    def _preference_file_path(self) -> str:
+        return os.path.join(self._get_app_data_dir(), "preferences.json")
+
+    def _load_preferences(self) -> dict:
+        if CherryStudioAPI._preference_cache is not None:
+            return CherryStudioAPI._preference_cache
+        data = {}
+        try:
+            path = self._preference_file_path()
+            if os.path.isfile(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f) or {}
+        except Exception as e:
+            _log(f"[preference] load error: {e}")
+            data = {}
+        CherryStudioAPI._preference_cache = data
+        return data
+
+    def _save_preferences(self, data: dict):
+        try:
+            path = self._preference_file_path()
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False)
+            os.replace(tmp, path)
+        except Exception as e:
+            _log(f"[preference] save error: {e}")
+
+    @Slot(str, result=str)
+    def preferenceGet(self, key: str) -> str:
+        with CherryStudioAPI._preference_lock:
+            return json.dumps(self._load_preferences().get(key))
+
+    @Slot(str, str, result=bool)
+    def preferenceSet(self, key: str, value_json: str) -> bool:
+        try:
+            value = json.loads(value_json) if value_json is not None else None
+        except Exception:
+            value = value_json
+        with CherryStudioAPI._preference_lock:
+            data = self._load_preferences()
+            data[key] = value
+            self._save_preferences(data)
+            CherryStudioAPI._preference_cache = data
+        return True
+
+    @Slot(str, result=str)
+    def preferenceGetMultipleRaw(self, keys_json: str) -> str:
+        try:
+            keys = json.loads(keys_json) if keys_json else []
+        except Exception:
+            keys = []
+        with CherryStudioAPI._preference_lock:
+            data = self._load_preferences()
+            return json.dumps({k: data.get(k) for k in keys})
+
+    @Slot(str, result=bool)
+    def preferenceSetMultiple(self, updates_json: str) -> bool:
+        try:
+            updates = json.loads(updates_json) if updates_json else {}
+        except Exception:
+            updates = {}
+        with CherryStudioAPI._preference_lock:
+            data = self._load_preferences()
+            data.update(updates)
+            self._save_preferences(data)
+            CherryStudioAPI._preference_cache = data
+        return True
+
+    @Slot(result=str)
+    def preferenceGetAll(self) -> str:
+        with CherryStudioAPI._preference_lock:
+            return json.dumps(self._load_preferences())
+
+    # ── Skills 市场（复用 agent-runtime sidecar 的 /v1/skills REST 接口）──────
+
+    @Slot(str, str, result=str)
+    def skillReadFile(self, skill_id: str, filename: str) -> str:
+        try:
+            encoded_path = "/".join(_url_quote(part, safe="") for part in str(filename).split("/"))
+            resp_json = self.agentApiProxy(json.dumps({
+                "method": "GET",
+                "path": f"/v1/skills/{_url_quote(str(skill_id), safe='')}/files/{encoded_path}",
+            }))
+            resp = json.loads(resp_json) if resp_json else {}
+            if isinstance(resp, dict) and resp.get("error"):
+                return json.dumps({"success": False, "error": resp.get("error")})
+            text = resp.get("data") if isinstance(resp, dict) else resp
+            if not isinstance(text, str):
+                text = json.dumps(text, ensure_ascii=False)
+            return json.dumps({"success": True, "data": text})
+        except Exception as e:
+            return json.dumps({"success": False, "error": str(e)})
+
+    @Slot(str, result=str)
+    def skillListFiles(self, skill_id: str) -> str:
+        try:
+            resp_json = self.agentApiProxy(json.dumps({
+                "method": "GET",
+                "path": f"/v1/skills/{_url_quote(str(skill_id), safe='')}/files",
+            }))
+            resp = json.loads(resp_json) if resp_json else {}
+            if isinstance(resp, dict) and resp.get("error"):
+                return json.dumps({"success": False, "error": resp.get("error")})
+            rel_paths = resp.get("data", []) if isinstance(resp, dict) else []
+            nodes = [{"name": p.rsplit("/", 1)[-1], "path": p, "type": "file"} for p in rel_paths]
+            return json.dumps({"success": True, "data": nodes})
+        except Exception as e:
+            return json.dumps({"success": False, "error": str(e)})
+
+    # ── IpcApi / DataApi 通用路由分发（v2.0 统一 RPC 通道）───────────────────
+    #
+    # `ipcApiRequest`/`dataApiRequest` 是 v2.0 渲染进程与主进程之间的两条通用 RPC
+    # 通道（详见 web/src/preload/ipc.ts、web/src/shared/data/api/types.ts）。
+    # Houdini 版没有真正的 Electron 主进程，这里用一张 route -> 处理函数 的表
+    # 在 Python 侧模拟同样的契约。已接入的域：
+    #   - config.*        中心化配置 / NewAPI 计费查询（转发到既有 backend 路由）
+    #   - ai.agent.*       Agent CRUD + 定时任务命令（适配到 agent-runtime sidecar）
+    # 尚未接入的域（text/embedding/image/stream/tool/translate 等）仍走结构化
+    # "未实现" 错误，等待后续阶段。
+
+    def _build_ipc_api_routes(self) -> dict:
+        """route -> callable(input) -> Any。返回值会被包成 {"ok": true, "data": ...}；
+        抛异常会被包成 {"ok": false, "error": {code: "INTERNAL", message}}。
+        """
+        return {
+            # ── 中心化配置 / NewAPI（fork 独有能力，v2.0 官方没有对应路由，
+            #    这里沿用 v1.9.12 fork 自己的 window.api.config.* 命名）──────────
+            "config.getMergedConfig": lambda _input: self._svc("/api/v1/config/merged", method="GET"),
+            "config.reload": lambda _input: self._svc("/api/v1/config/reload", method="POST"),
+            "config.updateUserModels": lambda input_data: self._svc(
+                "/api/v1/config/update-models", {"models": (input_data or {}).get("models", []) if isinstance(input_data, dict) else (input_data or [])}
+            ),
+            "config.updateUserMcpServers": lambda input_data: self._svc(
+                "/api/v1/config/update-mcp-servers",
+                {"servers": (input_data or {}).get("servers", []) if isinstance(input_data, dict) else (input_data or [])},
+            ),
+            "config.getLastRequestCost": lambda input_data: self._svc("/api/v1/newapi/last-cost", input_data or {}),
+            "config.getAccountSummary": lambda input_data: self._svc("/api/v1/newapi/account-summary", input_data or {}),
+            # ── Agent CRUD（创建是 mixed-effect 命令，落在 IpcApi 上）───────────
+            "ai.agent.create": self._ipc_agent_create,
+            # ── Agent 定时任务命令（AgentJobsService 的对应物）──────────────────
+            "ai.agent.task.create": self._ipc_agent_task_create,
+            "ai.agent.task.update": self._ipc_agent_task_update,
+            "ai.agent.task.pause": self._ipc_agent_task_pause,
+            "ai.agent.task.resume": self._ipc_agent_task_resume,
+            "ai.agent.task.delete": self._ipc_agent_task_delete,
+            "ai.agent.task.run": self._ipc_agent_task_run,
+        }
+
+    @Slot(str, str, result=str)
+    def ipcApiRequest(self, route: str, input_json: str) -> str:
+        try:
+            input_data = json.loads(input_json) if input_json else None
+        except Exception:
+            input_data = None
+        handler = self._IPC_API_ROUTES.get(route)
+        if handler is None:
+            return json.dumps({
+                "ok": False,
+                "error": {
+                    "code": "ROUTE_NOT_FOUND",
+                    "message": f"Unknown IpcApi route (not yet ported to Houdini runtime): {route}",
+                },
+            })
+        try:
+            return json.dumps({"ok": True, "data": handler(input_data)})
+        except Exception as e:
+            return json.dumps({"ok": False, "error": {"code": "INTERNAL", "message": str(e)}})
+
+    #: (HTTP method, path 正则, 处理函数名, 传给处理函数的参数种类列表)。
+    #: 参数种类："params" = 从正则命名分组提取的路径参数字典；
+    #: "query" = DataRequest.params（v2.0 里这个字段名指的是查询参数，不是路径参数）；
+    #: "body" = DataRequest.body。
+    _DATA_API_PATTERNS = [
+        ("GET", re.compile(r"^/agents$"), "_data_agents_list", ["query"]),
+        ("GET", re.compile(r"^/agents/(?P<agentId>[^/]+)$"), "_data_agent_get", ["params"]),
+        ("PATCH", re.compile(r"^/agents/(?P<agentId>[^/]+)$"), "_data_agent_patch", ["params", "body"]),
+        ("DELETE", re.compile(r"^/agents/(?P<agentId>[^/]+)$"), "_data_agent_delete", ["params", "query"]),
+        ("GET", re.compile(r"^/agent-tasks$"), "_data_agent_tasks_list_all", ["query"]),
+        ("GET", re.compile(r"^/agent-tasks/(?P<taskId>[^/]+)$"), "_data_agent_task_get_by_id", ["params"]),
+        ("GET", re.compile(r"^/agents/(?P<agentId>[^/]+)/tasks$"), "_data_agent_tasks_list_for_agent", ["params", "query"]),
+        ("GET", re.compile(r"^/agents/(?P<agentId>[^/]+)/tasks/(?P<taskId>[^/]+)$"), "_data_agent_task_get_by_id", ["params"]),
+        (
+            "GET",
+            re.compile(r"^/agents/(?P<agentId>[^/]+)/tasks/(?P<taskId>[^/]+)/logs$"),
+            "_data_agent_task_logs",
+            ["params", "query"],
+        ),
+    ]
+
+    @Slot(str, result=str)
+    def dataApiRequest(self, request_json: str) -> str:
+        try:
+            req = json.loads(request_json) if request_json else {}
+        except Exception:
+            req = {}
+        method = (req.get("method") or "GET").upper()
+        path = req.get("path", "") or ""
+        # DataRequest.params 在 v2.0 里表示查询参数（见 DataApiService.ts），不是路径参数；
+        # 路径参数是从 path 本身用正则解析出来的。
+        query = req.get("params") or {}
+        body = req.get("body")
+        req_id = req.get("id", "")
+
+        for pat_method, pattern, handler_name, arg_kinds in self._DATA_API_PATTERNS:
+            if pat_method != method:
+                continue
+            m = pattern.match(path)
+            if not m:
+                continue
+            try:
+                path_params = m.groupdict()
+                args = []
+                for kind in arg_kinds:
+                    if kind == "params":
+                        args.append(path_params)
+                    elif kind == "query":
+                        args.append(query)
+                    elif kind == "body":
+                        args.append(body)
+                data = getattr(self, handler_name)(*args)
+                return json.dumps({
+                    "id": req_id,
+                    "status": 200,
+                    "data": data,
+                    "metadata": {"duration": 0, "timestamp": int(time.time() * 1000)},
+                })
+            except Exception as e:
+                return json.dumps({
+                    "id": req_id,
+                    "status": 500,
+                    "error": {"code": "INTERNAL", "message": str(e), "status": 500},
+                    "metadata": {"duration": 0, "timestamp": int(time.time() * 1000)},
+                })
+
+        return json.dumps({
+            "id": req_id,
+            "status": 404,
+            "error": {
+                "code": "NOT_FOUND",
+                "message": f"DataApi route not yet ported to Houdini runtime: {method} {path}",
+                "status": 404,
+            },
+            "metadata": {"duration": 0, "timestamp": int(time.time() * 1000)},
+        })
+
+    # ── Agent / Task 适配层：把 v2.0 的 ai.agent.* / dataApi(/agents, /agent-tasks)
+    # 契约翻译成 agent-runtime sidecar 的 REST 形状（snake_case、扁平 schedule_type/
+    # schedule_value），反之亦然。已知的有损/简化点：
+    #   - `disabledTools`（v2.0 的工具黑名单）与 sidecar 的 `allowed_tools`（白名单）
+    #     语义相反，暂不接入运行时鉴权，只是原样存进 configuration._disabledTools
+    #     里保证往返不丢数据；`knowledgeBaseIds` 同理存进 _knowledgeBaseIds。
+    #   - Task 的 `workspace` 字段 sidecar 没有对应列，统一固定为 {"type": "system"}
+    #     （sidecar 任务始终跑在 agent.accessible_paths[0] 下）。
+    #   - Cron trigger 的 `timezone`/`limit` sidecar 的 5 段 cron 解析器不支持，写入时丢弃。
+
+    def _agent_call(self, method: str, path: str, body: dict = None) -> dict:
+        """通过 agentApiProxy 转发到 agent-runtime sidecar，并把 sendError() 的
+        错误体统一转换成异常抛出（成功时直接返回解析后的 JSON dict）。
+        """
+        resp_json = self.agentApiProxy(json.dumps({"method": method, "path": path, "body": body}))
+        try:
+            resp = json.loads(resp_json) if resp_json else {}
+        except Exception:
+            resp = {}
+        if isinstance(resp, dict) and resp.get("error") is not None:
+            err = resp["error"]
+            msg = err.get("message") if isinstance(err, dict) else str(err)
+            raise RuntimeError(msg or "agent-runtime 请求失败")
+        return resp if isinstance(resp, dict) else {}
+
+    @staticmethod
+    def _trigger_to_schedule(trigger: dict) -> tuple:
+        trigger = trigger or {}
+        kind = trigger.get("kind")
+        if kind == "interval":
+            ms = trigger.get("ms") or 60000
+            minutes = max(1, round(ms / 60000))
+            return "interval", str(minutes)
+        if kind == "cron":
+            return "cron", trigger.get("expr") or "* * * * *"
+        if kind == "once":
+            at_ms = trigger.get("at") or 0
+            iso = datetime.fromtimestamp(at_ms / 1000, tz=timezone.utc).isoformat()
+            return "once", iso
+        raise ValueError(f"unsupported trigger kind: {kind!r}")
+
+    @staticmethod
+    def _schedule_to_trigger(schedule_type: str, schedule_value: str) -> dict:
+        if schedule_type == "interval":
+            try:
+                minutes = float(schedule_value)
+            except (TypeError, ValueError):
+                minutes = 30
+            return {"kind": "interval", "ms": int(minutes * 60000)}
+        if schedule_type == "cron":
+            return {"kind": "cron", "expr": schedule_value or "* * * * *"}
+        if schedule_type == "once":
+            at_ms = 0
+            try:
+                dt = datetime.fromisoformat(str(schedule_value or "").replace("Z", "+00:00"))
+                at_ms = int(dt.timestamp() * 1000)
+            except ValueError:
+                pass
+            return {"kind": "once", "at": at_ms}
+        return {"kind": "interval", "ms": 30 * 60000}
+
+    @staticmethod
+    def _agent_row_to_entity(row: dict) -> dict:
+        row = row or {}
+        config = dict(row.get("configuration") or {})
+        disabled_tools = config.pop("_disabledTools", None) or []
+        knowledge_base_ids = config.pop("_knowledgeBaseIds", None) or []
+        slash_commands = row.get("slash_commands") or []
+        if slash_commands and "slash_commands" not in config:
+            config["slash_commands"] = slash_commands
+        created_at = row.get("created_at") or ""
+        entity = {
+            "id": row.get("id", ""),
+            "type": "claude-code",
+            "name": row.get("name") or "",
+            "model": row.get("model"),
+            "modelName": None,
+            "mcps": row.get("mcps") or [],
+            "knowledgeBaseIds": knowledge_base_ids,
+            "disabledTools": disabled_tools,
+            "configuration": config,
+            "createdAt": created_at,
+            "updatedAt": row.get("updated_at") or created_at,
+            "orderKey": str(row.get("sort_order", 0)),
+        }
+        if row.get("description"):
+            entity["description"] = row["description"]
+        if row.get("instructions"):
+            entity["instructions"] = row["instructions"]
+        if row.get("plan_model"):
+            entity["planModel"] = row["plan_model"]
+        if row.get("small_model"):
+            entity["smallModel"] = row["small_model"]
+        return entity
+
+    @staticmethod
+    def _agent_form_to_sidecar_body(form: dict) -> dict:
+        """`ai.agent.create` 的 CreateAgentCommand -> sidecar POST /v1/agents body。"""
+        form = form or {}
+        config = dict(form.get("configuration") or {})
+        disabled_tools = form.get("disabledTools") or []
+        knowledge_base_ids = form.get("knowledgeBaseIds") or []
+        if disabled_tools:
+            config["_disabledTools"] = disabled_tools
+        if knowledge_base_ids:
+            config["_knowledgeBaseIds"] = knowledge_base_ids
+        slash_commands = config.pop("slash_commands", None) or []
+        return {
+            "type": "claude-code",
+            "name": form.get("name"),
+            "description": form.get("description"),
+            "instructions": form.get("instructions"),
+            "model": form.get("model"),
+            "plan_model": form.get("planModel"),
+            "small_model": form.get("smallModel"),
+            "mcps": form.get("mcps") or [],
+            "slash_commands": slash_commands,
+            "configuration": config,
+        }
+
+    @staticmethod
+    def _agent_patch_to_sidecar_body(patch: dict) -> dict:
+        """`UpdateAgentDto`（全字段可选）-> sidecar PATCH /v1/agents/:id body。
+        只放入 patch 里真正出现过的字段，未出现的字段保持 sidecar 原值不变。
+        """
+        patch = patch or {}
+        body = {}
+        if "name" in patch:
+            body["name"] = patch["name"]
+        if "description" in patch:
+            body["description"] = patch["description"]
+        if "instructions" in patch:
+            body["instructions"] = patch["instructions"]
+        if "model" in patch:
+            body["model"] = patch["model"]
+        if "planModel" in patch:
+            body["plan_model"] = patch["planModel"]
+        if "smallModel" in patch:
+            body["small_model"] = patch["smallModel"]
+        if "mcps" in patch:
+            body["mcps"] = patch.get("mcps") or []
+        if "configuration" in patch or "disabledTools" in patch or "knowledgeBaseIds" in patch:
+            config_patch = dict(patch.get("configuration") or {})
+            if "disabledTools" in patch:
+                config_patch["_disabledTools"] = patch.get("disabledTools") or []
+            if "knowledgeBaseIds" in patch:
+                config_patch["_knowledgeBaseIds"] = patch.get("knowledgeBaseIds") or []
+            if "slash_commands" in config_patch:
+                body["slash_commands"] = config_patch.pop("slash_commands") or []
+            body["configuration"] = config_patch
+        return body
+
+    @staticmethod
+    def _task_row_to_entity(row: dict) -> dict:
+        row = row or {}
+        trigger = CherryStudioAPI._schedule_to_trigger(row.get("schedule_type"), row.get("schedule_value"))
+        reuse = bool(row.get("reuse_session"))
+        status = row.get("status") or "active"
+        if status not in ("active", "paused", "completed"):
+            status = "active"
+        created_at = row.get("created_at") or ""
+        return {
+            "id": row.get("id", ""),
+            "agentId": row.get("agent_id", ""),
+            "name": row.get("name") or "",
+            "prompt": row.get("prompt") or "",
+            "trigger": trigger,
+            "timeoutMinutes": row.get("timeout_minutes") if row.get("timeout_minutes") is not None else 2,
+            # sidecar 任务没有独立的 workspace 选择，始终跑在 agent 的 accessible_paths 下。
+            "workspace": {"type": "system"},
+            "reuseSession": reuse,
+            "reuseSessionId": row.get("session_id") if reuse else None,
+            "channelIds": row.get("channel_ids") or [],
+            "nextRun": row.get("next_run"),
+            "lastRun": row.get("last_run"),
+            "enabled": status == "active",
+            "status": status,
+            "createdAt": created_at,
+            "updatedAt": row.get("updated_at") or created_at,
+        }
+
+    @staticmethod
+    def _tasklog_row_to_entity(row: dict) -> dict:
+        row = row or {}
+        status_map = {"success": "completed", "error": "failed"}
+        return {
+            "id": str(row.get("id", "")),
+            "scheduleId": str(row.get("task_id", "")),
+            "sessionId": row.get("session_id"),
+            "startedAt": row.get("run_at") or "",
+            "durationMs": row.get("duration_ms") or 0,
+            "status": status_map.get(row.get("status"), "completed"),
+            "result": row.get("result"),
+            "error": row.get("error"),
+        }
+
+    @staticmethod
+    def _task_form_to_sidecar_body(form: dict, agent_id: str = None) -> dict:
+        """`AgentTaskForm`/`AgentTaskPatch` -> sidecar task body。只写入表单里
+        真正出现的字段，patch 场景下未出现的字段保持 sidecar 原值不变。
+        """
+        form = form or {}
+        body = {}
+        if agent_id:
+            body["agent_id"] = agent_id
+        if "name" in form:
+            body["name"] = form.get("name")
+        if "prompt" in form:
+            body["prompt"] = form.get("prompt")
+        if form.get("trigger"):
+            schedule_type, schedule_value = CherryStudioAPI._trigger_to_schedule(form["trigger"])
+            body["schedule_type"] = schedule_type
+            body["schedule_value"] = schedule_value
+        if "timeoutMinutes" in form:
+            body["timeout_minutes"] = form.get("timeoutMinutes") or 2
+        if "reuseSession" in form:
+            body["reuse_session"] = bool(form.get("reuseSession"))
+        if "channelIds" in form:
+            body["channel_ids"] = form.get("channelIds") or []
+        return body
+
+    # ── ai.agent.* IpcApi 命令处理函数 ───────────────────────────────────────
+
+    def _ipc_agent_create(self, input_data):
+        body = self._agent_form_to_sidecar_body(input_data or {})
+        if not body.get("name") or not body.get("model"):
+            raise ValueError("name and model are required")
+        resp = self._agent_call("POST", "/v1/agents", body)
+        return self._agent_row_to_entity(resp)
+
+    def _ipc_agent_task_create(self, input_data):
+        input_data = input_data or {}
+        agent_id = input_data.get("agentId")
+        if not agent_id:
+            raise ValueError("agentId is required")
+        body = self._task_form_to_sidecar_body(input_data, agent_id=agent_id)
+        if not body.get("name") or not body.get("prompt") or not body.get("schedule_type"):
+            raise ValueError("name, prompt and trigger are required")
+        resp = self._agent_call("POST", "/v1/tasks", body)
+        return self._task_row_to_entity(resp)
+
+    def _ipc_agent_task_update(self, input_data):
+        input_data = input_data or {}
+        task_id = input_data.get("taskId")
+        if not task_id:
+            raise ValueError("taskId is required")
+        body = self._task_form_to_sidecar_body(input_data.get("patch") or {})
+        resp = self._agent_call("PATCH", f"/v1/tasks/{_url_quote(str(task_id), safe='')}", body)
+        return self._task_row_to_entity(resp)
+
+    def _ipc_agent_task_pause(self, input_data):
+        task_id = (input_data or {}).get("taskId")
+        resp = self._agent_call("PATCH", f"/v1/tasks/{_url_quote(str(task_id), safe='')}", {"status": "paused"})
+        return self._task_row_to_entity(resp)
+
+    def _ipc_agent_task_resume(self, input_data):
+        task_id = (input_data or {}).get("taskId")
+        resp = self._agent_call("PATCH", f"/v1/tasks/{_url_quote(str(task_id), safe='')}", {"status": "active"})
+        return self._task_row_to_entity(resp)
+
+    def _ipc_agent_task_delete(self, input_data):
+        task_id = (input_data or {}).get("taskId")
+        self._agent_call("DELETE", f"/v1/tasks/{_url_quote(str(task_id), safe='')}")
+        return None
+
+    def _ipc_agent_task_run(self, input_data):
+        task_id = (input_data or {}).get("taskId")
+        self._agent_call("POST", f"/v1/tasks/{_url_quote(str(task_id), safe='')}/run")
+        return None
+
+    # ── DataApi(/agents, /agent-tasks) 读处理函数 ────────────────────────────
+
+    def _data_agents_list(self, query: dict) -> dict:
+        query = query or {}
+        page = max(int(query.get("page") or 1), 1)
+        limit = min(max(int(query.get("limit") or 100), 1), 500)
+        offset = (page - 1) * limit
+        resp = self._agent_call("GET", f"/v1/agents?limit={limit}&offset={offset}")
+        items = [self._agent_row_to_entity(r) for r in (resp.get("data") or [])]
+        return {"items": items, "total": resp.get("total", len(items)), "page": page}
+
+    def _data_agent_get(self, params: dict) -> dict:
+        agent_id = (params or {}).get("agentId")
+        resp = self._agent_call("GET", f"/v1/agents/{_url_quote(str(agent_id), safe='')}")
+        return self._agent_row_to_entity(resp)
+
+    def _data_agent_patch(self, params: dict, body: dict) -> dict:
+        agent_id = (params or {}).get("agentId")
+        sidecar_body = self._agent_patch_to_sidecar_body(body or {})
+        resp = self._agent_call("PATCH", f"/v1/agents/{_url_quote(str(agent_id), safe='')}", sidecar_body)
+        return self._agent_row_to_entity(resp)
+
+    def _data_agent_delete(self, params: dict, _query: dict) -> dict:
+        agent_id = (params or {}).get("agentId")
+        self._agent_call("DELETE", f"/v1/agents/{_url_quote(str(agent_id), safe='')}")
+        return {"deleted": True}
+
+    def _data_agent_tasks_list_all(self, query: dict) -> dict:
+        query = query or {}
+        page = max(int(query.get("page") or 1), 1)
+        limit = min(max(int(query.get("limit") or 20), 1), 500)
+        offset = (page - 1) * limit
+        resp = self._agent_call("GET", f"/v1/tasks?limit={limit}&offset={offset}")
+        items = [self._task_row_to_entity(r) for r in (resp.get("data") or [])]
+        return {"items": items, "total": resp.get("total", len(items)), "page": page}
+
+    def _data_agent_task_get_by_id(self, params: dict) -> dict:
+        task_id = (params or {}).get("taskId")
+        resp = self._agent_call("GET", f"/v1/tasks/{_url_quote(str(task_id), safe='')}")
+        return self._task_row_to_entity(resp)
+
+    def _data_agent_tasks_list_for_agent(self, params: dict, query: dict) -> dict:
+        # sidecar 没有按 agent 过滤的任务列表端点，取全量后本地过滤/分页。
+        agent_id = (params or {}).get("agentId")
+        query = query or {}
+        page = max(int(query.get("page") or 1), 1)
+        limit = min(max(int(query.get("limit") or 20), 1), 500)
+        resp = self._agent_call("GET", "/v1/tasks?limit=500&offset=0")
+        all_items = [
+            self._task_row_to_entity(r) for r in (resp.get("data") or []) if r.get("agent_id") == agent_id
+        ]
+        start = (page - 1) * limit
+        return {"items": all_items[start:start + limit], "total": len(all_items), "page": page}
+
+    def _data_agent_task_logs(self, params: dict, query: dict) -> dict:
+        task_id = (params or {}).get("taskId")
+        query = query or {}
+        page = max(int(query.get("page") or 1), 1)
+        limit = min(max(int(query.get("limit") or 20), 1), 500)
+        offset = (page - 1) * limit
+        resp = self._agent_call("GET", f"/v1/tasks/{_url_quote(str(task_id), safe='')}/logs?limit={limit}&offset={offset}")
+        items = [self._tasklog_row_to_entity(r) for r in (resp.get("data") or [])]
+        return {"items": items, "total": resp.get("total", len(items)), "page": page}
+
+    # ── App / System 基础能力 ─────────────────────────────────────────────────
+
+    @Slot(result=str)
+    def getCacheSizeV2(self) -> str:
+        try:
+            total = 0
+            root = self._get_app_data_dir()
+            for dirpath, _dirnames, filenames in os.walk(root):
+                for name in filenames:
+                    try:
+                        total += os.path.getsize(os.path.join(dirpath, name))
+                    except OSError:
+                        pass
+            return json.dumps({"size": total, "count": 0})
+        except Exception as e:
+            _log(f"[getCacheSizeV2] {e}")
+            return json.dumps({"size": 0, "count": 0})
+
+    @Slot(result=bool)
+    def clearCacheV2(self) -> bool:
+        # 应用数据目录里存放的是聊天/知识库数据，不是可安全清空的缓存，
+        # 这里刻意不做真正的删除，避免误删用户数据。
+        return True
+
+    @Slot(result=bool)
+    def isMaximizedV2(self) -> bool:
+        try:
+            w = self._get_window()
+            return bool(w and w.isMaximized())
+        except Exception:
+            return False
+
+    @Slot(result=str)
+    def getSystemFontsV2(self) -> str:
+        try:
+            from PySide6.QtGui import QFontDatabase
+            families = list(QFontDatabase.families())[:200]
+            return json.dumps(families or ["Microsoft YaHei", "SimHei", "SimSun", "Consolas", "Arial"])
+        except Exception:
+            return json.dumps(["Microsoft YaHei", "SimHei", "SimSun", "Consolas", "Arial"])
+
+    @Slot(str, result=bool)
+    def hasWritePermission(self, path: str) -> bool:
+        try:
+            target = path if os.path.exists(path) else os.path.dirname(path) or "."
+            return os.access(target, os.W_OK)
+        except Exception:
+            return False
+
+    @Slot(str, result=str)
+    def resolvePathV2(self, path: str) -> str:
+        try:
+            return os.path.abspath(os.path.expanduser(path))
+        except Exception:
+            return path
+
+    @Slot(str, str, result=bool)
+    def isPathInside(self, child_path: str, parent_path: str) -> bool:
+        try:
+            child = os.path.realpath(child_path)
+            parent = os.path.realpath(parent_path)
+            return os.path.commonpath([child, parent]) == parent
+        except Exception:
+            return False
+
+    @Slot(result=str)
+    def getHostname(self) -> str:
+        try:
+            return socket.gethostname()
+        except Exception:
+            return "houdini"
+
+    @Slot(str, result=str)
+    def zipDecompress(self, _text: str) -> str:
+        return ""
+
+    @Slot(str, str, str, result=str)
+    def aesDecrypt(self, _encrypted_data: str, _iv: str, _secret_key: str) -> str:
+        return ""
+
+    @Slot(str, result=bool)
+    def setSpellCheckLanguages(self, _languages_json: str) -> bool:
+        return True
+
+    @Slot(bool, result=bool)
+    def setLaunchOnBoot(self, _is_active: bool) -> bool:
+        # Houdini 插件跟随宿主启动，没有独立的"开机启动"概念。
+        return False
+
+    @Slot(str, result=str)
+    def applicationPreventQuit(self, _reason: str) -> str:
+        return f"houdini-hold-{uuid.uuid4().hex[:8]}"
+
+    @Slot(str, result=bool)
+    def applicationAllowQuit(self, _hold_id: str) -> bool:
+        return True
+
+    @Slot(str, result=bool)
+    def applicationRelaunch(self, _options_json: str) -> bool:
+        # Houdini 插件里没有"重启整个应用"的安全语义，交由用户手动重开面板。
+        return False
+
+    @Slot(str, result=bool)
+    def quoteToMainWindow(self, _text: str) -> bool:
+        return False
+
+    # ── 文件系统扩展（tree/backup/command/aes/copilot/nutstore/lanTransfer 等）──
+
+    @Slot(str, str, result=bool)
+    def fileMove(self, path: str, new_path: str) -> bool:
+        try:
+            os.makedirs(os.path.dirname(new_path) or ".", exist_ok=True)
+            shutil.move(path, new_path)
+            return True
+        except Exception as e:
+            _log(f"[fileMove] {e}")
+            return False
+
+    @Slot(str, str, result=bool)
+    def fileMoveDir(self, dir_path: str, new_dir_path: str) -> bool:
+        return self.fileMove(dir_path, new_dir_path)
+
+    @Slot(str, str, result=bool)
+    def fileRename(self, path: str, new_name: str) -> bool:
+        try:
+            target = os.path.join(os.path.dirname(path), new_name)
+            os.rename(path, target)
+            return True
+        except Exception as e:
+            _log(f"[fileRename] {e}")
+            return False
+
+    @Slot(str, str, result=bool)
+    def fileRenameDir(self, dir_path: str, new_name: str) -> bool:
+        return self.fileRename(dir_path, new_name)
+
+    @Slot(str, result=bool)
+    def fileMkdir(self, dir_path: str) -> bool:
+        try:
+            os.makedirs(dir_path, exist_ok=True)
+            return True
+        except Exception as e:
+            _log(f"[fileMkdir] {e}")
+            return False
+
+    @Slot(str, result=bool)
+    def fileDeleteExternalFile(self, file_path: str) -> bool:
+        try:
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+            return True
+        except Exception as e:
+            _log(f"[fileDeleteExternalFile] {e}")
+            return False
+
+    @Slot(str, result=bool)
+    def fileDeleteExternalDir(self, dir_path: str) -> bool:
+        try:
+            if os.path.isdir(dir_path):
+                shutil.rmtree(dir_path, ignore_errors=True)
+            return True
+        except Exception as e:
+            _log(f"[fileDeleteExternalDir] {e}")
+            return False
+
+    @Slot(str, result=bool)
+    def filePermanentDelete(self, handle_json: str) -> bool:
+        try:
+            handle = json.loads(handle_json) if handle_json else {}
+            path = handle.get("path") if isinstance(handle, dict) else str(handle)
+            if path and os.path.exists(path):
+                if os.path.isdir(path):
+                    shutil.rmtree(path, ignore_errors=True)
+                else:
+                    os.remove(path)
+            return True
+        except Exception as e:
+            _log(f"[filePermanentDelete] {e}")
+            return False
+
+    @Slot(result=bool)
+    def fileRunSweep(self) -> bool:
+        return True
+
+    @Slot(str, result=str)
+    def fileGetV2(self, file_path: str) -> str:
+        try:
+            if not os.path.exists(file_path):
+                return "null"
+            stat = os.stat(file_path)
+            name = os.path.basename(file_path)
+            ext = os.path.splitext(name)[1]
+            return json.dumps({
+                "id": file_path,
+                "name": name,
+                "path": file_path,
+                "size": stat.st_size,
+                "ext": ext,
+                "type": self._get_file_type(ext),
+                "created_at": stat.st_ctime,
+                "count": 1,
+            })
+        except Exception as e:
+            _log(f"[fileGetV2] {e}")
+            return "null"
+
+    @Slot(str, result=str)
+    def fileCreateTempFile(self, file_name: str) -> str:
+        try:
+            temp_dir = os.path.join(tempfile.gettempdir(), "cherrystudio")
+            os.makedirs(temp_dir, exist_ok=True)
+            return os.path.join(temp_dir, file_name)
+        except Exception:
+            return file_name
+
+    @Slot(str, str, result=str)
+    def fileListDirectory(self, dir_path: str, options_json: str) -> str:
+        try:
+            entries = []
+            if os.path.isdir(dir_path):
+                for name in sorted(os.listdir(dir_path)):
+                    full = os.path.join(dir_path, name)
+                    entries.append({
+                        "name": name,
+                        "path": full,
+                        "isDirectory": os.path.isdir(full),
+                    })
+            return json.dumps(entries)
+        except Exception as e:
+            _log(f"[fileListDirectory] {e}")
+            return "[]"
+
+    @Slot(str, str, result=str)
+    def fileListDirectoryEntries(self, dir_path: str, options_json: str) -> str:
+        return self.fileListDirectory(dir_path, options_json)
+
+    @Slot(str, str, bool, result=bool)
+    def fileCheckFileName(self, dir_path: str, file_name: str, _is_file: bool) -> bool:
+        try:
+            return not os.path.exists(os.path.join(dir_path, file_name))
+        except Exception:
+            return True
+
+    @Slot(str, result=bool)
+    def fileValidateNotesDirectory(self, dir_path: str) -> bool:
+        try:
+            return os.path.isdir(dir_path) and os.access(dir_path, os.W_OK)
+        except Exception:
+            return False
+
+    @Slot(str, result=bool)
+    def fileShowInFolder(self, path: str) -> bool:
+        try:
+            if sys.platform == "win32":
+                subprocess.run(["explorer", "/select,", os.path.normpath(path)], check=False)
+            elif sys.platform == "darwin":
+                subprocess.run(["open", "-R", path], check=False)
+            else:
+                subprocess.run(["xdg-open", os.path.dirname(path) or "."], check=False)
+            return True
+        except Exception as e:
+            _log(f"[fileShowInFolder] {e}")
+            return False
+
+    # File Storage Entry 抽象（v2.0 新增的内部/外部文件引用系统）尚未移植，
+    # 先返回明确错误，避免渲染进程按 undefined 处理导致后续 crash。
+    @Slot(str, result=str)
+    def fileCreateInternalEntry(self, _params_json: str) -> str:
+        return json.dumps({"error": "File storage entries are not supported in Houdini runtime yet"})
+
+    @Slot(str, result=str)
+    def fileEnsureExternalEntry(self, _params_json: str) -> str:
+        return json.dumps({"error": "File storage entries are not supported in Houdini runtime yet"})
+
+    @Slot(str, result=str)
+    def fileGetPhysicalPath(self, params_json: str) -> str:
+        try:
+            params = json.loads(params_json) if params_json else {}
+            path = params.get("path") if isinstance(params, dict) else None
+            return json.dumps(path) if path else json.dumps(None)
+        except Exception:
+            return json.dumps(None)
+
+    @Slot(str, str, result=str)
+    def fileBatchUploadMarkdown(self, _file_paths_json: str, _target_path: str) -> str:
+        return json.dumps({"error": "Not supported in Houdini runtime"})
+
+    # ── 目录树（Notes 功能用）── 暂未移植，先返回明确错误 ─────────────────────
+
+    @Slot(str, str, result=str)
+    def fileTreeCreate(self, _root_path: str, _options_json: str) -> str:
+        return json.dumps({"error": "Directory tree watching is not supported in Houdini runtime yet"})
+
+    @Slot(str, result=bool)
+    def fileTreeDispose(self, _tree_id: str) -> bool:
+        return True
+
+    @Slot(str, str, str, result=bool)
+    def fileTreeRename(self, _tree_id: str, _old_path: str, _new_path: str) -> bool:
+        return False
+
+    # ── 原生弹出菜单 / AES / Copilot / 第三方应用检测 / Nutstore ──────────────
+
+    @Slot(str, str, result=bool)
+    def commandShowNativePopupMenu(self, _model_json: str, _anchor_json: str) -> bool:
+        return False
+
+    @Slot(str, result=str)
+    def copilotGetAuthMessage(self, _headers_json: str) -> str:
+        return json.dumps({"error": "GitHub Copilot login is not supported in Houdini runtime"})
+
+    @Slot(str, str, result=str)
+    def copilotGetCopilotToken(self, _device_code: str, _headers_json: str) -> str:
+        return json.dumps({"error": "GitHub Copilot login is not supported in Houdini runtime"})
+
+    @Slot(str, result=bool)
+    def copilotSaveCopilotToken(self, _access_token: str) -> bool:
+        return False
+
+    @Slot(str, result=str)
+    def copilotGetToken(self, _headers_json: str) -> str:
+        return json.dumps({"error": "GitHub Copilot login is not supported in Houdini runtime"})
+
+    @Slot(result=bool)
+    def copilotLogout(self) -> bool:
+        return True
+
+    @Slot(str, result=str)
+    def copilotGetUser(self, _token: str) -> str:
+        return json.dumps({"error": "GitHub Copilot login is not supported in Houdini runtime"})
+
+    @Slot(result=str)
+    def externalAppsDetectInstalled(self) -> str:
+        return "[]"
+
+    @Slot(result=str)
+    def nutstoreGetSsoUrl(self) -> str:
+        return json.dumps("")
+
+    @Slot(str, result=str)
+    def nutstoreDecryptToken(self, _token: str) -> str:
+        return json.dumps("")
+
+    @Slot(str, str, result=str)
+    def nutstoreGetDirectoryContents(self, _token: str, _path: str) -> str:
+        return json.dumps([])
+
+    # ── 备份（仅实现本地备份，webdav/S3 先明确不支持）────────────────────────
+
+    @Slot(str, str, bool, result=bool)
+    def backupBackup(self, _file_name: str, _destination_path: str, _skip_backup_file: bool) -> bool:
+        return False
+
+    @Slot(str, result=bool)
+    def backupRestore(self, _path: str) -> bool:
+        return False
+
+    @Slot(str, str, result=str)
+    def backupBackupToLocalDir(self, file_name: str, local_config_json: str) -> str:
+        try:
+            config = json.loads(local_config_json) if local_config_json else {}
+            backup_dir = (config or {}).get("backupDir") or os.path.join(self._get_app_data_dir(), "backups")
+            os.makedirs(backup_dir, exist_ok=True)
+            name = file_name or f"cherry-studio-backup-{int(time.time())}.zip"
+            dest = os.path.join(backup_dir, name)
+            src_dir = self._get_app_data_dir()
+            with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as zf:
+                for dirpath, _dirnames, filenames in os.walk(src_dir):
+                    if os.path.abspath(dirpath).startswith(os.path.abspath(backup_dir)):
+                        continue
+                    for fname in filenames:
+                        full = os.path.join(dirpath, fname)
+                        zf.write(full, os.path.relpath(full, src_dir))
+            return json.dumps(dest)
+        except Exception as e:
+            _log(f"[backupBackupToLocalDir] {e}")
+            return json.dumps("")
+
+    @Slot(str, str, result=bool)
+    def backupRestoreFromLocalBackup(self, file_name: str, local_backup_dir: str) -> bool:
+        try:
+            backup_dir = local_backup_dir or os.path.join(self._get_app_data_dir(), "backups")
+            src = os.path.join(backup_dir, file_name)
+            if not os.path.isfile(src):
+                return False
+            dest_dir = self._get_app_data_dir()
+            with zipfile.ZipFile(src, "r") as zf:
+                zf.extractall(dest_dir)
+            return True
+        except Exception as e:
+            _log(f"[backupRestoreFromLocalBackup] {e}")
+            return False
+
+    @Slot(str, result=str)
+    def backupListLocalBackupFiles(self, local_backup_dir: str) -> str:
+        try:
+            backup_dir = local_backup_dir or os.path.join(self._get_app_data_dir(), "backups")
+            if not os.path.isdir(backup_dir):
+                return "[]"
+            files = [f for f in os.listdir(backup_dir) if f.lower().endswith(".zip")]
+            return json.dumps(files)
+        except Exception as e:
+            _log(f"[backupListLocalBackupFiles] {e}")
+            return "[]"
+
+    @Slot(str, str, result=bool)
+    def backupDeleteLocalBackupFile(self, file_name: str, local_backup_dir: str) -> bool:
+        try:
+            backup_dir = local_backup_dir or os.path.join(self._get_app_data_dir(), "backups")
+            path = os.path.join(backup_dir, file_name)
+            if os.path.isfile(path):
+                os.remove(path)
+            return True
+        except Exception as e:
+            _log(f"[backupDeleteLocalBackupFile] {e}")
+            return False
+
+    @Slot(str, result=str)
+    def backupBackupToWebdav(self, _config_json: str) -> str:
+        return json.dumps({"success": False, "error": "WebDAV backup is not supported in Houdini runtime"})
+
+    @Slot(str, result=bool)
+    def backupRestoreFromWebdav(self, _config_json: str) -> bool:
+        return False
+
+    @Slot(str, result=str)
+    def backupListWebdavFiles(self, _config_json: str) -> str:
+        return json.dumps([])
+
+    @Slot(str, result=bool)
+    def backupCheckWebdavConnection(self, _config_json: str) -> bool:
+        return False
+
+    @Slot(str, str, str, result=bool)
+    def backupCreateWebdavDirectory(self, _config_json: str, _path: str, _options_json: str) -> bool:
+        return False
+
+    @Slot(str, str, result=bool)
+    def backupDeleteWebdavFile(self, _file_name: str, _config_json: str) -> bool:
+        return False
+
+    @Slot(str, result=str)
+    def backupBackupToS3(self, _config_json: str) -> str:
+        return json.dumps({"success": False, "error": "S3 backup is not supported in Houdini runtime"})
+
+    @Slot(str, result=bool)
+    def backupRestoreFromS3(self, _config_json: str) -> bool:
+        return False
+
+    @Slot(str, result=str)
+    def backupListS3Files(self, _config_json: str) -> str:
+        return json.dumps([])
+
+    @Slot(str, str, result=bool)
+    def backupDeleteS3File(self, _file_name: str, _config_json: str) -> bool:
+        return False
+
+    @Slot(str, str, result=str)
+    def backupCreateLanTransferBackup(self, _data: str, _destination_path: str) -> str:
+        return json.dumps("")
+
+    @Slot(str, result=bool)
+    def backupDeleteLanTransferBackup(self, _file_path: str) -> bool:
+        return False
+
+    # ── 局域网传输（多实例互传，Houdini 单实例场景下先明确不支持）───────────
+
+    @Slot(result=str)
+    def lanTransferStartScan(self) -> str:
+        return json.dumps({"services": [], "isScanning": False, "lastUpdatedAt": int(time.time() * 1000)})
+
+    @Slot(result=str)
+    def lanTransferStopScan(self) -> str:
+        return json.dumps({"services": [], "isScanning": False, "lastUpdatedAt": int(time.time() * 1000)})
+
+    @Slot(str, result=str)
+    def lanTransferConnect(self, _payload_json: str) -> str:
+        return json.dumps({"error": "LAN transfer is not supported in Houdini runtime"})
+
+    @Slot(result=bool)
+    def lanTransferDisconnect(self) -> bool:
+        return True
+
+    @Slot(str, result=str)
+    def lanTransferSendFile(self, _file_path: str) -> str:
+        return json.dumps({"error": "LAN transfer is not supported in Houdini runtime"})
+
+    @Slot(result=bool)
+    def lanTransferCancelTransfer(self) -> bool:
+        return True
+
+    # ── Cache / StorageMonitor ────────────────────────────────────────────────
+
+    @Slot(result=str)
+    def cacheGetAllShared(self) -> str:
+        return json.dumps({})
+
+    @Slot(result=str)
+    def storageMonitorGetHealth(self) -> str:
+        try:
+            usage = shutil.disk_usage(self._get_app_data_dir())
+            level = "low" if usage.free < 1024 * 1024 * 1024 else "ok"
+            return json.dumps({
+                "level": level,
+                "freeBytes": usage.free,
+                "totalBytes": usage.total,
+                "checkedAt": int(time.time() * 1000),
+            })
+        except Exception as e:
+            _log(f"[storageMonitorGetHealth] {e}")
+            return json.dumps({"level": "ok", "freeBytes": 0, "totalBytes": 0, "checkedAt": int(time.time() * 1000)})
 
     # =========================================================================
     # 辅助方法
