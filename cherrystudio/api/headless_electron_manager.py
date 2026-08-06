@@ -19,7 +19,6 @@ import subprocess
 import threading
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
@@ -262,28 +261,44 @@ class HeadlessElectronManager:
         self._python_backend_url = (url or "").rstrip("/")
 
     def _default_user_data_suffix(self) -> str:
-        """Per-DCC-session userData suffix, derived from the pinned Python
-        backend's port.
+        """Per-DCC-*type* userData suffix — STABLE across restarts.
 
-        Several Houdini/Maya sessions can be alive on one machine at once
-        (see the docstring above), each with its own embedded Python backend
-        port. Before this, every headless Electron process shared one fixed
-        ``"HoudiniHeadless"`` userData directory regardless of session, so a
-        second concurrent (or leftover/orphaned) session's headless Electron
-        process would collide on Electron's single-instance lock with the
-        first one's — surfacing as a `'second-instance'` event on the
-        *other* session's process (see `MainWindowService.showMainWindow`'s
-        headless guard for the crash that used to cause). Suffixing by port
-        gives each session an isolated userData dir/DB and its own lock
-        scope, so sessions no longer step on each other at all.
+        MUST NOT depend on anything that changes between launches (like the
+        headless Electron's own ephemeral port, picked fresh by
+        ``_free_port()`` every ``start()`` call) — a previous version of this
+        keyed the suffix off the pinned Python backend's port and that broke
+        persistence entirely: every CocoClient restart got a brand new empty
+        ``userData`` directory (new port → new suffix → new SQLite DB), so
+        all conversations/settings vanished on every single restart. That is
+        strictly worse than the single-instance collision it was meant to
+        fix, so this reverted to a fixed-per-dcc_type suffix (stable across
+        restarts of the *same* host type, and %APPDATA% is already
+        per-Windows-user, so no cross-user leakage either).
+
+        Trade-off: two *concurrent* sessions of the same dcc_type (e.g. two
+        Houdini instances open at once) still share one userData dir/lock —
+        the second one's headless Electron launch will lose Electron's
+        single-instance lock and exit, so that second session simply runs
+        without a headless backend (degraded, but harmless: see
+        MainWindowService.showMainWindow's headless guard, which turned the
+        old 'second-instance crashes the other process' failure mode into a
+        no-op). That is an acceptable trade for guaranteeing persistence in
+        the overwhelmingly common single-session case.
         """
-        port = ""
-        if self._python_backend_url:
-            try:
-                port = str(urllib.parse.urlparse(self._python_backend_url).port or "")
-            except Exception:
-                port = ""
-        return f"HoudiniHeadless-{port}" if port else "HoudiniHeadless"
+        try:
+            from ..core.app_lifecycle import detect_dcc_type
+
+            dcc_type = detect_dcc_type() or "standalone"
+        except Exception:
+            dcc_type = "standalone"
+        # "standalone" keeps the exact original suffix (no dcc_type suffix)
+        # so existing users' conversations/settings — saved under this
+        # literal directory name since long before any of this per-session
+        # isolation work started — are found again rather than orphaned by
+        # yet another directory-name change.
+        if dcc_type == "standalone":
+            return "HoudiniHeadless"
+        return f"HoudiniHeadless-{dcc_type}"
 
     def start(self) -> tuple[bool, str]:
         with self._lock:

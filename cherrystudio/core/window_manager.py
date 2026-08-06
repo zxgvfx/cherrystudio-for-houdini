@@ -665,6 +665,34 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
             except (AttributeError, TypeError):
                 pass
 
+        # ── 禁用 Qt WebEngine 的 Page Lifecycle（后台冻结）机制 ──────────────
+        # 这是"发消息后半天不刷新，切换窗口才显示"的真正根因，和上面 Chromium
+        # 的 CalculateNativeWinOcclusion 命令行开关是两套完全独立的节流机制：
+        #   - Chromium 命令行开关管的是"浏览器进程"级别的原生窗口遮挡检测；
+        #   - QWebEnginePage::LifecycleState 是 Qt WebEngine 自己在 page 级别做的
+        #     内存/CPU 优化（对标 Chrome 的"后台标签页冻结/丢弃"），当 page 被判定
+        #     为不可见/被遮挡时会自动切换到 Frozen（冻结 JS 定时器/渲染）甚至
+        #     Discarded（彻底丢弃渲染进程），SSE 流式回复的 DOM 更新因此被冻结，
+        #     直到窗口重新获得焦点（Qt 认为"变回可见"）才会一次性把攒起来的更新
+        #     刷出来——正好对应用户描述的"切换窗口后输出才显示"。
+        # 只要显式调用一次 setLifecycleState()，Qt 就会停止对这个 page 的自动
+        # 生命周期管理（等价于浏览器里把标签页"钉住"，不会被自动冻结/丢弃），
+        # 之后即使 recommendedState() 建议 Frozen，也不会被自动应用。
+        try:
+            page.setLifecycleState(QWebEnginePage.LifecycleState.Active)
+        except Exception as _lifecycle_err:
+            print(f"[WindowManager] setLifecycleState failed: {_lifecycle_err}")
+        # setVisible() 单独控制 Chromium 内部的页面可见性状态（对应 JS 里的
+        # document.visibilityState），与上面的生命周期状态是两个维度——即使
+        # LifecycleState 保持 Active，如果 visible=False，浏览器 rAF/定时器
+        # 节流和 document.visibilityState==='hidden' 仍然会触发（React 的
+        # useTransition/Scheduler 对不可见文档也会降低更新优先级）。强制钉住
+        # 为 True，让前端任何依赖可见性判断的节流逻辑都认为自己"一直在前台"。
+        try:
+            page.setVisible(True)
+        except Exception as _visible_err:
+            print(f"[WindowManager] setVisible failed: {_visible_err}")
+
         # ── WebEngine Settings（必须在 setPage 之后设置，否则会被替换掉）──────
         # setPage() 切换到 _FilteredPage 后，web_view.settings() 返回新 page 的 settings。
         # LocalContentCanAccessRemoteUrls=True 是关键：允许 file:// 页面通过
