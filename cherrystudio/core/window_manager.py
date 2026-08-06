@@ -27,6 +27,23 @@ if "--proxy-bypass-list" not in _chrome_flags:
     if "--allow-file-access" not in _chrome_flags:
         _flags_to_add.append("--allow-file-access")
 
+# 关闭 Chromium 的原生窗口遮挡检测（Native Window Occlusion）与后台节流。
+#
+# 症状：在 COCO 里发消息后界面长时间不更新（流式回复卡住），切换到其他窗口
+# 再切回来才会一次性显示。根因：Chromium 默认会用 DWM 检测宿主窗口是否被其他
+# 窗口完全遮挡（例如切到 Cursor/浏览器后，CocoClient 窗口被完全盖住），一旦
+# 判定为"被遮挡/不可见"，就会把 document.visibilityState 置为 hidden 并节流
+# rAF/定时器——这与真正的浏览器后台标签页行为一致，但对于内嵌在宿主应用里
+# 、用户仍随时可能切回来查看的聊天面板来说是不必要的。Electron 桌面版对应设为
+# `backgroundThrottling: false`，这里用等价的 Chromium 命令行开关达到同样效果。
+for _f in [
+    "--disable-features=CalculateNativeWinOcclusion",
+    "--disable-backgrounding-occluded-windows",
+    "--disable-renderer-backgrounding",
+]:
+    if _f not in _chrome_flags:
+        _flags_to_add.append(_f)
+
 # DCC 宿主（Houdini / Maya）环境下，Chromium 默认用桌面 OpenGL 创建 GPU 上下文，
 # 与宿主已占用的 OpenGL 冲突（GpuChannelHost creation failed）。
 # 解决：让 Chromium 通过 ANGLE 使用 D3D11（与 OpenGL 互不干扰），GPU 仍跑在
@@ -60,6 +77,14 @@ from PySide6.QtWebEngineCore import (
     QWebEngineScript, QWebEngineProfile, QWebEngineSettings,
     QWebEnginePage, QWebEngineUrlRequestInterceptor, QWebEngineUrlRequestInfo,
 )
+try:
+    # QWebEnginePermission (Qt 6.8+) — replaces the deprecated
+    # featurePermissionRequested/setFeaturePermission pair used as a fallback
+    # below. Houdini/Maya ship their own bundled Qt, which may predate 6.8,
+    # so this import must not be fatal on older PySide6 builds.
+    from PySide6.QtWebEngineCore import QWebEnginePermission
+except ImportError:
+    QWebEnginePermission = None
 from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
 
 
@@ -601,6 +626,45 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
         page = _FilteredPage(profile, page_parent)
         web_view.setPage(page)
 
+        # ── 剪贴板读写权限自动授予 ───────────────────────────────────────────
+        # 聊天输入框粘贴走的是现代 Async Clipboard API
+        # （navigator.clipboard.readText()/writeText()），Chromium 对它单独走一套
+        # Permissions API 授权流程，与上面的 JavascriptCanAccessClipboard /
+        # JavascriptCanPaste（老式 document.execCommand）无关。正常浏览器里会弹出
+        # 权限提示条，但 QWebEngineView 默认不处理这类权限请求，相当于永远不
+        # 授权、请求静默失败——表现为"复制粘贴文本到对话框完全没反应"。这里对
+        # 所有来源自动授予 ClipboardReadWrite，等价于用户点了"允许"。
+        # 用 Qt 6.8+ 的 QWebEnginePermission API（旧的 featurePermissionRequested
+        # 已废弃但仍保留作为兜底，两者会同时触发，互不冲突）。
+        def _on_permission_requested(permission):
+            try:
+                if permission.permissionType() == QWebEnginePermission.PermissionType.ClipboardReadWrite:
+                    permission.grant()
+            except Exception as _perm_err:
+                print(f"[WindowManager] Permission grant failed: {_perm_err}")
+
+        def _on_feature_permission_requested(security_origin, feature):
+            try:
+                if feature == QWebEnginePage.Feature.ClipboardReadWrite:
+                    page.setFeaturePermission(
+                        security_origin,
+                        feature,
+                        QWebEnginePage.PermissionPolicy.PermissionGrantedByUser,
+                    )
+            except Exception as _perm_err:
+                print(f"[WindowManager] Feature permission grant failed: {_perm_err}")
+
+        if QWebEnginePermission is not None and hasattr(page, "permissionRequested"):
+            try:
+                page.permissionRequested.connect(_on_permission_requested)
+            except (AttributeError, TypeError):
+                pass
+        if hasattr(page, "featurePermissionRequested"):
+            try:
+                page.featurePermissionRequested.connect(_on_feature_permission_requested)
+            except (AttributeError, TypeError):
+                pass
+
         # ── WebEngine Settings（必须在 setPage 之后设置，否则会被替换掉）──────
         # setPage() 切换到 _FilteredPage 后，web_view.settings() 返回新 page 的 settings。
         # LocalContentCanAccessRemoteUrls=True 是关键：允许 file:// 页面通过
@@ -611,6 +675,10 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
         _settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
         _settings.setAttribute(QWebEngineSettings.WebAttribute.AllowRunningInsecureContent, True)
         _settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptCanAccessClipboard, True)
+        # JavascriptCanAccessClipboard 只放开 copy/cut（document.execCommand）；
+        # paste 单独有一道更严格的门槛，两个都要开，Ctrl+V 才能真正把内容粘贴
+        # 进聊天输入框（否则前端的 onPaste/execCommand('paste') 会静默失败）。
+        _settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptCanPaste, True)
         # 禁用 WebSecurity 以允许 file:// 加载 blob:file:// 等资源
         # 即使有 --disable-web-security 标志，Qt 内部设置也可能需要显式禁用
         try:
