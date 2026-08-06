@@ -491,6 +491,49 @@ def get_electron_api_script(theme: str = 'light') -> str:
     // (cherrystudio/api/cherry_studio_api_v2.py)，Proxy 会自动路由到后端 /api/v1/qt/invoke。
     // ==========================================================================
     if (!window.api) {{
+        const __backendUrl = window.__CHERRY_BACKEND_URL || '';
+        // Headless Electron emits the same typed IpcApi event names as the
+        // desktop preload. Python relays them over one browser-facing SSE
+        // connection because this HTTP-based Qt bridge intentionally has no
+        // QWebChannel/ipcRenderer push channel.
+        const __ipcEventListeners = new Map();
+        function __onIpcEvent(event, callback) {{
+            let listeners = __ipcEventListeners.get(event);
+            if (!listeners) {{
+                listeners = new Set();
+                __ipcEventListeners.set(event, listeners);
+            }}
+            listeners.add(callback);
+            return () => {{
+                listeners.delete(callback);
+                if (listeners.size === 0) __ipcEventListeners.delete(event);
+            }};
+        }}
+        if (window.__cherryHeadlessEventSource) {{
+            try {{ window.__cherryHeadlessEventSource.close(); }} catch (_) {{}}
+        }}
+        if (__backendUrl && typeof EventSource !== 'undefined') {{
+            const source = new EventSource(__backendUrl + '/api/v1/headless/events');
+            window.__cherryHeadlessEventSource = source;
+            source.onmessage = (message) => {{
+                try {{
+                    const item = JSON.parse(message.data);
+                    const listeners = __ipcEventListeners.get(item.event);
+                    if (!listeners) return;
+                    for (const callback of Array.from(listeners)) {{
+                        try {{ callback(item.payload); }} catch (error) {{
+                            console.error('[Qt] ipcApi event callback failed:', item.event, error);
+                        }}
+                    }}
+                }} catch (error) {{
+                    console.error('[Qt] Invalid headless event frame:', error);
+                }}
+            }};
+            source.onerror = () => {{
+                // EventSource reconnects automatically; avoid noisy per-retry logs.
+            }};
+        }}
+
         async function __qtCallJson(method, fallback, ...args) {{
             try {{
                 const r = await window.qt?.api?.[method]?.(...args);
@@ -700,7 +743,7 @@ def get_electron_api_script(theme: str = 'light') -> str:
                         return {{ ok: false, error: {{ code: 'INTERNAL', message: String(e) }} }};
                     }}
                 }},
-                on: (event, callback) => {{ return function() {{}}; }}
+                on: (event, callback) => __onIpcEvent(event, callback)
             }},
             skill: {{
                 readSkillFile: async (skillId, filename) => {{ return await __qtCallJson('skillReadFile', {{ success: false, error: 'skill read failed' }}, skillId, filename); }},

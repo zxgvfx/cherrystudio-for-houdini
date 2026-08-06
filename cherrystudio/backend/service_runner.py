@@ -228,6 +228,12 @@ class BackendService:
             _shutdown(None, None)
 
     def stop(self):
+        try:
+            from ..api.headless_electron_manager import get_headless_electron_manager
+
+            get_headless_electron_manager().stop()
+        except Exception as e:
+            _log(f"[BackendService] Failed to stop headless Electron: {e}")
         _pm.cleanup_all()
         if self._server:
             self._server.stop()

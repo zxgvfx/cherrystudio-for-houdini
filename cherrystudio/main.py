@@ -15,13 +15,31 @@ from .utils.package_manager_config import ensure_package_manager_configs
 
 
 def _resolve_index_path() -> str:
-    """优先使用 web/out/renderer 产物，其次使用内置 public。"""
+    """优先使用 web/out/renderer 产物，其次使用内置 public。
+
+    v2.0 起 electron-vite 把渲染进程改成了多窗口构建（见
+    electron.vite.config.ts 的 rollupOptions.input），主窗口的产物落在
+    <root>/windows/main/index.html，而不再是旧版（v1.9.12）单文件的
+    <root>/index.html。这个 <root> 既可能是 web/out/renderer（随包分发完整
+    web/ 构建产物的场景），也可能是 cherrystudio/public（独立部署场景，例如
+    COCO——把 web/out/renderer 下的内容整个复制进 public/ 里）。这里按
+    「web/out/renderer 新版 -> web/out/renderer 旧版 -> public 新版 -> public
+    旧版」的顺序依次探测。
+    """
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(script_dir)
-    built_index = os.path.join(project_root, 'web', 'out', 'renderer', 'index.html')
-    if os.path.exists(built_index):
-        return built_index
-    return os.path.join(script_dir, 'public', 'index.html')
+    web_renderer = os.path.join(project_root, 'web', 'out', 'renderer')
+    public_dir = os.path.join(script_dir, 'public')
+    candidates = (
+        os.path.join(web_renderer, 'windows', 'main', 'index.html'),
+        os.path.join(web_renderer, 'index.html'),
+        os.path.join(public_dir, 'windows', 'main', 'index.html'),
+        os.path.join(public_dir, 'index.html'),
+    )
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            return candidate
+    return candidates[-1]
 
 
 def main():
@@ -76,12 +94,17 @@ if __name__ == '__main__':
     main()
 
 
-def create_widget_for_pane(url: str | None = None, theme: str = 'dark'):
-    """返回可嵌入 Houdini 面板的 QWidget。
+def create_widget_for_pane(url: str | None = None, theme: str = 'dark', parent=None, **_ignored_kwargs):
+    """返回可嵌入 Houdini/COCO 面板的 QWidget。
 
     Args:
         url: 指定加载的 URL（不传则使用默认 index.html）
         theme: 主题（'light' 或 'dark'）
+        parent: 宿主（如 COCO/Houdini）传入的父 QWidget，用于正确挂载/托管
+                生命周期。可选，不传则由 create_window 自行探测（例如尝试挂到
+                Houdini 主窗口）。
+        **_ignored_kwargs: 兼容宿主未来新增的调用参数，避免因为
+                TypeError: unexpected keyword argument 而崩溃。
 
     Returns:
         QWidget: 可直接作为 pane 的内容 widget 使用
@@ -101,6 +124,6 @@ def create_widget_for_pane(url: str | None = None, theme: str = 'dark'):
     app = create_app()
 
     # 返回 QWidget 而不是窗口
-    widget = create_window(load_url, theme, as_widget=True)
+    widget = create_window(load_url, theme, as_widget=True, parent=parent)
     return widget
 

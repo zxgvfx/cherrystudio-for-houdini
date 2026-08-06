@@ -80,6 +80,7 @@ def _import_routes():
         generate_3d,
         generate_motion,
         generate_video,
+        headless_events,
     )
 
     from ..plugins import load_all_plugins

@@ -891,14 +891,56 @@ def _resolve_query_file(ctx: dict):
     return handler, safe_name, file_path
 
 
+def _resolve_query_file_by_path(ctx: dict):
+    """
+    从 ?path=<absolute-path> 解析出 (handler, safe_name, file_path)。
+    路径必须落在 APP_DATA_DIR 或 resources 目录内（见 _safe_read_path），
+    用于 Houdini WebEngineView 里 file:// 资源重定向（见
+    core/window_manager.py 的 _FileUrlRedirectInterceptor）。出错时直接
+    写响应并返回 None。
+    """
+    handler = ctx["_handler"]
+    query = ctx.get("query", {})
+    raw_path = query.get("path", [""])[0] if isinstance(query.get("path"), list) else query.get("path", "")
+    if not raw_path:
+        return None
+    try:
+        file_path = _safe_read_path(raw_path)
+    except PermissionError:
+        handler.send_response(403)
+        handler.send_header("Content-Type", "text/plain")
+        handler.end_headers()
+        handler.wfile.write(b"access denied")
+        return None
+    if not os.path.isfile(file_path):
+        handler.send_response(404)
+        handler.send_header("Content-Type", "text/plain")
+        handler.end_headers()
+        handler.wfile.write(b"file not found")
+        return None
+    return handler, os.path.basename(file_path), file_path
+
+
 @route("/api/v1/files/serve", methods=["GET"])
 def file_serve(ctx: dict) -> Any:
     """
-    直接以原始二进制格式提供文件（用于 PDF 预览等场景）。
-    GET /api/v1/files/serve?name=<filename>
-    filename 是 APP_DATA_DIR 下的文件名（如 uuid.pdf）。
+    直接以原始二进制格式提供文件（用于 PDF 预览、图片/头像/3D模型等场景）。
+
+    支持两种查询方式：
+    - GET /api/v1/files/serve?name=<filename>
+      filename 是 APP_DATA_DIR 下的文件名（如 uuid.pdf），按名称搜索，
+      兼容跨 DCC 历史文件（见 _find_file_in_app_data）。
+    - GET /api/v1/files/serve?path=<absolute-path>
+      绝对路径，限定在 APP_DATA_DIR 或 resources 目录内（见 _safe_read_path）。
+      用于 Houdini WebEngineView 里把 v2.0 前端生成的 file:// URL 重定向到
+      这里（见 core/window_manager.py 的 _FileUrlRedirectInterceptor）。
     """
-    resolved = _resolve_query_file(ctx)
+    query = ctx.get("query", {})
+    raw_path = query.get("path", [""])[0] if isinstance(query.get("path"), list) else query.get("path", "")
+    if raw_path:
+        resolved = _resolve_query_file_by_path(ctx)
+    else:
+        resolved = _resolve_query_file(ctx)
     if resolved is None:
         return STREAMING_HANDLED
     handler, safe_name, file_path = resolved

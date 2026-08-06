@@ -45,6 +45,7 @@ from .agent_message_store import get_session_history, persist_exchange
 from .agent_server import AgentServer
 from .agent_runtime_manager import NodeAgentRuntime, is_node_available
 from .agent_permission_bridge import PermissionBridge
+from .headless_electron_manager import get_headless_electron_manager
 
 _log = network_logger
 
@@ -118,7 +119,7 @@ class CherryStudioAPI(QObject):
         self._proxy_bypass_rules: str = ""
         self._hardcoded_proxy: bool = False
         self._apply_secure_proxy()
-        self._IPC_API_ROUTES: dict = self._build_ipc_api_routes()
+        self._headless_electron = get_headless_electron_manager()
 
     # ── 后端服务注入 ─────────────────────────────────────────────────────────
 
@@ -126,6 +127,10 @@ class CherryStudioAPI(QObject):
         """由 window_manager 在后端服务启动后调用，注入服务地址"""
         self._backend_url = url
         _log(f"[CherryStudioAPI] Backend URL set: {url}")
+        self._headless_electron.set_python_backend_url(url)
+        ok, message = self._headless_electron.start()
+        if not ok:
+            _log(f"[CherryStudioAPI] Headless Electron unavailable: {message}")
         # _apply_secure_proxy() 在 __init__ 时 backend_url 还为空，未能发送到后端
         # 此处后端已就绪，补发代理配置
         if self._proxy_url or self._hardcoded_proxy:
@@ -1717,43 +1722,26 @@ class CherryStudioAPI(QObject):
     # =========================================================================
 
     # ── Preference Store（对应 v2.0 PreferenceService）──────────────────────
-    # 持久化到 <app_data_dir>/preferences.json，进程内用一份内存缓存 + 锁。
-
-    _preference_lock = threading.Lock()
-    _preference_cache: Optional[dict] = None
-
-    def _preference_file_path(self) -> str:
-        return os.path.join(self._get_app_data_dir(), "preferences.json")
-
-    def _load_preferences(self) -> dict:
-        if CherryStudioAPI._preference_cache is not None:
-            return CherryStudioAPI._preference_cache
-        data = {}
-        try:
-            path = self._preference_file_path()
-            if os.path.isfile(path):
-                with open(path, "r", encoding="utf-8") as f:
-                    data = json.load(f) or {}
-        except Exception as e:
-            _log(f"[preference] load error: {e}")
-            data = {}
-        CherryStudioAPI._preference_cache = data
-        return data
-
-    def _save_preferences(self, data: dict):
-        try:
-            path = self._preference_file_path()
-            tmp = path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False)
-            os.replace(tmp, path)
-        except Exception as e:
-            _log(f"[preference] save error: {e}")
+    # 直接转发到无头 Electron 真正的 PreferenceService（SQLite + DefaultPreferences
+    # 默认值），而不是维护一份独立的本地 JSON 文件——后者对"未设置过的 key"只能
+    # 返回裸 None，前端 usePreference() 把它当成"已加载的合法值"（区别于
+    # undefined），永远不会回退到 schema 默认值，导致 sidebar 收藏夹/各种数组型
+    # 偏好设置在全新 profile 下读到 null 而不是默认列表。相对地，Electron 侧
+    # PreferenceService.get() 对未设置的 key 天然返回 DefaultPreferences.default[key]。
+    # 本地文件缓存已废弃；旧版残留的 preferences.json 不再读取。
 
     @Slot(str, result=str)
     def preferenceGet(self, key: str) -> str:
-        with CherryStudioAPI._preference_lock:
-            return json.dumps(self._load_preferences().get(key))
+        try:
+            response = self._headless_electron.request(
+                "/preference/get", {"key": key}, timeout=15
+            )
+            if response.get("ok"):
+                return json.dumps(response.get("data"), ensure_ascii=False)
+            _log(f"[preference] get({key}) failed: {response.get('error')}")
+        except Exception as e:
+            _log(f"[preference] get({key}) error: {e}")
+        return json.dumps(None)
 
     @Slot(str, str, result=bool)
     def preferenceSet(self, key: str, value_json: str) -> bool:
@@ -1761,12 +1749,14 @@ class CherryStudioAPI(QObject):
             value = json.loads(value_json) if value_json is not None else None
         except Exception:
             value = value_json
-        with CherryStudioAPI._preference_lock:
-            data = self._load_preferences()
-            data[key] = value
-            self._save_preferences(data)
-            CherryStudioAPI._preference_cache = data
-        return True
+        try:
+            response = self._headless_electron.request(
+                "/preference/set", {"key": key, "value": value}, timeout=15
+            )
+            return bool(response.get("ok"))
+        except Exception as e:
+            _log(f"[preference] set({key}) error: {e}")
+            return False
 
     @Slot(str, result=str)
     def preferenceGetMultipleRaw(self, keys_json: str) -> str:
@@ -1774,9 +1764,16 @@ class CherryStudioAPI(QObject):
             keys = json.loads(keys_json) if keys_json else []
         except Exception:
             keys = []
-        with CherryStudioAPI._preference_lock:
-            data = self._load_preferences()
-            return json.dumps({k: data.get(k) for k in keys})
+        try:
+            response = self._headless_electron.request(
+                "/preference/get-multiple", {"keys": keys}, timeout=15
+            )
+            if response.get("ok"):
+                return json.dumps(response.get("data"), ensure_ascii=False)
+            _log(f"[preference] getMultipleRaw failed: {response.get('error')}")
+        except Exception as e:
+            _log(f"[preference] getMultipleRaw error: {e}")
+        return json.dumps({})
 
     @Slot(str, result=bool)
     def preferenceSetMultiple(self, updates_json: str) -> bool:
@@ -1784,17 +1781,27 @@ class CherryStudioAPI(QObject):
             updates = json.loads(updates_json) if updates_json else {}
         except Exception:
             updates = {}
-        with CherryStudioAPI._preference_lock:
-            data = self._load_preferences()
-            data.update(updates)
-            self._save_preferences(data)
-            CherryStudioAPI._preference_cache = data
-        return True
+        try:
+            response = self._headless_electron.request(
+                "/preference/set-multiple", {"updates": updates}, timeout=15
+            )
+            return bool(response.get("ok"))
+        except Exception as e:
+            _log(f"[preference] setMultiple error: {e}")
+            return False
 
     @Slot(result=str)
     def preferenceGetAll(self) -> str:
-        with CherryStudioAPI._preference_lock:
-            return json.dumps(self._load_preferences())
+        try:
+            response = self._headless_electron.request(
+                "/preference/get-all", {}, timeout=15
+            )
+            if response.get("ok"):
+                return json.dumps(response.get("data"), ensure_ascii=False)
+            _log(f"[preference] getAll failed: {response.get('error')}")
+        except Exception as e:
+            _log(f"[preference] getAll error: {e}")
+        return json.dumps({})
 
     # ── Skills 市场（复用 agent-runtime sidecar 的 /v1/skills REST 接口）──────
 
@@ -1876,21 +1883,41 @@ class CherryStudioAPI(QObject):
     def ipcApiRequest(self, route: str, input_json: str) -> str:
         try:
             input_data = json.loads(input_json) if input_json else None
-        except Exception:
-            input_data = None
-        handler = self._IPC_API_ROUTES.get(route)
-        if handler is None:
+        except Exception as e:
             return json.dumps({
                 "ok": False,
-                "error": {
-                    "code": "ROUTE_NOT_FOUND",
-                    "message": f"Unknown IpcApi route (not yet ported to Houdini runtime): {route}",
-                },
+                "error": {"code": "BAD_JSON", "message": str(e)},
             })
         try:
-            return json.dumps({"ok": True, "data": handler(input_data)})
+            if route == "ai.stream.open":
+                data = self._headless_electron.open_ai_stream(input_data or {})
+                return json.dumps({"ok": True, "data": data}, ensure_ascii=False)
+            if route == "ai.stream.attach":
+                data = self._headless_electron.attach_ai_stream(input_data or {})
+                return json.dumps({"ok": True, "data": data}, ensure_ascii=False)
+            if route == "ai.stream.detach":
+                topic_id = str((input_data or {}).get("topicId") or "")
+                self._headless_electron.detach_ai_stream(topic_id)
+                return json.dumps({"ok": True}, ensure_ascii=False)
+            if route == "ai.stream.abort":
+                topic_id = str((input_data or {}).get("topicId") or "")
+                self._headless_electron.abort_ai_stream(topic_id)
+                return json.dumps({"ok": True}, ensure_ascii=False)
+
+            request_body = {"route": route}
+            # z.void() accepts undefined, not JSON null. Omitting the field
+            # preserves Electron IPC's real no-argument contract.
+            if input_data is not None:
+                request_body["input"] = input_data
+            response = self._headless_electron.request(
+                "/ipc-api", request_body, timeout=120
+            )
+            return json.dumps(response, ensure_ascii=False)
         except Exception as e:
-            return json.dumps({"ok": False, "error": {"code": "INTERNAL", "message": str(e)}})
+            return json.dumps(
+                {"ok": False, "error": {"code": "INTERNAL", "message": str(e)}},
+                ensure_ascii=False,
+            )
 
     #: (HTTP method, path 正则, 处理函数名, 传给处理函数的参数种类列表)。
     #: 参数种类："params" = 从正则命名分组提取的路径参数字典；
@@ -1917,57 +1944,25 @@ class CherryStudioAPI(QObject):
     def dataApiRequest(self, request_json: str) -> str:
         try:
             req = json.loads(request_json) if request_json else {}
-        except Exception:
-            req = {}
-        method = (req.get("method") or "GET").upper()
-        path = req.get("path", "") or ""
-        # DataRequest.params 在 v2.0 里表示查询参数（见 DataApiService.ts），不是路径参数；
-        # 路径参数是从 path 本身用正则解析出来的。
-        query = req.get("params") or {}
-        body = req.get("body")
-        req_id = req.get("id", "")
-
-        for pat_method, pattern, handler_name, arg_kinds in self._DATA_API_PATTERNS:
-            if pat_method != method:
-                continue
-            m = pattern.match(path)
-            if not m:
-                continue
-            try:
-                path_params = m.groupdict()
-                args = []
-                for kind in arg_kinds:
-                    if kind == "params":
-                        args.append(path_params)
-                    elif kind == "query":
-                        args.append(query)
-                    elif kind == "body":
-                        args.append(body)
-                data = getattr(self, handler_name)(*args)
-                return json.dumps({
-                    "id": req_id,
-                    "status": 200,
-                    "data": data,
-                    "metadata": {"duration": 0, "timestamp": int(time.time() * 1000)},
-                })
-            except Exception as e:
-                return json.dumps({
-                    "id": req_id,
-                    "status": 500,
-                    "error": {"code": "INTERNAL", "message": str(e), "status": 500},
-                    "metadata": {"duration": 0, "timestamp": int(time.time() * 1000)},
-                })
-
-        return json.dumps({
-            "id": req_id,
-            "status": 404,
-            "error": {
-                "code": "NOT_FOUND",
-                "message": f"DataApi route not yet ported to Houdini runtime: {method} {path}",
-                "status": 404,
-            },
-            "metadata": {"duration": 0, "timestamp": int(time.time() * 1000)},
-        })
+        except Exception as e:
+            return json.dumps({
+                "id": "",
+                "status": 400,
+                "error": {"code": "BAD_JSON", "message": str(e), "status": 400},
+                "metadata": {"duration": 0, "timestamp": int(time.time() * 1000)},
+            })
+        try:
+            response = self._headless_electron.request(
+                "/data-api", req, timeout=120
+            )
+            return json.dumps(response, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({
+                "id": req.get("id", ""),
+                "status": 500,
+                "error": {"code": "INTERNAL", "message": str(e), "status": 500},
+                "metadata": {"duration": 0, "timestamp": int(time.time() * 1000)},
+            }, ensure_ascii=False)
 
     # ── Agent / Task 适配层：把 v2.0 的 ai.agent.* / dataApi(/agents, /agent-tasks)
     # 契约翻译成 agent-runtime sidecar 的 REST 形状（snake_case、扁平 schedule_type/

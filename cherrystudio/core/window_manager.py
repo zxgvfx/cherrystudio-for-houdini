@@ -58,9 +58,52 @@ from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebEngineCore import (
     QWebEngineScript, QWebEngineProfile, QWebEngineSettings,
-    QWebEnginePage,
+    QWebEnginePage, QWebEngineUrlRequestInterceptor, QWebEngineUrlRequestInfo,
 )
 from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
+
+
+class _FileUrlRedirectInterceptor(QWebEngineUrlRequestInterceptor):
+    """
+    v2.0 官方前端组件（头像/图片/PDF/3D 模型预览等）用纯函数 toFileUrl() 直接把
+    本地文件路径拼成 file:///C:/... 交给 <img src>/<embed>/<video> 渲染，假设主
+    文档也是 file:// 源。但 Houdini 版本主文档改走 http://127.0.0.1:PORT/ 加载
+    （见 create_window 顶部注释：为了绕开 file:// + UNC 路径下 blob: URL 被
+    Chromium 拦截的问题），这就造成主文档源（http://）与资源 URL 源（file://）
+    不一致，Chromium 可能拦截该跨协议资源请求。
+
+    这里统一把所有 file:// scheme 的子资源请求重写成
+    http://127.0.0.1:PORT/api/v1/files/serve?path=<urlencoded-path>，交给后端
+    files.file_serve 路由用二进制流返回（支持 Range，图片/视频/3D模型/PDF 通用）。
+    不需要修改任何 v2.0 前端源码，对未来同步上游改动零冲突。
+
+    只重写子资源（图片/媒体/xhr 等），不重写主文档导航，避免影响页面本身的
+    file:// 加载路径（理论上只在后端启动失败时才会走这条回退路径，此时根本
+    不会安装本拦截器，见调用处的 `if backend_url:` 判断）。
+    """
+
+    def __init__(self, backend_base_url: str, parent=None):
+        super().__init__(parent)
+        self._backend_base_url = backend_base_url.rstrip("/")
+
+    def interceptRequest(self, info: "QWebEngineUrlRequestInfo") -> None:
+        try:
+            if info.resourceType() == QWebEngineUrlRequestInfo.ResourceType.ResourceTypeMainFrame:
+                return
+            url = info.requestUrl()
+            if url.scheme() != "file":
+                return
+            local_path = url.toLocalFile()
+            if not local_path:
+                return
+            from urllib.parse import quote as _url_quote
+            redirect_url = (
+                f"{self._backend_base_url}/api/v1/files/serve"
+                f"?path={_url_quote(local_path, safe='')}"
+            )
+            info.redirect(QUrl(redirect_url))
+        except Exception as e:
+            print(f"[FileUrlRedirectInterceptor] error: {e}")
 
 # 支持两种 API：v2（薄代理）和 v1（原单体），通过环境变量切换
 _USE_V2_API = os.environ.get("CHERRY_API_V2", "1") == "1"
@@ -178,17 +221,39 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
         # 如果 load_url 指向本地 index.html，将其所在目录作为静态文件根目录，
         # 这样前端通过 http://127.0.0.1:PORT/ 加载，避免 file:// + UNC 路径
         # 导致 blob: URL 被 Chromium 安全策略拦截。
+        #
+        # 注意：v2.0 起 electron-vite 把渲染进程改成了多窗口构建，主窗口产物在
+        # web/out/renderer/windows/main/index.html，但该目录本身没有 assets/，
+        # assets/ 只在再往上一级的 renderer/ 根目录下有一份（index.html 里用
+        # ../../assets/xxx.js 这种相对路径引用）。如果直接把 index.html 所在目录
+        # 当成静态根，浏览器解析 ../../assets/xxx.js 时会因为不能越过站点根目录
+        # 被裁剪成 /assets/xxx.js，而该目录下根本没有 assets/，导致全部资源 404、
+        # 页面空白。这里向上查找真正包含 assets/ 的目录作为静态根，index.html 则
+        # 通过子路径提供。
         static_dir = ""
+        static_subpath = ""
         if not load_url.startswith("http"):
             abs_url = os.path.abspath(load_url) if not os.path.isabs(load_url) else load_url
             if os.path.isfile(abs_url):
-                static_dir = os.path.dirname(abs_url)
+                current_dir = os.path.dirname(abs_url)
+                search_dir = current_dir
+                for _ in range(4):
+                    if os.path.isdir(os.path.join(search_dir, 'assets')):
+                        static_dir = search_dir
+                        break
+                    parent_dir = os.path.dirname(search_dir)
+                    if parent_dir == search_dir:
+                        break
+                    search_dir = parent_dir
+                if not static_dir:
+                    static_dir = current_dir
+                static_subpath = os.path.relpath(abs_url, static_dir).replace(os.sep, '/')
 
         backend_url = _ensure_backend_service(static_dir)
 
         # 如果后端可用且有静态目录，改为通过 HTTP 加载
         if backend_url and static_dir and not load_url.startswith("http"):
-            load_url = backend_url + "/"
+            load_url = f"{backend_url}/{static_subpath}" if static_subpath else f"{backend_url}/"
             print(f"[WindowManager] Loading frontend via HTTP: {load_url}")
 
         # ── Step 2: 注册 DCC 会话 ────────────────────────────────────────────
@@ -308,6 +373,15 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
                     pass
 
         profile.downloadRequested.connect(_on_download_requested)
+
+        # ─── file:// 资源重定向到后端 HTTP serve（见 _FileUrlRedirectInterceptor 说明）──
+        # 只在后端服务可用时安装：backend_url 为空说明后端启动失败，主文档本身会退回
+        # file:// 加载，这种极端回退场景下不应该拦截/重写任何 file:// 请求。
+        # parent=profile 让 Qt 的 parent-child 生命周期管理持有这个对象的引用，
+        # 防止被 Python GC 提前回收。
+        if backend_url:
+            _file_url_interceptor = _FileUrlRedirectInterceptor(backend_url, parent=profile)
+            profile.setUrlRequestInterceptor(_file_url_interceptor)
 
         # 创建 WebEngine 视图（使用默认 profile）
         try:
