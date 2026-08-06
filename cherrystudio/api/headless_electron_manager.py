@@ -19,6 +19,7 @@ import subprocess
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
@@ -260,6 +261,30 @@ class HeadlessElectronManager:
         """
         self._python_backend_url = (url or "").rstrip("/")
 
+    def _default_user_data_suffix(self) -> str:
+        """Per-DCC-session userData suffix, derived from the pinned Python
+        backend's port.
+
+        Several Houdini/Maya sessions can be alive on one machine at once
+        (see the docstring above), each with its own embedded Python backend
+        port. Before this, every headless Electron process shared one fixed
+        ``"HoudiniHeadless"`` userData directory regardless of session, so a
+        second concurrent (or leftover/orphaned) session's headless Electron
+        process would collide on Electron's single-instance lock with the
+        first one's — surfacing as a `'second-instance'` event on the
+        *other* session's process (see `MainWindowService.showMainWindow`'s
+        headless guard for the crash that used to cause). Suffixing by port
+        gives each session an isolated userData dir/DB and its own lock
+        scope, so sessions no longer step on each other at all.
+        """
+        port = ""
+        if self._python_backend_url:
+            try:
+                port = str(urllib.parse.urlparse(self._python_backend_url).port or "")
+            except Exception:
+                port = ""
+        return f"HoudiniHeadless-{port}" if port else "HoudiniHeadless"
+
     def start(self) -> tuple[bool, str]:
         with self._lock:
             self._desired_running = True
@@ -295,9 +320,11 @@ class HeadlessElectronManager:
                 {
                     "CHERRY_HEADLESS": "1",
                     "CHERRY_HEADLESS_PORT": str(self._port),
-                    # Persistent and isolated from a concurrently running desktop app.
+                    # Isolated from a concurrently running desktop app AND from
+                    # sibling headless instances of other DCC sessions on this
+                    # machine — see _default_user_data_suffix().
                     "CS_DEV_USER_DATA_SUFFIX": env.get(
-                        "CHERRY_HEADLESS_USER_DATA_SUFFIX", "HoudiniHeadless"
+                        "CHERRY_HEADLESS_USER_DATA_SUFFIX", self._default_user_data_suffix()
                     ),
                 }
             )
