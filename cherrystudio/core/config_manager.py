@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import datetime
+import time
 
 from .newapi_provisioning import newapi_provisioning_service
 
@@ -45,12 +46,26 @@ class ConfigManager:
         _log.info(f"Centralized config path: {self._centralized_config_path}")
         
         self._config = None
-        
+        self._loaded_at = 0.0
+
         # 配置按需加载。避免应用启动阶段多次读取配置时重复触发 NewAPI provisioning。
+        #
+        # 注意：这里只是"避免短时间内重复 provisioning"，不能是永久缓存——
+        # provision_provider() 内部的 _is_api_key_usable() 会在每次真正执行时
+        # 校验并在过期/失效时自我修复（重新 provisioning 拿新 key），这个自愈
+        # 机制的前提是 load() 会被再次调用。之前这里写的是"只要 self._config
+        # 不是 None 就永远直接返回"，等价于把自愈机制永久禁用了：只要 Python
+        # 后端进程活着（可能横跨很多次 headless Electron 重启/好几天），第一次
+        # 拿到的 key 一旦在服务端失效，就会被永远当成"有效"缓存返回，下游（v2.0
+        # 的 centralizedConfigSync.ts）写进数据库的就一直是这个失效的 key——
+        # 表现为"中心化配置的模型 API 失效"，且永远不会自己恢复，必须手动
+        # /api/v1/config/reload 才能修好。改成有 TTL 的缓存，到期后自动重新走
+        # provision_provider() 的校验+自愈流程。
+        self._CONFIG_TTL_SECONDS = 300
 
     def load(self):
-        """加载并合并配置"""
-        if self._config is not None:
+        """加载并合并配置（带 TTL 的缓存，见 __init__ 里的注释）"""
+        if self._config is not None and (time.monotonic() - self._loaded_at) < self._CONFIG_TTL_SECONDS:
             return self._config
 
         # 1. 加载中心化配置 (只读)
@@ -146,12 +161,14 @@ class ConfigManager:
         
         if default_models:
             _log.info(f"Loaded defaultModels from centralized config: {default_models}")
-        
+
+        self._loaded_at = time.monotonic()
         return self._config
 
     def reload(self):
-        """重新加载配置"""
+        """强制重新加载配置（跳过 TTL，立即重新走 provisioning 的校验+自愈流程）"""
         self._config = None
+        self._loaded_at = 0.0
         return self.load()
 
     def update_user_models(self, models):
