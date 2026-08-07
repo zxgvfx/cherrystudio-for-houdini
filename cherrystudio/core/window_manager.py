@@ -5,7 +5,7 @@
 
 import os
 import json
-from PySide6.QtCore import QUrl, Qt, QObject
+from PySide6.QtCore import QUrl, Qt, QObject, QTimer
 
 # 在 Chromium 引擎初始化之前设置标志（必须在所有 PySide6 Qt 类 import 之前）。
 #
@@ -692,6 +692,40 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
             page.setVisible(True)
         except Exception as _visible_err:
             print(f"[WindowManager] setVisible failed: {_visible_err}")
+
+        # ── 周期性"心跳"强制唤醒渲染进程 ─────────────────────────────────────
+        # 用户反馈：即使加了上面的 LifecycleState.Active + setVisible(True)，
+        # 流式回复依旧要切换窗口才刷新。说明冻结点不只在"page 级生命周期"这一层
+        # ——很可能是宿主(COCO/Houdini)把 QWebEngineView 所在的顶层窗口置于后台
+        # (失去 OS 前台焦点，但并未真正 occluded/hidden)时，Chromium 合成器/渲染
+        # 进程任务队列的调度优先级被系统性下调（vsync 节流、任务队列降频），这一层
+        # 节流不是靠单次调用某个 Qt API 就能一次性关掉的——不管这一层节流具体挂在
+        # "JS 执行节流"还是"合成/上屏节流"哪一侧，用一个轻量级定时器周期性地：
+        #   1) runJavaScript 一个空操作，强制该 renderer 进程的 JS 任务队列被真正
+        #      调度执行一次（如果 JS 执行本身被完全挂起，SSE onmessage 回调、React
+        #      state 更新都不会跑，DOM 永远不变，直到某个外部事件——例如窗口重新
+        #      获得焦点——把渲染进程"踢醒"）；
+        #   2) update()/repaint() 请求一次重绘，确保哪怕 JS 端 DOM 已经更新，
+        #      Qt 侧也不会因为"没人告诉我要重绘"而把新内容攒在缓冲区里不上屏。
+        # 都能强制打破，代价是极小的周期性 CPU 开销（400ms 一次空 JS 调用 +
+        # repaint 请求，聊天面板体量下可忽略不计），换来"不管具体是哪一层节流，
+        # 都能被定期打断"的确定性效果，而不用继续猜测 Chromium 内部具体是哪个
+        # 阈值/判定在起作用。
+        _heartbeat_timer = QTimer(page)
+        _heartbeat_timer.setInterval(400)
+
+        def _heartbeat_tick():
+            try:
+                page.runJavaScript("void 0")
+            except Exception:
+                pass
+            try:
+                web_view.update()
+            except Exception:
+                pass
+
+        _heartbeat_timer.timeout.connect(_heartbeat_tick)
+        _heartbeat_timer.start()
 
         # ── WebEngine Settings（必须在 setPage 之后设置，否则会被替换掉）──────
         # setPage() 切换到 _FilteredPage 后，web_view.settings() 返回新 page 的 settings。
