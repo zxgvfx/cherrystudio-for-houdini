@@ -217,11 +217,10 @@
       },
       "icon": "",
       "models": [
-
         {
-          "id": "inclusionai/ling-3.0-flash:free",
-          "name": "ling-3.0-flash:free",
-          "modelId": "inclusionai/ling-3.0-flash:free",
+          "id": "inclusionai/ling-3.0-flash",
+          "name": "ling-3.0-flash",
+          "modelId": "inclusionai/ling-3.0-flash",
           "isCentralized": true,
           "modality": "text"
         }

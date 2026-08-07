@@ -30,14 +30,37 @@
 # "DataApiError: Electron executable not found" in the UI because there is no
 # way to run the raw dev web\node_modules tree in a deployed environment.
 #
+# IMPORTANT — the actual UI the user sees is a SEPARATE build artifact from
+# the headless Electron app above: `window_manager.py`'s QWebEngineView never
+# talks to the headless Electron process for its own HTML/JS — it loads a
+# statically-served copy of the *renderer* bundle, resolved by
+# `main.py#_resolve_index_path()` in this preference order:
+#   1. <project_root>/web/out/renderer/windows/main/index.html   (dev checkout)
+#   2. <project_root>/web/out/renderer/index.html                (old layout)
+#   3. cherrystudio/public/windows/main/index.html                (deployed copy) ← COCO uses this
+#   4. cherrystudio/public/index.html                             (legacy fallback)
+# On a COCO deployment there is no sibling `web/out/renderer` at all (only
+# `bin/web/dist*`, the electron-builder *main-process* bundle — completely
+# different artifact), so it falls through to `cherrystudio/public/`. This
+# script's normal `cherrystudio/` → COCO sync copies `public/` VERBATIM from
+# whatever is checked into the source repo — it will happily ship a
+# months-old renderer build forever unless something refreshes
+# `cherrystudio/public/` from a fresh `web/out/renderer/` first. That is
+# exactly what `-RefreshPublic` (mirrored into the main sync below) does; a
+# renderer-only source change with no `-RefreshPublic` looks, from the
+# outside, exactly like "the fix didn't work" even though every backend/DB
+# change landed correctly — the browser is just still running old JS.
+#
 # Usage:
 #   pwsh D:\python\cherrystudio-for-houdini\cherrystudio\sync_to_coco.ps1
-#   pwsh D:\python\cherrystudio-for-houdini\cherrystudio\sync_to_coco.ps1 -WhatIf        # preview only, no copy
-#   pwsh D:\python\cherrystudio-for-houdini\cherrystudio\sync_to_coco.ps1 -IncludeWeb    # also sync web\dist\win-unpacked (~1.2GB, run `pnpm run build:unpack` in web\ first)
+#   pwsh D:\python\cherrystudio-for-houdini\cherrystudio\sync_to_coco.ps1 -WhatIf          # preview only, no copy
+#   pwsh D:\python\cherrystudio-for-houdini\cherrystudio\sync_to_coco.ps1 -IncludeWeb      # also sync web\dist\win-unpacked (~1.2GB, run `pnpm run build:unpack` in web\ first)
+#   pwsh D:\python\cherrystudio-for-houdini\cherrystudio\sync_to_coco.ps1 -RefreshPublic   # refresh cherrystudio\public\ from web\out\renderer\ first (run `pnpm build` in web\ first)
 
 param(
     [switch]$WhatIf,
-    [switch]$IncludeWeb
+    [switch]$IncludeWeb,
+    [switch]$RefreshPublic
 )
 
 $ErrorActionPreference = "Stop"
@@ -55,6 +78,33 @@ if (-not (Test-Path $src)) {
 if (-not (Test-Path $dst)) {
     Write-Host "Destination dir does not exist, creating: $dst" -ForegroundColor Yellow
     New-Item -ItemType Directory -Path $dst -Force | Out-Null
+}
+
+if ($RefreshPublic) {
+    $rendererSrc = Join-Path $webRoot "out\renderer"
+    $publicDst = Join-Path $src "public"
+    if (-not (Test-Path $rendererSrc)) {
+        Write-Host ""
+        Write-Host "[SKIP] $rendererSrc not found. Run 'pnpm build' (or 'pnpm run build:unpack') in web\ first." -ForegroundColor Yellow
+    } else {
+        Write-Host ""
+        Write-Host "Refreshing $publicDst from $rendererSrc (mirror: old/obsolete files removed) ..." -ForegroundColor Cyan
+        $publicRobocopyArgs = @(
+            $rendererSrc, $publicDst,
+            "/MIR",         # this is 100% build output -- safe to mirror (delete stale files too)
+            "/NFL", "/NDL", "/NP", "/R:2", "/W:1"
+        )
+        if ($WhatIf) {
+            $publicRobocopyArgs += "/L"
+        }
+        & robocopy @publicRobocopyArgs
+        $publicCode = $LASTEXITCODE
+        if ($publicCode -ge 8) {
+            Write-Host "robocopy (public refresh) failed, exit code $publicCode" -ForegroundColor Red
+            exit $publicCode
+        }
+        Write-Host "[OK] public\ refreshed from web\out\renderer\" -ForegroundColor Green
+    }
 }
 
 $xd = @(
@@ -89,7 +139,7 @@ if ($code -ge 8) {
 Write-Host ""
 Write-Host "[OK] Sync complete" -ForegroundColor Green
 Write-Host "Key file check:" -ForegroundColor Yellow
-foreach ($check in @("main.py", "public\index.html", "backend\server.py", "core\window_manager.py")) {
+foreach ($check in @("main.py", "public\windows\main\index.html", "backend\server.py", "core\window_manager.py")) {
     $p = Join-Path $dst $check
     $ok = Test-Path $p
     if ($ok) {

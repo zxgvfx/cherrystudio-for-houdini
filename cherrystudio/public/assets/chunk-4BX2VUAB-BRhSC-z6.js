@@ -1,0 +1,8 @@
+import { D as __name } from "./src-BNJs7-l-.js";
+function populateCommonDb(ast, db) {
+	if (ast.accDescr) db.setAccDescription?.(ast.accDescr);
+	if (ast.accTitle) db.setAccTitle?.(ast.accTitle);
+	if (ast.title) db.setDiagramTitle?.(ast.title);
+}
+__name(populateCommonDb, "populateCommonDb");
+export { populateCommonDb as t };

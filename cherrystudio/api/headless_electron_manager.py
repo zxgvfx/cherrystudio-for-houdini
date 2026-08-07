@@ -300,11 +300,59 @@ class HeadlessElectronManager:
             return "HoudiniHeadless"
         return f"HoudiniHeadless-{dcc_type}"
 
+    def _resolve_backend_url(self) -> str:
+        """Best-known-current Python backend URL, preferring the explicitly
+        pinned one (`set_python_backend_url()`) and falling back to whatever
+        `service_runner.read_backend_url()` can discover (e.g. a port file
+        written by *this* process). Used both when constructing the
+        subprocess env (fresh spawn) and when pushing a fresh URL to an
+        already-running Electron process (`_push_backend_url()`) — the fast
+        `is_running()` path never rebuilds `env`, so without this shared
+        resolver it would only ever push a URL if `set_python_backend_url()`
+        had been called explicitly beforehand.
+        """
+        if self._python_backend_url:
+            return self._python_backend_url
+        try:
+            from ..backend.service_runner import read_backend_url
+
+            return (read_backend_url() or "").rstrip("/")
+        except Exception:
+            return ""
+
+    def _push_backend_url(self) -> None:
+        """Tell the (possibly long-since-spawned) headless Electron process
+        which Python backend to call back into right now.
+
+        Must be called on *every* successful `start()` — including the fast
+        path where an already-running Electron process is reused — not just
+        on fresh spawns. `CHERRY_STUDIO_BACKEND_URL` is baked into the
+        subprocess environment once, at whatever moment Electron happened to
+        be launched; the headless Electron process is designed to outlive
+        many separate Python backend sessions (see
+        `_default_user_data_suffix()`'s docstring), each with a different
+        ephemeral port. Without this push, `centralizedConfigSync.ts` (and
+        `newApiCostLookup.ts`) silently keep calling back into whatever
+        backend URL existed the moment Electron *first* booted — which, for
+        any Python session after the first, is either empty or a dead port —
+        so a centralized provider's per-user API key can never actually get
+        refreshed/repaired for the remaining lifetime of that Electron
+        process. Best-effort: failures here must never block `start()`.
+        """
+        url = self._resolve_backend_url()
+        if not url or not self.base_url:
+            return
+        try:
+            self._request_once("/backend-url", {"url": url}, timeout=5)
+        except Exception as exc:
+            _log(f"[HeadlessElectron] _push_backend_url failed (non-fatal): {exc}")
+
     def start(self) -> tuple[bool, str]:
         with self._lock:
             self._desired_running = True
             if self.is_running() and self._healthcheck():
                 self._ensure_event_subscription()
+                self._push_backend_url()
                 return True, self.base_url
 
             web_dir = _web_dir()
@@ -343,14 +391,7 @@ class HeadlessElectronManager:
                     ),
                 }
             )
-            try:
-                from ..backend.service_runner import read_backend_url
-
-                env["CHERRY_STUDIO_BACKEND_URL"] = (
-                    self._python_backend_url or read_backend_url() or ""
-                )
-            except Exception:
-                env["CHERRY_STUDIO_BACKEND_URL"] = self._python_backend_url
+            env["CHERRY_STUDIO_BACKEND_URL"] = self._resolve_backend_url()
 
             # Centralized config (NewApi provisioning, shared providers/MCP
             # servers) — same env var / default resource path convention as
@@ -410,6 +451,7 @@ class HeadlessElectronManager:
             if self._healthcheck():
                 self._ensure_event_subscription()
                 self._event_ready.wait(timeout=5)
+                self._push_backend_url()
                 _log(f"[HeadlessElectron] Ready at {self.base_url}")
                 return True, self.base_url
             time.sleep(0.25)

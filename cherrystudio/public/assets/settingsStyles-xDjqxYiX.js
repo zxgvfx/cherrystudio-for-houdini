@@ -1,0 +1,10 @@
+const settingsSubmenuScrollClassName = "h-[calc(100vh-var(--navbar-height))] w-(--settings-width) border-border border-r-[0.5px]";
+const settingsSubmenuListClassName = "flex flex-col gap-0.5 px-2.5 pb-2.5 [box-sizing:border-box]";
+const settingsSubmenuItemClassName = "h-8 rounded-[10px] border-transparent px-2.5 font-normal text-foreground text-sm hover:!bg-muted data-[active=true]:!border-transparent data-[active=true]:!bg-muted data-[active=true]:!font-medium data-[active=true]:!text-foreground [&_svg]:size-4 [&_svg]:text-foreground";
+const settingsSubmenuItemLabelClassName = "group-data-[active=true]:font-medium";
+const settingsSubmenuSectionTitleClassName = "px-2.5 pt-2 pb-0.5 font-normal text-foreground-tertiary text-xs first:pt-0";
+const settingsSubmenuDividerClassName = "my-0 bg-transparent";
+const settingsContentScrollClassName = "flex-1 min-h-0 min-w-0 overflow-x-hidden";
+const settingsContentHeaderClassName = "mb-5";
+const settingsContentHeaderTitleClassName = "font-semibold text-foreground text-[15px]";
+export { settingsSubmenuItemClassName as a, settingsSubmenuScrollClassName as c, settingsSubmenuDividerClassName as i, settingsSubmenuSectionTitleClassName as l, settingsContentHeaderTitleClassName as n, settingsSubmenuItemLabelClassName as o, settingsContentScrollClassName as r, settingsSubmenuListClassName as s, settingsContentHeaderClassName as t };
