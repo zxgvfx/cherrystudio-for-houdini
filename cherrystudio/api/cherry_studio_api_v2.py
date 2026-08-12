@@ -497,6 +497,11 @@ class CherryStudioAPI(QObject):
                 return json.dumps(None)
 
             selected = dialog.selectedFiles()
+            if selected and self._backend_url:
+                try:
+                    self._svc("/api/v1/files/grant-read", {"paths": selected})
+                except Exception as grant_error:
+                    _log(f"fileSelect read grant failed: {grant_error}")
             result = []
             for fp in selected:
                 basename = os.path.basename(fp)
@@ -719,12 +724,31 @@ class CherryStudioAPI(QObject):
             req = json.loads(request_json) if request_json else {}
         except Exception:
             return json.dumps({"error": "invalid json"})
+        # The v2 Agent renderer can issue its first REST request before the
+        # settings/status UI has explicitly started the sidecar. Starting on
+        # demand avoids a permanent 503/"waiting" state with no NewAPI traffic.
+        with CherryStudioAPI._agent_server_lock:
+            running = bool(
+                CherryStudioAPI._agent_server
+                and CherryStudioAPI._agent_server.is_running()
+            )
+        if not running:
+            start_result = json.loads(self.apiServerStart())
+            if not start_result.get("running"):
+                return json.dumps({
+                    "error": {
+                        "message": start_result.get("error") or "Agent Runtime failed to start",
+                        "type": "agent_runtime_start_error",
+                    }
+                })
         return json.dumps(self._svc("/api/v1/agent/proxy", req))
 
     @Slot(result=bool)
     def startAgentServer(self) -> bool:
-        r = self._svc("/api/v1/agent/start", method="POST")
-        return bool(r.get("ok", False))
+        try:
+            return bool(json.loads(self.apiServerStart()).get("running"))
+        except Exception:
+            return False
 
     @Slot(result=str)
     def getAgentServerPort(self) -> str:
@@ -1909,8 +1933,16 @@ class CherryStudioAPI(QObject):
             # preserves Electron IPC's real no-argument contract.
             if input_data is not None:
                 request_body["input"] = input_data
+            # Image providers can legitimately take 5+ minutes. The previous
+            # generic 120-second transport timeout abandoned a paid request
+            # while NewAPI continued generating it, so the result was charged
+            # but never reached the painting UI.
+            request_timeout = 15 * 60 if route == "ai.image.generate" else 120
             response = self._headless_electron.request(
-                "/ipc-api", request_body, timeout=120
+                "/ipc-api",
+                request_body,
+                timeout=request_timeout,
+                retry_on_error=route != "ai.image.generate",
             )
             return json.dumps(response, ensure_ascii=False)
         except Exception as e:
@@ -2562,23 +2594,67 @@ class CherryStudioAPI(QObject):
             _log(f"[fileShowInFolder] {e}")
             return False
 
-    # File Storage Entry 抽象（v2.0 新增的内部/外部文件引用系统）尚未移植，
-    # 先返回明确错误，避免渲染进程按 undefined 处理导致后续 crash。
     @Slot(str, result=str)
-    def fileCreateInternalEntry(self, _params_json: str) -> str:
-        return json.dumps({"error": "File storage entries are not supported in Houdini runtime yet"})
+    def fileCreateInternalEntry(self, params_json: str) -> str:
+        try:
+            params = json.loads(params_json) if params_json else {}
+            response = self._headless_electron.request(
+                "/file/create-internal-entry",
+                params,
+                timeout=120,
+            )
+            if response.get("ok") and isinstance(response.get("entry"), dict):
+                return json.dumps(response["entry"])
+            error = response.get("error") or {}
+            message = error.get("message") if isinstance(error, dict) else str(error)
+            raise RuntimeError(message or "Failed to create internal file entry")
+        except Exception as e:
+            _log(f"[fileCreateInternalEntry] {e}")
+            return json.dumps({"error": str(e)})
 
     @Slot(str, result=str)
-    def fileEnsureExternalEntry(self, _params_json: str) -> str:
-        return json.dumps({"error": "File storage entries are not supported in Houdini runtime yet"})
+    def fileEnsureExternalEntry(self, params_json: str) -> str:
+        try:
+            params = json.loads(params_json) if params_json else {}
+            response = self._headless_electron.request(
+                "/file/ensure-external-entry",
+                params,
+                timeout=60,
+            )
+            if response.get("ok") and isinstance(response.get("entry"), dict):
+                return json.dumps(response["entry"])
+            error = response.get("error") or {}
+            message = error.get("message") if isinstance(error, dict) else str(error)
+            raise RuntimeError(message or "Failed to ensure external file entry")
+        except Exception as e:
+            _log(f"[fileEnsureExternalEntry] {e}")
+            return json.dumps({"error": str(e)})
 
     @Slot(str, result=str)
     def fileGetPhysicalPath(self, params_json: str) -> str:
         try:
             params = json.loads(params_json) if params_json else {}
-            path = params.get("path") if isinstance(params, dict) else None
-            return json.dumps(path) if path else json.dumps(None)
-        except Exception:
+            if not isinstance(params, dict):
+                return json.dumps(None)
+            path = params.get("path")
+            if path:
+                return json.dumps(path)
+            entry_id = params.get("id")
+            if not entry_id:
+                return json.dumps(None)
+            response = self._headless_electron.request(
+                "/file/physical-path",
+                {"id": str(entry_id)},
+                timeout=30,
+            )
+            resolved = response.get("path") if response.get("ok") else None
+            if not resolved:
+                error = response.get("error") or {}
+                message = error.get("message") if isinstance(error, dict) else str(error)
+                raise RuntimeError(message or f"File entry not found: {entry_id}")
+            return json.dumps(resolved)
+        except Exception as e:
+            _log(f"[fileGetPhysicalPath] {e}")
             return json.dumps(None)
 
     @Slot(str, str, result=str)

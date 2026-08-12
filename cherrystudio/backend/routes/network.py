@@ -223,11 +223,26 @@ _proxy_settings: Dict[str, str] = {
     "proxyUrl": "",
     "bypassRules": "",
 }
+_proxy_managed = False
 
 
 def _init_proxy_from_config():
     """从 centralized-config.json 读取代理配置作为默认值，
     确保桌面端（无 Qt API 推送代理配置）也能正确 bypass 内网地址。"""
+    global _proxy_managed
+    try:
+        from ...core.secure_config import get_secure_proxy, is_hardcoded_proxy_enabled
+
+        if is_hardcoded_proxy_enabled():
+            secure_proxy = get_secure_proxy()
+            if secure_proxy.get("proxyUrl"):
+                _proxy_settings["proxyUrl"] = secure_proxy["proxyUrl"]
+                _proxy_settings["bypassRules"] = secure_proxy.get("bypassRules", "")
+                _proxy_managed = True
+                return
+    except Exception:
+        pass
+
     try:
         cfg_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
@@ -1334,6 +1349,8 @@ def stream_read(ctx: dict) -> Any:
 @route("/api/v1/network/set-proxy", methods=["POST"])
 def set_proxy(ctx: dict) -> Any:
     """更新代理设置（由 Qt 层在用户配置变更时调用）"""
+    if _proxy_managed:
+        return {"ok": True, "managed": True}
     body = ctx["body"]
     _proxy_settings["proxyUrl"] = body.get("proxyUrl", "")
     _proxy_settings["bypassRules"] = body.get("bypassRules", "")
@@ -1342,6 +1359,8 @@ def set_proxy(ctx: dict) -> Any:
 
 @route("/api/v1/network/get-proxy", methods=["GET"])
 def get_proxy(ctx: dict) -> Any:
+    if _proxy_managed:
+        return {"proxyUrl": "", "bypassRules": "", "managed": True}
     return dict(_proxy_settings)
 
 

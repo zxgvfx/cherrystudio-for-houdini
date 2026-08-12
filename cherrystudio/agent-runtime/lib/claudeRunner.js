@@ -54,6 +54,25 @@ function resolveWorkspace(agentRuntimeHome, agent, session) {
   return dir;
 }
 
+function appendHostToNoProxy(env, baseUrl) {
+  try {
+    const normalized = baseUrl && baseUrl.includes('://') ? baseUrl : `https://${baseUrl || ''}`;
+    const host = new URL(normalized).hostname;
+    if (!host) return;
+    const cur = env.NO_PROXY || env.no_proxy || '';
+    const parts = cur
+      .split(/[,;]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (!parts.includes(host)) parts.push(host);
+    const merged = parts.join(',');
+    env.NO_PROXY = merged;
+    env.no_proxy = merged;
+  } catch {
+    // ignore malformed base URL
+  }
+}
+
 function buildEnv(providerInfo, agentRuntimeHome) {
   const env = {
     ...process.env,
@@ -72,6 +91,9 @@ function buildEnv(providerInfo, agentRuntimeHome) {
     env.ANTHROPIC_CUSTOM_HEADERS = Object.entries(providerInfo.headers)
       .map(([k, v]) => `${k}:${v}`)
       .join('\n');
+  }
+  if (env.HTTP_PROXY || env.HTTPS_PROXY) {
+    appendHostToNoProxy(env, providerInfo.baseUrl);
   }
   return env;
 }

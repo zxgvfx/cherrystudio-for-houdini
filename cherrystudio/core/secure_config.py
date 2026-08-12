@@ -19,10 +19,8 @@ import zlib
 
 class _ProxyConfig:
     """混淆的代理配置"""
-    
-    # 代理地址: 192.168.21.225
+
     _D1 = b'eJwztDTSMzSz0DMy1DMyMgUAFM0Cwg=='
-    # 代理端口: 10808
     _D2 = b'eJwzNLAwsAAAAvoBAg=='
     
     @staticmethod
@@ -124,17 +122,3 @@ def get_bypass_rules():
     return _load_bypass_rules()
 
 
-# ============================================================
-# 调试/测试
-# ============================================================
-
-if __name__ == '__main__':
-    print("=" * 60)
-    print("安全代理配置测试")
-    print("=" * 60)
-    
-    config = get_secure_proxy()
-    print(f"\n代理配置:")
-    print(f"  Proxy URL: {config['proxyUrl']}")
-    print(f"  Bypass Rules: {config['bypassRules']}")
-    print(f"\n是否启用托管代理: {is_hardcoded_proxy_enabled()}")

@@ -20,7 +20,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
 from ..backend.process_manager import pm
@@ -28,6 +28,8 @@ from ..utils.logger import network_logger as _log
 
 _CREATE_NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 _START_TIMEOUT = 75.0
+_MIGRATION_START_TIMEOUT = 30.0 * 60.0
+_MIGRATION_RESTART_EXIT_CODE = 42
 
 
 def _project_root() -> str:
@@ -35,7 +37,19 @@ def _project_root() -> str:
 
 
 def _web_dir() -> str:
-    return os.path.join(_project_root(), "web")
+    package_root = _project_root()
+    # Source checkout layout:
+    #   <repo>/cherrystudio/   Python package
+    #   <repo>/web/            Electron application
+    #
+    # ``cherrystudio/web`` is a Python bridge package and does not contain the
+    # Electron build. Treating it as the app root makes development launches
+    # look for ``cherrystudio/web/out/main/main.js`` and fail even after a
+    # successful pnpm build.
+    source_web = os.path.join(os.path.dirname(package_root), "web")
+    if os.path.isfile(os.path.join(source_web, "package.json")):
+        return source_web
+    return os.path.join(package_root, "web")
 
 
 def _headless_log_path() -> str:
@@ -70,6 +84,30 @@ def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
+
+
+def _legacy_coco_migration_files() -> tuple[str, str] | None:
+    """Return CoCo v1 JSON exports consumed by Cherry Studio's v2 migrators."""
+    base_dir = os.path.join(os.path.expanduser("~"), ".cherrystudio")
+    try:
+        from ..core.app_lifecycle import detect_dcc_type
+
+        dcc_type = detect_dcc_type() or "standalone"
+    except Exception:
+        dcc_type = "standalone"
+
+    local_storage_candidates = [
+        os.path.join(base_dir, dcc_type, "localStorage.json"),
+        os.path.join(base_dir, "localStorage.json"),
+    ]
+    local_storage = next(
+        (candidate for candidate in local_storage_candidates if os.path.isfile(candidate)),
+        "",
+    )
+    indexed_db = os.path.join(base_dir, "indexedDB.json")
+    if local_storage and os.path.isfile(indexed_db):
+        return local_storage, indexed_db
+    return None
 
 
 def _find_electron() -> Optional[str]:
@@ -210,6 +248,7 @@ class _StreamConnection:
     listener_id: str = ""
     response: Any = None
     stopped: bool = False
+    created_at: float = field(default_factory=time.monotonic)
 
     def close(self) -> None:
         self.stopped = True
@@ -242,7 +281,12 @@ class HeadlessElectronManager:
         self._event_stop = threading.Event()
         self._event_ready = threading.Event()
         self._event_thread: Optional[threading.Thread] = None
-        self._streams: dict[str, _StreamConnection] = {}
+        # Keyed by (topic_id, endpoint) — NOT just topic_id. `ai.stream.open`
+        # (kicks off generation) and `ai.stream.attach` (how
+        # `TopicStreamSubscription` gets its reader) are BOTH issued for
+        # every single send by design — see `detach_ai_stream()` for why a
+        # single-slot-per-topic map here was the root cause of a real bug.
+        self._streams: dict[tuple[str, str], _StreamConnection] = {}
         self._python_backend_url = ""
 
     @property
@@ -347,11 +391,44 @@ class HeadlessElectronManager:
         except Exception as exc:
             _log(f"[HeadlessElectron] _push_backend_url failed (non-fatal): {exc}")
 
+    def _push_managed_proxy(self) -> None:
+        """Install the confidential deployment proxy without exposing it in
+        Electron preferences, renderer APIs, or Electron's launch command and
+        environment. Best-effort so proxy setup cannot prevent the local data
+        service from starting.
+        """
+        if not self.base_url:
+            return
+        try:
+            from ..core.secure_config import get_secure_proxy
+
+            config = get_secure_proxy()
+            proxy_url = str(config.get("proxyUrl") or "").strip()
+            if not proxy_url:
+                return
+            response = self._request_once(
+                "/managed-proxy",
+                {
+                    "proxyUrl": proxy_url,
+                    "bypassRules": str(config.get("bypassRules") or ""),
+                },
+                timeout=10,
+            )
+            if not response.get("ok"):
+                raise RuntimeError("headless runtime rejected managed proxy")
+            _log("[HeadlessElectron] Managed global proxy applied")
+        except Exception as exc:
+            _log(
+                "[HeadlessElectron] managed proxy setup failed "
+                f"(configuration hidden, non-fatal): {exc}"
+            )
+
     def start(self) -> tuple[bool, str]:
         with self._lock:
             self._desired_running = True
             if self.is_running() and self._healthcheck():
                 self._ensure_event_subscription()
+                self._push_managed_proxy()
                 self._push_backend_url()
                 return True, self.base_url
 
@@ -365,9 +442,10 @@ class HeadlessElectronManager:
                 main_js = os.path.join(web_dir, "out", "main", "main.js")
                 if not electron:
                     return False, (
-                        "Electron executable not found; either run "
-                        "`pnpm run build:unpack` in web/ and deploy web/dist/*-unpacked, "
-                        "or run pnpm install in web/ for a dev checkout"
+                    "Electron executable not found; set CHERRY_ELECTRON_APP_PATH "
+                    "to the externally managed headless runtime (preferred), run "
+                    "`cherrystudio/build_headless_runtime.ps1`, or install Electron "
+                    "in web/node_modules for a development checkout"
                     )
                 if not os.path.isfile(main_js):
                     return False, "Electron main bundle not found; run pnpm build in web/"
@@ -392,6 +470,11 @@ class HeadlessElectronManager:
                 }
             )
             env["CHERRY_STUDIO_BACKEND_URL"] = self._resolve_backend_url()
+            legacy_migration_files = _legacy_coco_migration_files()
+            if legacy_migration_files:
+                local_storage_file, indexed_db_file = legacy_migration_files
+                env["CHERRY_HEADLESS_LEGACY_LOCAL_STORAGE"] = local_storage_file
+                env["CHERRY_HEADLESS_LEGACY_INDEXED_DB"] = indexed_db_file
 
             # Centralized config (NewApi provisioning, shared providers/MCP
             # servers) — same env var / default resource path convention as
@@ -442,15 +525,27 @@ class HeadlessElectronManager:
             else:
                 _log(f"[HeadlessElectron] stdout/stderr captured to {log_path}")
 
-        deadline = time.monotonic() + _START_TIMEOUT
+        startup_timeout = (
+            _MIGRATION_START_TIMEOUT if legacy_migration_files else _START_TIMEOUT
+        )
+        deadline = time.monotonic() + startup_timeout
         while time.monotonic() < deadline:
             if self._proc and self._proc.poll() is not None:
                 code = self._proc.returncode
+                if code == _MIGRATION_RESTART_EXIT_CODE:
+                    _log(
+                        "[HeadlessElectron] CoCo v1 migration completed; "
+                        "restarting the managed runtime"
+                    )
+                    with self._lock:
+                        self._stop_process_locked()
+                    return self.start()
                 self.stop()
                 return False, f"Headless Electron exited during startup (code {code})"
             if self._healthcheck():
                 self._ensure_event_subscription()
                 self._event_ready.wait(timeout=5)
+                self._push_managed_proxy()
                 self._push_backend_url()
                 _log(f"[HeadlessElectron] Ready at {self.base_url}")
                 return True, self.base_url
@@ -511,11 +606,21 @@ class HeadlessElectronManager:
         except Exception:
             return False
 
-    def request(self, endpoint: str, body: Optional[dict], timeout: float = 60) -> dict:
+    def request(
+        self,
+        endpoint: str,
+        body: Optional[dict],
+        timeout: float = 60,
+        retry_on_error: bool = True,
+    ) -> dict:
         self.ensure_running()
         try:
             return self._request_once(endpoint, body, timeout=timeout)
         except (OSError, urllib.error.URLError):
+            # Non-idempotent paid operations must never be submitted twice
+            # merely because the local transport timed out.
+            if not retry_on_error:
+                raise
             ok, message = self.restart()
             if not ok:
                 raise RuntimeError(message)
@@ -566,6 +671,22 @@ class HeadlessElectronManager:
                             continue
                         item = json.loads(line[5:].strip())
                         if isinstance(item, dict) and item.get("event"):
+                            if item.get("event") == "ai.stream.error":
+                                payload = item.get("payload") or {}
+                                detail = json.dumps(
+                                    payload.get("error") if isinstance(payload, dict) else payload,
+                                    ensure_ascii=False,
+                                    default=str,
+                                )
+                                try:
+                                    from ..core.secure_config import get_secure_proxy
+
+                                    proxy_url = str(get_secure_proxy().get("proxyUrl") or "")
+                                    if proxy_url:
+                                        detail = detail.replace(proxy_url, "<managed-proxy>")
+                                except Exception:
+                                    pass
+                                _log(f"[HeadlessElectron] ai.stream.error: {detail}")
                             HeadlessEventBroker.instance().publish(
                                 str(item["event"]), item.get("payload")
                             )
@@ -590,10 +711,52 @@ class HeadlessElectronManager:
         return self._start_stream("/ai-stream/attach", request, "attach-result")
 
     def detach_ai_stream(self, topic_id: str) -> None:
+        """Release only a reconnect/attach reader for ``topic_id``.
+
+        The initial ``/ai-stream/open`` reader owns the live headless event
+        feed for a submitted turn and naturally closes on its terminal frame.
+        ``TopicStreamSubscription`` can transiently detach while React is
+        reconciling Agent-session overlay branches; treating that UI cleanup
+        as permission to close the open reader dropped subsequent tool and
+        approval chunks, leaving an otherwise-running Agent turn as an empty
+        "No response" message. Explicit generation cancellation uses
+        ``abort_ai_stream`` and remains separate.
+        """
+        endpoint = "/ai-stream/attach"
         with self._lock:
-            connection = self._streams.pop(topic_id, None)
-        if not connection:
-            return
+            connection = self._streams.pop((topic_id, endpoint), None)
+        if connection:
+            self._close_stream_connection(topic_id, connection)
+
+    def _detach_endpoint_slot(self, topic_id: str, endpoint: str) -> None:
+        """Internal pre-cleanup inside `_start_stream()` — only replaces a
+        STALE connection of the SAME kind (e.g. a second `ai.stream.open` or
+        a second `ai.stream.attach` for the same topic, such as after a
+        Python-side reconnect). Root-cause fix: this used to be
+        `detach_ai_stream(topic_id)`, which tore down *every* connection for
+        the topic regardless of endpoint. `ai.stream.open` (kicks off
+        generation) and `ai.stream.attach` (how `TopicStreamSubscription`
+        gets its reader) are BOTH issued for every single send by design —
+        real desktop Electron lets both listeners coexist (`AiStreamManager`
+        keys listeners by their own per-window id, no eviction). Evicting
+        `open`'s listener the instant `attach` came in — every time, ~0.2s
+        after open — meant `onDone`/`onPaused`/`onError` never reached this
+        window: the generation still finished and persisted via Main's own
+        bookkeeping, it just never told anyone. Symptom: chat looks stuck on
+        "preparing reply" until switching topics forces a fresh DB read.
+        """
+        key = (topic_id, endpoint)
+        with self._lock:
+            connection = self._streams.pop(key, None)
+        if connection:
+            self._close_stream_connection(topic_id, connection)
+
+    def _close_stream_connection(self, topic_id: str, connection: "_StreamConnection") -> None:
+        age = time.monotonic() - connection.created_at
+        _log(
+            f"[HeadlessElectron] closing stream connection topic={topic_id} "
+            f"listener_id={connection.listener_id} age={age:.2f}s"
+        )
         if connection.listener_id:
             try:
                 self.request(
@@ -613,13 +776,19 @@ class HeadlessElectronManager:
         topic_id = str(body.get("topicId") or "")
         if not topic_id:
             raise ValueError("Missing topicId")
-        self.detach_ai_stream(topic_id)
+        # Only replace a STALE connection of the SAME endpoint (e.g. a
+        # reconnect) — must NOT touch the other endpoint's still-live
+        # connection for this topic. See `_detach_endpoint_slot()`'s
+        # docstring for the bug this used to be (`detach_ai_stream(topic_id)`
+        # tore down open's listener the instant attach came in).
+        self._detach_endpoint_slot(topic_id, endpoint)
 
         ready = threading.Event()
         outcome: dict[str, Any] = {}
         connection = _StreamConnection(topic_id=topic_id)
+        stream_key = (topic_id, endpoint)
         with self._lock:
-            self._streams[topic_id] = connection
+            self._streams[stream_key] = connection
 
         def run() -> None:
             try:
@@ -649,9 +818,19 @@ class HeadlessElectronManager:
                 outcome["error"] = str(exc)
                 ready.set()
             finally:
+                # An SSE response can be superseded/closed before its control
+                # frame arrives (for example when a renderer reconnects).
+                # Previously that left the caller parked for the full 60-second
+                # control timeout despite the HTTP response already being gone.
+                # Fail immediately with an actionable transport error instead.
+                if not ready.is_set():
+                    outcome["error"] = (
+                        f"{control_type} stream closed before its acknowledgement"
+                    )
+                    ready.set()
                 with self._lock:
-                    if self._streams.get(topic_id) is connection:
-                        self._streams.pop(topic_id, None)
+                    if self._streams.get(stream_key) is connection:
+                        self._streams.pop(stream_key, None)
 
         threading.Thread(
             target=run, name=f"HeadlessAiStream:{topic_id}", daemon=True

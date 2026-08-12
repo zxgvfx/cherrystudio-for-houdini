@@ -29,8 +29,14 @@ def get_electron_api_script(theme: str = 'light') -> str:
     window.__LOGGER_SOURCE = 'qt';
     window.__WINDOW_SOURCE_INITIALIZED = true;
     
-    // 在 hython 环境中手动持久化 localStorage
+    // v2 的数据由无头 Electron 的 SQLite / Qt WebEngine Profile 持久化。
+    // 绝不能再将 v1 的 localStorage.json 注回当前页面，否则旧 Redux
+    // 状态会覆盖 v2 设置。v1 运行时仍保留下方兼容逻辑。
     (function() {{
+        if (window.__CHERRY_API_V2 === true) {{
+            return;
+        }}
+
         // 定期保存 localStorage 到文件系统
         let lastSaved = {{}};
         
@@ -529,9 +535,6 @@ def get_electron_api_script(theme: str = 'light') -> str:
                     console.error('[Qt] Invalid headless event frame:', error);
                 }}
             }};
-            source.onerror = () => {{
-                // EventSource reconnects automatically; avoid noisy per-retry logs.
-            }};
         }}
 
         async function __qtCallJson(method, fallback, ...args) {{
@@ -544,6 +547,84 @@ def get_electron_api_script(theme: str = 'light') -> str:
                 return fallback;
             }}
         }}
+
+        // Qt serves the renderer from http://localhost, and Chromium forbids
+        // that origin from loading file:// images. Painting code has several
+        // independent image creation paths (React <img>, new Image() natural
+        // size probes, history hydration), so enforce the conversion once at
+        // the DOM boundary instead of relying on every caller to remember it.
+        (function installLocalImageHttpBridge() {{
+            if (!__backendUrl || window.__cherryLocalImageHttpBridgeInstalled) return;
+            try {{
+                window.__cherryLocalImageHttpBridgeInstalled = true;
+
+                function bridgeImageUrl(value) {{
+                    if (typeof value !== 'string' || !/^file:\\/\\//i.test(value)) return value;
+                    try {{
+                        var backend = (window.__CHERRY_BACKEND_URL || __backendUrl || '').replace(/\\/$/, '');
+                        if (!backend) return value;
+                        var parsed = new URL(value);
+                        var localPath = decodeURIComponent(parsed.pathname || '');
+                        // file:///C:/... parses as /C:/...; Windows wants C:/...
+                        if (/^\\/[A-Za-z]:\\//.test(localPath)) localPath = localPath.slice(1);
+                        // Normalize drive paths to backslashes so grant-read
+                        // Path.resolve() matches the Qt file dialog selection.
+                        if (/^[A-Za-z]:\\//.test(localPath)) localPath = localPath.replace(/\\//g, '\\\\');
+                        return backend +
+                            '/api/v1/files/raw-image?path=' + encodeURIComponent(localPath);
+                    }} catch (error) {{
+                        console.error('[Qt] Failed to bridge local image URL:', error);
+                        return value;
+                    }}
+                }}
+
+                var imageSrc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+                if (imageSrc && imageSrc.get && imageSrc.set && imageSrc.configurable !== false) {{
+                    Object.defineProperty(HTMLImageElement.prototype, 'src', {{
+                        configurable: imageSrc.configurable,
+                        enumerable: imageSrc.enumerable,
+                        get: imageSrc.get,
+                        set: function(value) {{ imageSrc.set.call(this, bridgeImageUrl(value)); }}
+                    }});
+                }}
+
+                var nativeSetAttribute = Element.prototype.setAttribute;
+                Element.prototype.setAttribute = function(name, value) {{
+                    if (this instanceof HTMLImageElement && String(name).toLowerCase() === 'src') {{
+                        value = bridgeImageUrl(String(value));
+                    }}
+                    return nativeSetAttribute.call(this, name, value);
+                }};
+
+                function rewriteExistingImages(root) {{
+                    var images = [];
+                    if (root instanceof HTMLImageElement) images.push(root);
+                    if (root && root.querySelectorAll) images.push.apply(images, root.querySelectorAll('img[src^="file:"]'));
+                    images.forEach(function(img) {{
+                        var raw = img.getAttribute('src');
+                        var bridged = bridgeImageUrl(raw);
+                        if (bridged !== raw) nativeSetAttribute.call(img, 'src', bridged);
+                    }});
+                }}
+                new MutationObserver(function(records) {{
+                    records.forEach(function(record) {{
+                        if (record.type === 'attributes') rewriteExistingImages(record.target);
+                        record.addedNodes.forEach(rewriteExistingImages);
+                    }});
+                }}).observe(document, {{
+                    subtree: true,
+                    childList: true,
+                    attributes: true,
+                    attributeFilter: ['src']
+                }});
+                rewriteExistingImages(document);
+            }} catch (error) {{
+                // Never let an optional image compatibility shim prevent the
+                // rest of the Electron API bridge from being installed.
+                window.__cherryLocalImageHttpBridgeInstalled = false;
+                console.error('[Qt] Local image HTTP bridge install failed:', error);
+            }}
+        }})();
 
         window.api = {{
             setSpellCheckLanguages: async (languages) => {{ try {{ await window.qt?.api?.setSpellCheckLanguages?.(JSON.stringify(languages || [])); }} catch(e) {{}} }},
@@ -632,7 +713,25 @@ def get_electron_api_script(theme: str = 'light') -> str:
                     try {{
                         const result = await window.qt?.api?.binaryImage?.(fileId);
                         if (!result || result === 'null') return null;
-                        return JSON.parse(result);
+                        const parsed = typeof result === 'string' ? JSON.parse(result) : result;
+                        if (!parsed) return null;
+                        const mime = parsed.mime || 'image/png';
+                        // Prefer raw base64 → Uint8Array so callers match Electron's
+                        // `{{ data: Buffer, mime }}` contract. Never hand a data-URL
+                        // string to `new Uint8Array(str)` (one byte per char → OOM).
+                        let b64 = parsed.base64;
+                        if (!b64 && typeof parsed.data === 'string') {{
+                            b64 = parsed.data.startsWith('data:')
+                                ? (parsed.data.split(',')[1] || '')
+                                : parsed.data;
+                        }}
+                        if (typeof b64 === 'string' && b64) {{
+                            const bin = atob(b64);
+                            const data = new Uint8Array(bin.length);
+                            for (let i = 0; i < bin.length; i++) data[i] = bin.charCodeAt(i);
+                            return {{ data, mime }};
+                        }}
+                        return parsed;
                     }} catch(e) {{ console.error('[Qt] file.binaryImage error:', e); return null; }}
                 }},
                 getPathForFile: (file) => {{ try {{ return file.path || ''; }} catch(e) {{ return ''; }} }},
@@ -707,7 +806,11 @@ def get_electron_api_script(theme: str = 'light') -> str:
             }},
             cache: {{
                 broadcastSync: (message) => {{ /* Houdini 场景通常单窗口，暂不支持跨窗口广播 */ }},
-                onSync: (callback) => {{ return function() {{}}; }},
+                // Houdini/fork customization: Node 侧 CacheService.broadcastSync 在 headless 下
+                // BrowserWindow 数量为 0，改为把同一条 `cache:sync` 消息通过 headless SSE
+                // (`publishHeadlessEvent`) 转发过来，这里复用 `__onIpcEvent` 订阅即可，驱动
+                // `topic.stream.statuses.*` 的 overlay-refresh handoff（token/费用统计等依赖它）。
+                onSync: (callback) => __onIpcEvent('cache:sync', callback),
                 getAllShared: async () => {{ return await __qtCallJson('cacheGetAllShared', {{}}); }}
             }},
             storageMonitor: {{
@@ -732,7 +835,9 @@ def get_electron_api_script(theme: str = 'light') -> str:
                         return {{ id: req?.id || '', status: 500, error: {{ code: 'INTERNAL', message: String(e) }}, metadata: {{ duration: 0, timestamp: Date.now() }} }};
                     }}
                 }},
-                onDataChanged: (callback) => {{ return function() {{}}; }}
+                // Houdini/fork customization: same headless SSE relay as `cache:sync`
+                // above, for `notifyDataApiDataChange` (usage settings, agent sessions, ...).
+                onDataChanged: (callback) => __onIpcEvent('data-api:data-changed', callback)
             }},
             ipcApi: {{
                 request: async (route, input, meta) => {{
@@ -803,6 +908,12 @@ def get_electron_api_script(theme: str = 'light') -> str:
     
     // ========== DEBUG: 全局错误捕获 ==========
     window.addEventListener('error', function(e) {{
+        // "ResizeObserver loop completed with undelivered notifications" is a
+        // well-known benign Chromium warning (fires whenever a ResizeObserver
+        // callback doesn't finish within one frame) — harmless noise, not an
+        // app bug, but it can fire dozens of times a second and drowns out
+        // real errors in the log file.
+        if (e.message && e.message.indexOf('ResizeObserver loop') !== -1) return;
         let errorDetails = e.message;
         try {{
             if (e.error) {{
@@ -867,7 +978,22 @@ def get_electron_api_script(theme: str = 'light') -> str:
         window.api.file.binaryImage = async function(fileId) {{ 
             try {{ 
                 const r = await window.qt?.api?.binaryImage?.(fileId)
-                return (typeof r==='string')? JSON.parse(r): (r||null)
+                const parsed = (typeof r==='string')? JSON.parse(r): (r||null)
+                if (!parsed) return null
+                const mime = parsed.mime || 'image/png'
+                let b64 = parsed.base64
+                if (!b64 && typeof parsed.data === 'string') {{
+                    b64 = parsed.data.startsWith('data:')
+                        ? (parsed.data.split(',')[1] || '')
+                        : parsed.data
+                }}
+                if (typeof b64 === 'string' && b64) {{
+                    const bin = atob(b64)
+                    const data = new Uint8Array(bin.length)
+                    for (let i = 0; i < bin.length; i++) data[i] = bin.charCodeAt(i)
+                    return {{ data, mime }}
+                }}
+                return parsed
             }} catch(e) {{ 
                 return null 
             }} 
@@ -1601,113 +1727,9 @@ def get_electron_api_script(theme: str = 'light') -> str:
         // fetchProxy monitor 已移除（调试用途，生产环境无需打印完整请求 payload）
     }}, 100);
     
-    // 强制隐藏代理设置 UI（代理完全由代码配置）
-    (function hideProxySettings() {{
-        try {{
-                
-                // 注入 CSS 隐藏代理设置相关的 UI 元素
-                const style = document.createElement('style');
-                style.id = 'cherry-hide-proxy-settings';
-                style.textContent = `
-                    /* 隐藏代理设置区域 - 通过多种选择器确保覆盖 */
-                    /* 设置页面中的代理设置部分 */
-                    [class*="proxy" i],
-                    [data-testid*="proxy" i],
-                    div:has(> [class*="proxy" i]),
-                    /* 包含代理模式选择的容器 */
-                    .ant-form-item:has([name*="proxy" i]),
-                    .ant-form-item:has([id*="proxy" i]),
-                    /* 直接匹配代理相关的表单项 */
-                    .ant-form-item:has(label:contains("代理")),
-                    .ant-form-item:has(label:contains("Proxy")),
-                    .ant-form-item:has(label:contains("proxy")),
-                    /* 隐藏代理绕过规则 */
-                    [class*="bypass" i],
-                    [data-testid*="bypass" i] {{
-                        display: none !important;
-                        visibility: hidden !important;
-                        height: 0 !important;
-                        overflow: hidden !important;
-                        opacity: 0 !important;
-                        pointer-events: none !important;
-                    }}
-                `;
-                
-                // 等待 DOM 加载完成后注入
-                if (document.head) {{
-                    document.head.appendChild(style);
-                }} else {{
-                    document.addEventListener('DOMContentLoaded', () => {{
-                        document.head.appendChild(style);
-                    }});
-                }}
-                
-                // 使用 MutationObserver 动态隐藏新添加的代理设置元素
-                const observer = new MutationObserver((mutations) => {{
-                    mutations.forEach((mutation) => {{
-                        mutation.addedNodes.forEach((node) => {{
-                            if (node.nodeType === Node.ELEMENT_NODE) {{
-                                // 检查是否包含代理相关的文本或属性
-                                const html = node.outerHTML || '';
-                                const text = node.textContent || '';
-                                if (
-                                    (html.toLowerCase().includes('proxy') || 
-                                     html.toLowerCase().includes('代理') ||
-                                     html.toLowerCase().includes('bypass') ||
-                                     html.toLowerCase().includes('绕过')) &&
-                                    !html.includes('cherry-hide-proxy-settings')
-                                ) {{
-                                    // 检查是否是设置面板中的代理设置
-                                    if (node.classList && (
-                                        node.className.toLowerCase().includes('proxy') ||
-                                        node.className.toLowerCase().includes('bypass') ||
-                                        node.className.toLowerCase().includes('settings')
-                                    )) {{
-                                        node.style.display = 'none';
-                                        node.style.visibility = 'hidden';
-                                    }}
-                                }}
-                            }}
-                        }});
-                    }});
-                }});
-                
-                function startObserving() {{
-                    const target = document.body || document.documentElement;
-                    if (target) {{
-                        observer.observe(target, {{ childList: true, subtree: true }});
-                    }} else {{
-                        document.addEventListener('DOMContentLoaded', () => {{
-                            observer.observe(document.body, {{ childList: true, subtree: true }});
-                        }});
-                    }}
-                }}
-                startObserving();
-                
-                // 定期检查并隐藏代理设置（作为备用方案）
-                setInterval(() => {{
-                    // 隐藏包含"代理"或"proxy"文本的设置项
-                    document.querySelectorAll('label, span, div').forEach(el => {{
-                        const text = el.textContent || '';
-                        if (
-                            (text.includes('代理') || text.toLowerCase().includes('proxy') ||
-                             text.includes('绕过') || text.toLowerCase().includes('bypass')) &&
-                            !el.closest('#cherry-hide-proxy-settings')
-                        ) {{
-                            // 找到最近的表单项容器
-                            const formItem = el.closest('.ant-form-item, .setting-item, .form-group, [class*="setting"]');
-                            if (formItem) {{
-                                formItem.style.display = 'none';
-                            }}
-                        }}
-                    }});
-                }}, 2000);
-                
-                console.log('[Qt] Proxy settings UI hidden');
-        }} catch(e) {{
-            console.warn('[Qt] Error hiding proxy settings:', e);
-        }}
-    }})();
+    // 托管代理的地址由主进程保存，Qt API 对 UI 返回空值，且 UI 写入
+    // 无法覆盖该配置。不要通过包含 “proxy/settings” 的广泛 DOM 选择器
+    // 隐藏元素：System 页面自身会匹配这些选择器，导致整页被隐藏。
     
     // ─── 划词助手（Selection Assistant）─── 后端 API 代理，实际 UI 由 Qt 窗口实现 ───
     (function initSelectionProxy() {{
@@ -3457,8 +3479,13 @@ def get_early_logger_fix_script() -> str:
         
         console.error('[Qt] ✅ memory.setConfig 拦截器已安装');
         
-        // 异步恢复 localStorage（不阻塞应用启动）
+        // 异步恢复 localStorage（不阻塞应用启动）。v2 必须保持其
+        // WebEngine Profile 中的独立状态，不能导入 v1 导出的 Redux 数据。
         (function() {
+            if (window.__CHERRY_API_V2 === true) {
+                return;
+            }
+
             var startTime = Date.now();
             var maxWaitTime = 5000; // 最多等待 5 秒
             var retryCount = 0;
@@ -3511,8 +3538,14 @@ def get_early_logger_fix_script() -> str:
             }, 0);
         }
         
-        // IndexedDB 手动持久化机制
+        // IndexedDB 手动持久化机制仅属于 v1。v2 的迁移由无头
+        // Electron 主进程完成；把旧 indexedDB.json 导入 v2 页面会因
+        // 缺少旧 object store 而抛出 NotFoundError。
         setTimeout(function() {
+            if (window.__CHERRY_API_V2 === true) {
+                return;
+            }
+
             if ('indexedDB' in window) {
                 if (!window.indexedDB) {
                     return;
@@ -3586,24 +3619,46 @@ def get_early_logger_fix_script() -> str:
                             const openRequest = window.indexedDB.open('CherryStudio', exportData.version);
                             openRequest.onsuccess = function(event) {
                                 const db = event.target.result;
-                                const storeNames = Object.keys(exportData.stores);
+                                const stores = exportData && exportData.stores && typeof exportData.stores === 'object'
+                                    ? exportData.stores
+                                    : {};
+                                const storeNames = Object.keys(stores);
                                 
                                 if (storeNames.length === 0) {
                                     db.close();
                                     return;
                                 }
                                 
-                                const tx = db.transaction(storeNames, 'readwrite');
+                                // A legacy export may refer to stores that do
+                                // not exist in the database currently opened
+                                // by this renderer. Never let that become an
+                                // uncaught page-level error.
+                                if (storeNames.some(function(storeName) {
+                                    return !db.objectStoreNames.contains(storeName);
+                                })) {
+                                    db.close();
+                                    return;
+                                }
+
+                                let tx;
+                                try {
+                                    tx = db.transaction(storeNames, 'readwrite');
+                                } catch (e) {
+                                    db.close();
+                                    return;
+                                }
                                 
                                 storeNames.forEach(function(storeName) {
                                     const store = tx.objectStore(storeName);
-                                    const data = exportData.stores[storeName];
+                                    const data = stores[storeName];
                                     
                                     store.clear();
                                     
-                                    data.forEach(function(item) {
-                                        store.add(item);
-                                    });
+                                    if (Array.isArray(data)) {
+                                        data.forEach(function(item) {
+                                            store.add(item);
+                                        });
+                                    }
                                 });
                                 
                                 tx.oncomplete = function() {
@@ -4274,10 +4329,12 @@ def get_post_load_fix_script() -> str:
             const xhr = new OriginalXHR();
             const originalOpen = xhr.open;
             const originalSend = xhr.send;
+            const originalSetRequestHeader = xhr.setRequestHeader;
             
             let requestUrl = '';
             let requestMethod = '';
             let requestBody = null;
+            let requestHeaders = {};
             
             xhr.open = function(method, url, ...args) {
                 requestUrl = url;
@@ -4285,10 +4342,115 @@ def get_post_load_fix_script() -> str:
                 console.log('[Cherry Studio] 📡 XHR intercepted:', method, url);
                 return originalOpen.apply(this, [method, url, ...args]);
             };
+
+            xhr.setRequestHeader = function(name, value) {
+                requestHeaders[String(name)] = String(value);
+                return originalSetRequestHeader.call(this, name, value);
+            };
             
             xhr.send = function(body) {
                 requestBody = body;
-                console.log('[Cherry Studio] 📡 XHR send, body:', body ? body.substring(0, 200) : 'empty');
+                console.log('[Cherry Studio] 📡 XHR send, body:', body ? String(body).substring(0, 200) : 'empty');
+
+                // Axios uses XMLHttpRequest rather than fetch for webpage content
+                // retrieval. Cross-origin requests from the Qt localhost origin are
+                // rejected by Chromium before they reach the managed proxy, so route
+                // those requests through the same backend transport as window.fetch.
+                let parsedUrl;
+                try {
+                    parsedUrl = new URL(String(requestUrl), window.location.href);
+                } catch (_) {
+                    parsedUrl = null;
+                }
+                const isExternalHttp =
+                    parsedUrl &&
+                    (parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:') &&
+                    parsedUrl.origin !== window.location.origin;
+                const backendUrl = window.__CHERRY_BACKEND_URL || '';
+                if (isExternalHttp && backendUrl) {
+                    const payload = {
+                        url: parsedUrl.href,
+                        method: String(requestMethod || 'GET').toUpperCase(),
+                        headers: requestHeaders,
+                        body: body == null ? null : String(body),
+                        timeout: 30,
+                        stream: false,
+                        requestId: ''
+                    };
+                    originalFetch(backendUrl.replace(/\\/$/, '') + '/api/v1/network/fetch', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-Session-Id': window.__CHERRY_SESSION_ID || ''
+                        },
+                        body: JSON.stringify(payload)
+                    }).then(function(proxyResponse) {
+                        return proxyResponse.json();
+                    }).then(function(result) {
+                        if (result.error && !result.status) {
+                            throw new Error(result.error);
+                        }
+                        const responseText = typeof result.body === 'string' ? result.body : '';
+                        let response = responseText;
+                        if (xhr.responseType === 'json') {
+                            try {
+                                response = responseText ? JSON.parse(responseText) : null;
+                            } catch (_) {
+                                response = null;
+                            }
+                        } else if (xhr.responseType === 'arraybuffer') {
+                            response = new TextEncoder().encode(responseText).buffer;
+                        } else if (xhr.responseType === 'blob') {
+                            response = new Blob([responseText], {
+                                type: result.headers?.['Content-Type'] || 'application/octet-stream'
+                            });
+                        }
+                        Object.defineProperty(xhr, 'status', {
+                            configurable: true,
+                            value: result.status || 200
+                        });
+                        Object.defineProperty(xhr, 'statusText', {
+                            configurable: true,
+                            value: result.statusText || 'OK'
+                        });
+                        Object.defineProperty(xhr, 'responseURL', {
+                            configurable: true,
+                            value: parsedUrl.href
+                        });
+                        Object.defineProperty(xhr, 'responseText', {
+                            configurable: true,
+                            value: responseText
+                        });
+                        Object.defineProperty(xhr, 'response', {
+                            configurable: true,
+                            value: response
+                        });
+                        Object.defineProperty(xhr, 'readyState', {
+                            configurable: true,
+                            value: 4
+                        });
+                        xhr.getAllResponseHeaders = function() {
+                            return Object.entries(result.headers || {})
+                                .map(function(entry) { return entry[0] + ': ' + entry[1]; })
+                                .join('\\r\\n');
+                        };
+                        xhr.getResponseHeader = function(name) {
+                            const wanted = String(name || '').toLowerCase();
+                            const entry = Object.entries(result.headers || {}).find(function(item) {
+                                return item[0].toLowerCase() === wanted;
+                            });
+                            return entry ? String(entry[1]) : null;
+                        };
+                        xhr.dispatchEvent(new Event('readystatechange'));
+                        xhr.dispatchEvent(new ProgressEvent('load'));
+                        xhr.dispatchEvent(new ProgressEvent('loadend'));
+                    }).catch(function(error) {
+                        console.error('[Cherry Studio] XHR proxy failed:', error);
+                        xhr.dispatchEvent(new ProgressEvent('error'));
+                        xhr.dispatchEvent(new ProgressEvent('loadend'));
+                    });
+                    return;
+                }
                 return originalSend.apply(this, arguments);
             };
             
@@ -4663,7 +4825,13 @@ def get_post_load_fix_script() -> str:
                             }
                             
                             if (parsed.error && !parsed.status) {
-                                console.error('[Cherry Studio] fetchProxy error (non-fatal):', parsed.error);
+                                // Favicon probing is intentionally skipped by the Python proxy:
+                                // it is unrelated to application/API traffic and can fire many
+                                // times while Agent skill/MCP cards render. Do not flood the
+                                // host console with this known benign result.
+                                if (parsed.error !== 'favicon request skipped') {
+                                    console.error('[Cherry Studio] fetchProxy error (non-fatal):', parsed.error);
+                                }
                                 // 将错误包装为 400 响应，让前端自己处理，而不是抛出异常导致面板报错
                                 return new Response(String(parsed.error || 'Bad Request'), {
                                     status: 400,
@@ -4745,7 +4913,7 @@ def get_post_load_fix_script() -> str:
 
         window.__fetchInterceptorInstalled = true;
         console.log('[Cherry Studio] fetch interceptor installed');
-    }, 2000);
+    }, 0);
     
     // 调试信息：延迟 3 秒输出
     setTimeout(function() {

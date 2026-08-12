@@ -13,6 +13,7 @@ import urllib.request
 import urllib.error
 import zipfile
 import base64
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -300,6 +301,68 @@ _RESOURCES_DIR = os.path.join(
     "resources",
 )
 
+_READ_GRANTS_LOCK = threading.Lock()
+_READ_GRANTS: list[Path] = []
+_MAX_READ_GRANTS = 512
+
+
+def _grant_read_paths(paths: list[str]) -> list[str]:
+    """Grant this backend process read access to user-selected files/directories."""
+    granted: list[str] = []
+    with _READ_GRANTS_LOCK:
+        for path_str in paths:
+            if not isinstance(path_str, str) or not path_str or not os.path.isabs(path_str):
+                continue
+            resolved = Path(path_str).resolve()
+            if not resolved.exists():
+                continue
+            if resolved in _READ_GRANTS:
+                _READ_GRANTS.remove(resolved)
+            _READ_GRANTS.append(resolved)
+            granted.append(str(resolved))
+        if len(_READ_GRANTS) > _MAX_READ_GRANTS:
+            del _READ_GRANTS[:-_MAX_READ_GRANTS]
+    return granted
+
+
+def _is_read_granted(resolved: Path) -> bool:
+    with _READ_GRANTS_LOCK:
+        grants = tuple(_READ_GRANTS)
+    for grant in grants:
+        if resolved == grant:
+            return True
+        if grant.is_dir():
+            try:
+                resolved.relative_to(grant)
+                return True
+            except ValueError:
+                pass
+    return False
+
+
+def _read_only_roots() -> list[str]:
+    """Read-only roots needed by the Qt renderer and headless Electron."""
+    roots = [_get_app_data_dir(), _RESOURCES_DIR]
+
+    electron_exe = os.environ.get("CHERRY_ELECTRON_APP_PATH", "")
+    if electron_exe:
+        runtime_resources = os.path.join(
+            os.path.dirname(os.path.abspath(electron_exe)),
+            "resources",
+            "app.asar",
+            "resources",
+        )
+        roots.append(runtime_resources)
+        roots.append(runtime_resources.replace("app.asar", "app.asar.unpacked", 1))
+
+    # Headless Electron owns generated painting files and bundled resources
+    # under this per-user directory. Restrict access to that product-specific
+    # root instead of allowing arbitrary AppData reads.
+    appdata = os.environ.get("APPDATA", "")
+    if appdata:
+        roots.append(os.path.join(appdata, "CherryStudioHoudiniHeadless"))
+    return roots
+
 
 def _safe_path(relative_path: str) -> str:
     """将相对路径限定在 APP_DATA_DIR 内，防止路径穿越"""
@@ -315,10 +378,21 @@ def _safe_read_path(path_str: str) -> str:
     解析只读路径：允许 APP_DATA_DIR 和应用 resources 目录。
     支持绝对路径和相对路径。
     """
+    # electron-builder records bundled resources under the virtual
+    # `app.asar/resources` path, while `asarUnpack: resources/**` stores their
+    # physical files beside it under `app.asar.unpacked/resources`. Electron's
+    # fs transparently performs that redirect; Python's pathlib cannot.
+    if "app.asar" in path_str and "app.asar.unpacked" not in path_str:
+        unpacked_path = path_str.replace("app.asar", "app.asar.unpacked", 1)
+        if os.path.exists(unpacked_path):
+            path_str = unpacked_path
+
     p = Path(path_str)
     if p.is_absolute():
         resolved = p.resolve()
-        for allowed in (_get_app_data_dir(), _RESOURCES_DIR):
+        if _is_read_granted(resolved):
+            return str(resolved)
+        for allowed in _read_only_roots():
             allowed_resolved = Path(allowed).resolve()
             try:
                 resolved.relative_to(allowed_resolved)
@@ -330,6 +404,16 @@ def _safe_read_path(path_str: str) -> str:
 
 
 # ─── 路由实现 ──────────────────────────────────────────────────────────────────
+
+@route("/api/v1/files/grant-read", methods=["POST"])
+def grant_read(ctx: dict) -> Any:
+    """Register paths explicitly selected through the native Qt file dialog."""
+    paths = ctx.get("body", {}).get("paths", [])
+    if not isinstance(paths, list):
+        return {"error": "paths must be a list", "granted": []}
+    granted = _grant_read_paths(paths)
+    return {"ok": True, "granted": granted}
+
 
 @route("/api/v1/files/read", methods=["POST"])
 def file_read(ctx: dict) -> Any:
@@ -355,6 +439,47 @@ def file_read(ctx: dict) -> Any:
     except Exception as e:
         _log(f"[files/read] {e}")
         return {"error": str(e)}
+
+
+@route("/api/v1/files/raw-image", methods=["GET"])
+def raw_image(ctx: dict) -> Any:
+    """Serve an allowlisted local image to the HTTP-origin Qt renderer."""
+    handler = ctx["_handler"]
+    raw_path = (ctx.get("query", {}).get("path") or [""])[0]
+    try:
+        full_path = _safe_read_path(raw_path)
+        if not os.path.isfile(full_path):
+            handler.send_error(404)
+            return STREAMING_HANDLED
+        image_mimes = {
+            ".avif": "image/avif",
+            ".bmp": "image/bmp",
+            ".gif": "image/gif",
+            ".ico": "image/x-icon",
+            ".jpeg": "image/jpeg",
+            ".jpg": "image/jpeg",
+            ".png": "image/png",
+            ".svg": "image/svg+xml",
+            ".webp": "image/webp",
+        }
+        mime = image_mimes.get(Path(full_path).suffix.lower()) or mimetypes.guess_type(full_path)[0]
+        if not mime or not mime.startswith("image/"):
+            handler.send_error(415)
+            return STREAMING_HANDLED
+        size = os.path.getsize(full_path)
+        handler.send_response(200)
+        handler.send_header("Content-Type", mime)
+        handler.send_header("Content-Length", str(size))
+        handler.send_header("Cache-Control", "private, max-age=3600")
+        handler.send_header("Access-Control-Allow-Origin", "*")
+        handler.end_headers()
+        with open(full_path, "rb") as image_file:
+            shutil.copyfileobj(image_file, handler.wfile)
+        return STREAMING_HANDLED
+    except Exception as e:
+        _log(f"[files/raw-image] {e}")
+        handler.send_error(403)
+        return STREAMING_HANDLED
 
 
 @route("/api/v1/files/pdf-to-images", methods=["POST"])
@@ -662,16 +787,35 @@ def binary_image(ctx: dict) -> Any:
     """
     读取图片文件并返回 base64 编码。
     返回: { mime, base64, data }
+
+    Lookup order matches how Qt + headless split storage: absolute path if it
+    exists, then ~/.cherrystudio/<dcc>/ (+ sessions / cross-DCC), then the
+    headless Electron Files directory under %APPDATA%.
     """
     body = ctx["body"]
     file_id = body.get("fileId", body.get("path", ""))
     if not file_id:
         return None
-    file_path = file_id
-    if not os.path.isabs(file_id) or not os.path.exists(file_id):
-        file_path = os.path.join(_get_app_data_dir(), file_id)
-    if not os.path.exists(file_path):
-        _log(f"[files/binary-image] not found: {file_path}")
+
+    file_path = ""
+    if os.path.isabs(str(file_id)) and os.path.isfile(file_id):
+        file_path = file_id
+    else:
+        filename = os.path.basename(str(file_id))
+        file_path = _find_file_in_app_data(filename)
+        if not file_path:
+            appdata = os.environ.get("APPDATA", "")
+            if appdata and filename:
+                for name in os.listdir(appdata):
+                    if not name.startswith("CherryStudio") or "Headless" not in name:
+                        continue
+                    candidate = os.path.join(appdata, name, "Data", "Files", filename)
+                    if os.path.isfile(candidate):
+                        file_path = candidate
+                        break
+
+    if not file_path or not os.path.exists(file_path):
+        _log(f"[files/binary-image] not found: {file_id}")
         return None
     _, ext = os.path.splitext(file_path.lower())
     _SUPPORTED = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif",
@@ -687,7 +831,10 @@ def binary_image(ctx: dict) -> Any:
     elif ext_c == "svg":
         ext_c = "svg+xml"
     mime = f"image/{ext_c}"
-    return {"mime": mime, "base64": b64, "data": f"data:{mime};base64,{b64}"}
+    # Keep `data` as raw base64 (Electron parity is Buffer bytes). Callers that
+    # need a data-URL should prefix themselves — shipping a full data-URL here
+    # doubles payload size through the Qt JSON bridge and has OOMed the renderer.
+    return {"mime": mime, "base64": b64, "data": b64}
 
 
 @route("/api/v1/files/save-base64-image", methods=["POST"])

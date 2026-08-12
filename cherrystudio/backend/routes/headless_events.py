@@ -2,8 +2,10 @@
 
 import json
 import queue
+import uuid
 
 from ...api.headless_electron_manager import HeadlessEventBroker
+from ...utils.logger import network_logger as _log
 from ..server import STREAMING_HANDLED, route
 
 
@@ -11,6 +13,7 @@ from ..server import STREAMING_HANDLED, route
 def headless_events(ctx):
     handler = ctx["_handler"]
     subscriber = HeadlessEventBroker.instance().subscribe()
+    conn_id = uuid.uuid4().hex[:8]
     try:
         handler.send_response(200)
         handler.send_header("Access-Control-Allow-Origin", "*")
@@ -29,8 +32,10 @@ def headless_events(ctx):
                 frame = b": ping\n\n"
             handler.wfile.write(frame)
             handler.wfile.flush()
-    except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError, OSError):
-        pass
+    except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError, OSError) as exc:
+        _log(f"[HeadlessEvents] id={conn_id} connection error: {exc!r}")
+    except Exception as exc:  # noqa: BLE001 - must not crash the request handler silently
+        _log(f"[HeadlessEvents] id={conn_id} UNEXPECTED error: {exc!r}")
     finally:
         HeadlessEventBroker.instance().unsubscribe(subscriber)
     return STREAMING_HANDLED

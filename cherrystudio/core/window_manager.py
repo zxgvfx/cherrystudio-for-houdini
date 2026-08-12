@@ -596,6 +596,9 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
                 "fetchProxy response",
                 # 重复的 MemoryService 配置警告（models 未定义，非致命）
                 "Failed to update memory config: TypeError: Cannot use 'in' operator",
+                # 众所周知的 Chromium 无害警告：ResizeObserver 回调没能在一帧内跑完，
+                # 与页面卡顿/渲染慢无关，高频出现时会把日志文件刷屏，掩盖真正的错误。
+                "ResizeObserver loop completed with undelivered notifications",
             )
             # 遇到以下关键词则强制输出（即使匹配了上面的过滤规则也不过滤）
             _FORCE_SHOW_KEYWORDS = (
@@ -819,7 +822,7 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
 window.__CHERRY_BACKEND_URL = "{_backend_url_escaped}";
 window.__CHERRY_SESSION_ID = "{_session_id_escaped}";
 window.__CHERRY_DCC_TYPE = "{_dcc_type_escaped}";
-window.__CHERRY_API_V2 = true;
+window.__CHERRY_API_V2 = {"true" if _USE_V2_API else "false"};
 console.error('[Cherry] Backend URL:', window.__CHERRY_BACKEND_URL, 'Session:', window.__CHERRY_SESSION_ID, 'DCC:', window.__CHERRY_DCC_TYPE);
 """)
         session_inject_script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
@@ -883,6 +886,39 @@ console.error('[Cherry] Backend URL:', window.__CHERRY_BACKEND_URL, 'Session:', 
 
         if page:
             page.loadFinished.connect(on_load_finished)
+
+        # ── 渲染进程崩溃自动恢复 ─────────────────────────────────────────────
+        # 症状：窗口还在，页面整片白屏。常见诱因是生图编辑把多张大图经
+        # Qt JSON bridge / 错误的 Uint8Array(string) 路径塞进渲染进程导致 OOM。
+        # 旧版 main 接了 renderProcessTerminated 却空实现；这里记录状态并
+        # 重新加载当前 URL，避免用户只能关窗重开。
+        def _on_render_process_terminated(termination_status, exit_code):
+            try:
+                status_name = getattr(termination_status, "name", str(termination_status))
+            except Exception:
+                status_name = str(termination_status)
+            print(
+                f"[WindowManager] Render process terminated: "
+                f"status={status_name} exitCode={exit_code} — reloading page"
+            )
+            try:
+                current = web_view.url()
+                if current.isValid() and current.toString() not in ("", "about:blank"):
+                    web_view.setUrl(current)
+                elif load_url:
+                    if str(load_url).startswith("http"):
+                        web_view.load(QUrl(load_url))
+                    else:
+                        abs_url = load_url if os.path.isabs(load_url) else os.path.abspath(load_url)
+                        web_view.load(QUrl.fromLocalFile(abs_url))
+            except Exception as reload_err:
+                print(f"[WindowManager] Failed to reload after render crash: {reload_err}")
+
+        if page is not None and hasattr(page, "renderProcessTerminated"):
+            try:
+                page.renderProcessTerminated.connect(_on_render_process_terminated)
+            except (AttributeError, TypeError) as bind_err:
+                print(f"[WindowManager] renderProcessTerminated bind failed: {bind_err}")
 
         # 加载 URL
         if load_url.startswith("http"):

@@ -1,11 +1,11 @@
 {
   "id": "ai-pipeline-bridge",
   "name": "AI Pipeline",
-  "version": "0.5.0",
-  "description": "ai-pipeline 的 Cherry 侧通用 workflow 启动器 + 配置与兼容 API 透传。打开后自动列出 server 上已注册的 workflow；开发者不需要再为每个 workflow 新增 CherryStudio 插件。配置：PIPELINE_API_BASE 或 ~/.cherrystudio/ai-pipeline-bridge.json",
+  "version": "0.6.0",
+  "description": "AI 工作流中心的桥接后端与兼容 API。工作流通过 Cherry 内置侧边栏统一访问；开发者不需要再为每个 workflow 新增插件图标。配置：PIPELINE_API_BASE 或 ~/.cherrystudio/ai-pipeline-bridge.json",
   "icon": "cube",
   "launcher": {
-    "enabled": true,
+    "enabled": false,
     "type": "webview",
     "label": "AI Pipeline",
     "category": "ai",

@@ -21,10 +21,14 @@ import sys
 # 此文件位于 <project_root>/cherrystudio/backend/cherry_backend_launcher.py
 # 向上两层即为 <project_root>（cherrystudio 包所在目录的父目录）
 _here         = os.path.dirname(os.path.abspath(__file__))   # .../cherrystudio/backend
-_project_root = os.path.dirname(os.path.dirname(_here))       # <project_root>
+_bundled_root = os.path.dirname(os.path.dirname(_here))       # <project_root>
+_project_root = os.path.abspath(
+    os.environ.get("CHERRY_STUDIO_SOURCE_ROOT", "").strip() or _bundled_root
+)
 
-if _project_root not in sys.path:
-    sys.path.insert(0, _project_root)
+if _project_root in sys.path:
+    sys.path.remove(_project_root)
+sys.path.insert(0, _project_root)
 
 # ── 清除继承的代理环境变量 ────────────────────────────────────────────────────
 # 后端进程通过显式 ProxyHandler 配置代理（由 /api/v1/network/set-proxy 接口管理）。

@@ -88,20 +88,31 @@ def ensure_qtwebengine_initialized():
         if default_disable_gpu and os.environ.get("QTWEBENGINE_DISABLE_GPU") not in {"1", "true", "True"}:
             os.environ["QTWEBENGINE_DISABLE_GPU"] = "1"
 
-        # 根据 GPU 偏好设置标志
+        # 根据 GPU 偏好设置标志。GUI 模式统一通过 ANGLE/D3D11 使用 GPU：
+        # Qt WebEngine 的原生 OpenGL 会与 DCC 宿主冲突，而 zero-copy 在部分
+        # Windows 驱动/嵌入窗口中会产生棋盘状纹理损坏。D3D11 仍是完整的
+        # GPU 加速，只禁用不稳定的零拷贝上传路径。
         gpu_disabled = os.environ.get("QTWEBENGINE_DISABLE_GPU") in {"1", "true", "True"}
-        is_dcc_host = detect_dcc_type() not in ("standalone",)
         desired = ["--no-sandbox"]
-        
-        if is_dcc_host:
-            # DCC 内的 WebGL 目前不稳定，避免启用激进 GPU 标志导致宿主进程崩溃。
-            # 3D 预览失败时由前端组件降级展示提示，而不是拖垮 Houdini/Maya。
-            desired.append("--disable-gpu")
-        elif not gpu_disabled:
-            desired.extend(["--ignore-gpu-blocklist", "--enable-gpu", "--enable-zero-copy"])
+
+        # Remove stale/conflicting switches inherited from launchers or an older
+        # initialization pass before selecting one deterministic render path.
+        flag_set.discard("--enable-zero-copy")
+        if not gpu_disabled:
+            flag_set.discard("--disable-gpu")
+            flag_set.discard("--disable-gpu-compositing")
+            flag_set.discard("--disable-software-rasterizer")
+            desired.extend([
+                "--ignore-gpu-blocklist",
+                "--enable-gpu",
+                "--use-gl=angle",
+                "--use-angle=d3d11",
+            ])
         else:
+            flag_set.discard("--enable-gpu")
             desired.append("--disable-gpu")
-            desired.extend(["--disable-software-rasterizer", "--disable-gpu-compositing"])
+            # Keep Chromium's software rasterizer available. Disabling both GPU
+            # and software rendering can produce a permanently blank WebEngine.
         
         # 添加所需标志
         for item in desired:

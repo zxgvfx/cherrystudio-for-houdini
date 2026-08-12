@@ -8,9 +8,10 @@ Node.js Agent Runtime sidecar 进程管理器 (Phase 1 + Phase 2)
 ``cherry_studio_api.py`` 只需替换实例化的类即可切换实现，无需改动
 ``apiServerStart/Stop/Restart/agentApiProxy`` 的业务逻辑。
 
-Node.js 查找顺序（复用 ``backend/routes/openclaw.py`` 的约定）：
-  1. ``~/.cherrystudio/bin/node(.exe)``
-  2. 系统 PATH 中的 ``node``
+Node.js 查找策略：
+  1. ``CHERRY_STUDIO_AGENT_NODE`` 显式指定的解释器；
+  2. 已安装的 LTS（偶数主版本）Node，优先较新的版本；
+  3. ``~/.cherrystudio/bin/node(.exe)`` 或系统 PATH 中的任意 Node。
 
 首次使用时，如果 ``agent-runtime/node_modules`` 不存在，会自动执行
 ``npm install --omit=dev`` 安装依赖（包含
@@ -55,12 +56,60 @@ def _agent_runtime_dir() -> str:
     return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "agent-runtime"))
 
 
+def _node_major_version(node_path: str) -> int | None:
+    """Returns a Node executable's major version without importing any addon."""
+    try:
+        result = subprocess.run(
+            [node_path, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            creationflags=_CREATE_NO_WINDOW,
+        )
+        if result.returncode != 0:
+            return None
+        return int((result.stdout or "").strip().lstrip("v").split(".", 1)[0])
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
 def _find_node() -> str | None:
+    override = os.environ.get("CHERRY_STUDIO_AGENT_NODE", "").strip()
+    if override and os.path.isfile(override):
+        return override
+
     ext = ".exe" if os.name == "nt" else ""
-    cs_node = os.path.join(get_bin_dir(), f"node{ext}")
-    if os.path.isfile(cs_node):
-        return cs_node
-    return shutil.which("node")
+    candidates = [
+        os.path.join(get_bin_dir(), f"node{ext}"),
+        shutil.which("node") or "",
+    ]
+    if os.name == "nt":
+        for root in (os.environ.get("ProgramW6432"), os.environ.get("ProgramFiles"), r"C:\Program Files"):
+            if root:
+                candidates.append(os.path.join(root, "nodejs", "node.exe"))
+
+    unique_candidates = []
+    seen = set()
+    for candidate in candidates:
+        if not candidate or not os.path.isfile(candidate):
+            continue
+        normalized = os.path.normcase(os.path.abspath(candidate))
+        if normalized not in seen:
+            seen.add(normalized)
+            unique_candidates.append(candidate)
+
+    # Native dependencies such as better-sqlite3 are distributed and tested
+    # against supported LTS releases. Prefer an even-major Node (22 over the
+    # bundled v25 in this installation) rather than starting with an ABI that
+    # cannot load the existing native addon.
+    lts_candidates = [
+        (major, candidate)
+        for candidate in unique_candidates
+        if (major := _node_major_version(candidate)) is not None and major >= 18 and major % 2 == 0
+    ]
+    if lts_candidates:
+        return max(lts_candidates, key=lambda item: item[0])[1]
+    return unique_candidates[0] if unique_candidates else None
 
 
 def _find_npm_cli_js(node_path: str | None) -> str | None:
@@ -71,6 +120,10 @@ def _find_npm_cli_js(node_path: str | None) -> str | None:
     triggers — matches the exact ``node_path`` binary that will run the
     sidecar, regardless of which npm happens to be discovered.
     """
+    override = os.environ.get("CHERRY_STUDIO_AGENT_NPM_CLI", "").strip()
+    if override and os.path.isfile(override):
+        return override
+
     candidates = []
     if node_path:
         node_dir = os.path.dirname(node_path)
@@ -197,6 +250,8 @@ def _get_proxy_env() -> dict:
 
     proxy_url = (cfg or {}).get("proxyUrl", "")
     bypass = (cfg or {}).get("bypassRules", "")
+    if bypass:
+        env["CHERRY_PROXY_BYPASS_RULES"] = bypass
     if proxy_url:
         env["HTTP_PROXY"] = proxy_url
         env["HTTPS_PROXY"] = proxy_url
@@ -207,6 +262,26 @@ def _get_proxy_env() -> dict:
         env["NO_PROXY"] = no_proxy
         env["no_proxy"] = no_proxy
     return env
+
+
+def _proxy_bootstrap_path() -> str:
+    return os.path.join(_agent_runtime_dir(), "lib", "proxyBootstrap.js")
+
+
+def _append_node_proxy_bootstrap(env: dict) -> None:
+    """Node / Claude CLI ignore NO_PROXY on Windows — preload proxyBootstrap.js."""
+    if not env.get("HTTP_PROXY") and not env.get("HTTPS_PROXY"):
+        return
+    bootstrap = _proxy_bootstrap_path()
+    if not os.path.isfile(bootstrap):
+        _log(f"[AgentRuntime] proxy bootstrap missing: {bootstrap}")
+        return
+    bp = bootstrap.replace("\\", "/")
+    flag = f'--require "{bp}"'
+    existing = (env.get("NODE_OPTIONS") or "").strip()
+    if flag in existing:
+        return
+    env["NODE_OPTIONS"] = f"{existing} {flag}".strip() if existing else flag
 
 
 def _build_env(port: int, app_data_dir: str, agent_runtime_home: str, api_key: str = "") -> dict:
@@ -223,6 +298,7 @@ def _build_env(port: int, app_data_dir: str, agent_runtime_home: str, api_key: s
     env["API_KEY"] = api_key or ""
     env["CHERRY_STUDIO_BACKEND_URL"] = _get_backend_url()
     env.update(_get_proxy_env())
+    _append_node_proxy_bootstrap(env)
     return env
 
 

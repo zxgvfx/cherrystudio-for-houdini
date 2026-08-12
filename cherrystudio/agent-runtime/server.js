@@ -1,5 +1,8 @@
 'use strict';
 
+// Must run before any outbound HTTP (provider resolution, Claude SDK subprocess).
+require('./lib/proxyBootstrap');
+
 /**
  * Cherry Studio Houdini Agent Runtime sidecar.
  *
