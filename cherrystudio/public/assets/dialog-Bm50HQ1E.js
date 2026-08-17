@@ -1,2 +1,0 @@
-const DIALOG_UNMOUNT_DELAY_MS = 200;
-export { DIALOG_UNMOUNT_DELAY_MS as t };

@@ -1,0 +1,61 @@
+import { c as __toESM } from "./rolldown-runtime-BeJLVFtF.js";
+import { r as mergeUiProps, t as cn } from "./utils-DqZKxyln.js";
+import { t as require_jsx_runtime } from "./jsx-runtime-DZOd5Dcc.js";
+import { n as AvatarFallback, t as Avatar } from "./avatar-DSfDf9Q4.js";
+var import_jsx_runtime = /* @__PURE__ */ __toESM(require_jsx_runtime());
+var ZeroOneLight = (props) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("svg", {
+	"data-ui": "ui.zero-one-light",
+	xmlns: "http://www.w3.org/2000/svg",
+	width: "1em",
+	height: "1em",
+	fill: "none",
+	viewBox: "0 0 120 120",
+	...mergeUiProps(props, "ui.zero-one-light"),
+	children: [
+		/* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", {
+			fill: "#133426",
+			d: "M0 0H120V120H0z"
+		}),
+		/* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", {
+			fill: "#fff",
+			fillRule: "evenodd",
+			d: "M29.2478 27.7812C30.7079 26.5788 32.8664 26.7877 34.0689 28.2477L49.0529 46.4416C50.2554 47.9017 50.0465 50.06 48.5864 51.2625 47.1262 52.4646 44.9678 52.2557 43.7653 50.7957L28.7812 32.602C27.5787 31.1419 27.7876 28.9836 29.2478 27.7812ZM56.4597 92C54.5682 92 53.0348 90.4669 53.0348 88.5755L53.0337 56.3484C53.0337 55.5165 53.3361 54.7135 53.8849 54.0886L74.8787 30.1834C76.1266 28.7622 78.291 28.6218 79.7124 29.8699 81.1335 31.1179 81.2739 33.2818 80.026 34.703L59.8835 57.6383 59.8847 88.575C59.8847 90.4664 58.3515 92 56.4597 92ZM81.1114 65.504C83.0028 65.504 84.536 67.0376 84.536 68.929V88.1219C84.536 90.0133 83.0028 91.5465 81.1114 91.5465 79.22 91.5465 77.6865 90.0133 77.6865 88.1219V68.929C77.6865 67.0376 79.22 65.504 81.1114 65.504Z",
+			clipRule: "evenodd"
+		}),
+		/* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", {
+			fill: "#0F0",
+			d: "M85.9468 60.4813C88.8861 60.4813 91.2691 58.0986 91.2691 55.1594C91.2691 52.22 88.8861 49.8375 85.9468 49.8375C83.0075 49.8375 80.6245 52.22 80.6245 55.1594C80.6245 58.0986 83.0075 60.4813 85.9468 60.4813Z"
+		})
+	]
+});
+function ZeroOneAvatar({ size = 32, shape = "circle", className }) {
+	return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Avatar, {
+		className: cn("overflow-hidden", shape === "circle" ? "rounded-full" : "rounded-[20%]", className),
+		style: {
+			width: size,
+			height: size
+		},
+		children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(AvatarFallback, {
+			className: "text-foreground",
+			children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ZeroOneLight, { style: {
+				width: size,
+				height: size
+			} })
+		})
+	});
+}
+var ZeroOne = ({ variant, className, ...props }) => {
+	if (variant === "light") return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ZeroOneLight, {
+		...props,
+		className
+	});
+	return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ZeroOneLight, {
+		...props,
+		className
+	});
+};
+const ZeroOneIcon = /* @__PURE__ */ Object.assign(ZeroOne, {
+	Avatar: ZeroOneAvatar,
+	colorPrimary: "#133426"
+});
+export { ZeroOneIcon as t };
