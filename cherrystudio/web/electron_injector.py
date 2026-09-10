@@ -439,7 +439,7 @@ def get_electron_api_script(theme: str = 'light') -> str:
     // HTTP-based window.qt.api（替代 QWebChannel，所有调用走后端 HTTP）
     // ─────────────────────────────────────────────────────────────────────────
     (function(){{
-        var _backendUrl = window.__CHERRY_BACKEND_URL || '';
+        var _backendUrl = (window.__CHERRY_QT_BRIDGE_URL || window.__CHERRY_BACKEND_URL || '').replace(/\/$/, '');
         var _sessionId  = window.__CHERRY_SESSION_ID  || '';
 
         window.qt = window.qt || {{}};
@@ -626,6 +626,37 @@ def get_electron_api_script(theme: str = 'light') -> str:
             }}
         }})();
 
+        // 二进制落盘必须走原始 HTTP body。走 window.qt.api 的 JSON 通道会先被
+        // TextDecoder 解码（>=0x80 的字节 → U+FFFD），再被 Python 文本模式写入
+        // （LF → CRLF），PNG/JPG/PDF/视频落到磁盘上必然是坏的。
+        // fetch 的 body 必须是 Blob：Qt WebEngine 会把 Uint8Array 序列化成字符串。
+        async function __qtWriteBinaryFile(filePath, data) {{
+            const backend = (window.__CHERRY_BACKEND_URL || __backendUrl || '').replace(/\\/$/, '');
+            if (!backend) throw new Error('file write failed: backend url not available');
+            const bytes = data instanceof Uint8Array
+                ? data
+                : (data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data));
+            // Qt WebEngine's fetch often stringifies a TypedArray body. Blob keeps
+            // the raw bytes so PNG magic (0x89) survives to disk.
+            const blob = new Blob([bytes], {{ type: 'application/octet-stream' }});
+            const resp = await fetch(backend + '/api/v1/files/write-binary?path=' + encodeURIComponent(filePath), {{
+                method: 'POST',
+                headers: {{
+                    'Content-Type': 'application/octet-stream',
+                    'X-Session-Id': window.__CHERRY_SESSION_ID || ''
+                }},
+                body: blob
+            }});
+            const result = await resp.json().catch(() => ({{}}));
+            if (!resp.ok || (result && result.error)) {{
+                throw new Error('file write failed: ' + ((result && result.error) || resp.status));
+            }}
+            if (typeof result.size === 'number' && result.size !== bytes.byteLength) {{
+                throw new Error('file write failed: size mismatch');
+            }}
+            return filePath;
+        }}
+
         window.api = {{
             setSpellCheckLanguages: async (languages) => {{ try {{ await window.qt?.api?.setSpellCheckLanguages?.(JSON.stringify(languages || [])); }} catch(e) {{}} }},
             setLaunchOnBoot: async (isActive) => {{ try {{ await window.qt?.api?.setLaunchOnBoot?.(!!isActive); }} catch(e) {{}} }},
@@ -692,18 +723,25 @@ def get_electron_api_script(theme: str = 'light') -> str:
                 get: async (filePath) => {{ return await __qtCallJson('fileGetV2', null, filePath); }},
                 createTempFile: async (fileName) => {{ try {{ return (await window.qt?.api?.fileCreateTempFile?.(fileName)) || fileName; }} catch(e) {{ return fileName; }} }},
                 mkdir: async (dirPath) => {{ try {{ await window.qt?.api?.fileMkdir?.(dirPath); }} catch(e) {{}} }},
+                // 二进制失败必须抛出：静默失败会附上一个空/损坏文件再发给模型。
                 write: async (filePath, data) => {{
+                    if (typeof data !== 'string') {{
+                        await __qtWriteBinaryFile(filePath, data);
+                        return;
+                    }}
                     try {{
-                        const content = typeof data === 'string' ? data : new TextDecoder().decode(data);
-                        await window.qt?.api?.fileWrite?.(filePath, content);
+                        await window.qt?.api?.fileWrite?.(filePath, data);
                     }} catch(e) {{ console.error('[Qt] file.write error:', e); }}
                 }},
                 open: async (options) => {{ return await __qtCallJson('fileSelect', null, JSON.stringify(options || {{}})); }},
                 openPath: async (path) => {{ try {{ await window.qt?.api?.openPath?.(path); }} catch(e) {{}} }},
                 save: async (path, content, options) => {{
                     try {{
-                        const text = typeof content === 'string' ? content : new TextDecoder().decode(content);
-                        await window.qt?.api?.fileWrite?.(path, text);
+                        if (typeof content === 'string') {{
+                            await window.qt?.api?.fileWrite?.(path, content);
+                        }} else {{
+                            await __qtWriteBinaryFile(path, content);
+                        }}
                         return path;
                     }} catch(e) {{ console.error('[Qt] file.save error:', e); return null; }}
                 }},

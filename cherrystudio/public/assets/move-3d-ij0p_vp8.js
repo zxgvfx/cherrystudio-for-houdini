@@ -1,0 +1,28 @@
+import "./react-C1DTAr29.js";
+import { t as createLucideIcon } from "./createLucideIcon-iAH3Or8b.js";
+/**
+* @license lucide-react v0.525.0 - ISC
+*
+* This source code is licensed under the ISC license.
+* See the LICENSE file in the root directory of this source tree.
+*/
+var __iconNode = [
+	["path", {
+		d: "M5 3v16h16",
+		key: "1mqmf9"
+	}],
+	["path", {
+		d: "m5 19 6-6",
+		key: "jh6hbb"
+	}],
+	["path", {
+		d: "m2 6 3-3 3 3",
+		key: "tkyvxa"
+	}],
+	["path", {
+		d: "m18 16 3 3-3 3",
+		key: "1d4glt"
+	}]
+];
+var Move3d = createLucideIcon("move-3d", __iconNode);
+export { __iconNode, Move3d as default };

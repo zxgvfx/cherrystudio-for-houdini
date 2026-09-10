@@ -24,6 +24,7 @@ const fs = require('node:fs');
 
 const { AgentDb } = require('./lib/db');
 const { runTurn } = require('./lib/claudeRunner');
+const { applyCocoProposal, refreshCocoTitle, rejectCocoProposal, runCocoTurn } = require('./lib/cocoRunner');
 const { broker } = require('./lib/permissions');
 const { getSkillStore } = require('./lib/skills');
 const { Scheduler } = require('./lib/scheduler');
@@ -178,7 +179,8 @@ app.post('/v1/agents/:agentId/sessions', (req, res) => {
     plan_model: body.plan_model,
     small_model: body.small_model,
     slash_commands: body.slash_commands,
-    configuration: body.configuration || agent.configuration
+    configuration: body.configuration || agent.configuration,
+    agent_type: agent.type
   });
   res.status(201).json({ ...session, tools: [], messages: [], plugins: [] });
 });
@@ -197,6 +199,12 @@ app.get('/v1/agents/:agentId/sessions/:sessionId', (req, res) => {
 app.patch('/v1/agents/:agentId/sessions/:sessionId', (req, res) => {
   const updated = db.updateSession(req.params.agentId, req.params.sessionId, req.body || {});
   if (!updated) return sendError(res, 404, 'Session not found', 'not_found', 'session_not_found');
+  const agent = db.getAgent(req.params.agentId);
+  if (agent && agent.type === 'coco' && req.body && Object.prototype.hasOwnProperty.call(req.body, 'name')) {
+    refreshCocoTitle(agent, updated).catch((err) => {
+      console.warn('[server] coco title refresh failed', err && err.message);
+    });
+  }
   res.json({ ...updated, tools: [], messages: db.listMessages(updated.id), plugins: [] });
 });
 
@@ -208,6 +216,31 @@ app.delete('/v1/agents/:agentId/sessions/:sessionId', (req, res) => {
 // ---------------------------------------------------------------------------
 // Session messages (streaming turn) + history
 // ---------------------------------------------------------------------------
+
+app.post('/v1/agents/:agentId/sessions/:sessionId/coco/apply', async (req, res) => {
+  const agent = db.getAgent(req.params.agentId);
+  if (!agent) return sendError(res, 404, 'Agent not found', 'not_found', 'agent_not_found');
+  if (agent.type !== 'coco') return sendError(res, 400, 'Not a COCO agent', 'validation_error', 'invalid_agent_type');
+  const session = db.getSession(req.params.agentId, req.params.sessionId);
+  if (!session) return sendError(res, 404, 'Session not found', 'not_found', 'session_not_found');
+  try {
+    const result = await applyCocoProposal(agent, session, db, req.body || {});
+    res.json(result || { ok: true });
+  } catch (err) {
+    sendError(res, 502, (err && err.message) || 'Failed to apply COCO proposal', 'upstream_error', 'coco_apply_failed');
+  }
+});
+
+app.post('/v1/agents/:agentId/sessions/:sessionId/coco/reject', async (req, res) => {
+  const agent = db.getAgent(req.params.agentId);
+  if (!agent) return sendError(res, 404, 'Agent not found', 'not_found', 'agent_not_found');
+  if (agent.type !== 'coco') return sendError(res, 400, 'Not a COCO agent', 'validation_error', 'invalid_agent_type');
+  try {
+    res.json(await rejectCocoProposal());
+  } catch (err) {
+    sendError(res, 502, (err && err.message) || 'Failed to reject COCO proposal', 'upstream_error', 'coco_reject_failed');
+  }
+});
 
 app.delete('/v1/agents/:agentId/sessions/:sessionId/messages/:messageId', (req, res) => {
   const deleted = db.deleteMessage(req.params.sessionId, Number(req.params.messageId));
@@ -284,30 +317,60 @@ app.post('/v1/agents/:agentId/sessions/:sessionId/messages', async (req, res) =>
     typeof (error && error.message) === 'string' && /content block not found/i.test(error.message);
 
   const maxAttempts = 2;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+  if (agent.type === 'coco') {
     try {
-      await runTurn({
+      await runCocoTurn({
         agent,
         session,
         content,
         db,
-        appDataDir: APP_DATA_DIR,
-        agentRuntimeHome: AGENT_RUNTIME_HOME,
         abortController,
         onChunk: write
       });
-      break;
     } catch (error) {
-      const canRetry = attempt < maxAttempts && !hasEmittedContent && !abortController.signal.aborted && isTransientContentBlockError(error);
-      if (canRetry) {
-        console.warn(`[server] Transient gateway streaming error on attempt ${attempt}, retrying: ${error.message}`);
-        continue;
-      }
       write({
         type: 'error',
-        error: { message: (error && error.message) || 'Stream processing error', type: 'stream_error', code: 'stream_processing_failed' }
+        error: {
+          message: (error && error.message) || 'COCO pipeline error',
+          type: 'stream_error',
+          code: 'coco_pipeline_failed'
+        }
       });
-      break;
+    }
+  } else {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await runTurn({
+          agent,
+          session,
+          content,
+          db,
+          appDataDir: APP_DATA_DIR,
+          agentRuntimeHome: AGENT_RUNTIME_HOME,
+          abortController,
+          onChunk: write
+        });
+        break;
+      } catch (error) {
+        const canRetry =
+          attempt < maxAttempts &&
+          !hasEmittedContent &&
+          !abortController.signal.aborted &&
+          isTransientContentBlockError(error);
+        if (canRetry) {
+          console.warn(`[server] Transient gateway streaming error on attempt ${attempt}, retrying: ${error.message}`);
+          continue;
+        }
+        write({
+          type: 'error',
+          error: {
+            message: (error && error.message) || 'Stream processing error',
+            type: 'stream_error',
+            code: 'stream_processing_failed'
+          }
+        });
+        break;
+      }
     }
   }
 

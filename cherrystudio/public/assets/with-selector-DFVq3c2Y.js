@@ -1,0 +1,71 @@
+import { t as __commonJSMin } from "./rolldown-runtime-D8OvLAZx.js";
+import { t as require_react } from "./react-C1DTAr29.js";
+import { t as require_shim } from "./shim-2TzZzGeK.js";
+/**
+* @license React
+* use-sync-external-store-shim/with-selector.production.js
+*
+* Copyright (c) Meta Platforms, Inc. and affiliates.
+*
+* This source code is licensed under the MIT license found in the
+* LICENSE file in the root directory of this source tree.
+*/
+var require_with_selector_production = /* @__PURE__ */ __commonJSMin(((exports) => {
+	var React = require_react(), shim = require_shim();
+	function is(x, y) {
+		return x === y && (0 !== x || 1 / x === 1 / y) || x !== x && y !== y;
+	}
+	var objectIs = "function" === typeof Object.is ? Object.is : is, useSyncExternalStore = shim.useSyncExternalStore, useRef = React.useRef, useEffect = React.useEffect, useMemo = React.useMemo, useDebugValue = React.useDebugValue;
+	exports.useSyncExternalStoreWithSelector = function(subscribe, getSnapshot, getServerSnapshot, selector, isEqual) {
+		var instRef = useRef(null);
+		if (null === instRef.current) {
+			var inst = {
+				hasValue: !1,
+				value: null
+			};
+			instRef.current = inst;
+		} else inst = instRef.current;
+		instRef = useMemo(function() {
+			function memoizedSelector(nextSnapshot) {
+				if (!hasMemo) {
+					hasMemo = !0;
+					memoizedSnapshot = nextSnapshot;
+					nextSnapshot = selector(nextSnapshot);
+					if (void 0 !== isEqual && inst.hasValue) {
+						var currentSelection = inst.value;
+						if (isEqual(currentSelection, nextSnapshot)) return memoizedSelection = currentSelection;
+					}
+					return memoizedSelection = nextSnapshot;
+				}
+				currentSelection = memoizedSelection;
+				if (objectIs(memoizedSnapshot, nextSnapshot)) return currentSelection;
+				var nextSelection = selector(nextSnapshot);
+				if (void 0 !== isEqual && isEqual(currentSelection, nextSelection)) return memoizedSnapshot = nextSnapshot, currentSelection;
+				memoizedSnapshot = nextSnapshot;
+				return memoizedSelection = nextSelection;
+			}
+			var hasMemo = !1, memoizedSnapshot, memoizedSelection, maybeGetServerSnapshot = void 0 === getServerSnapshot ? null : getServerSnapshot;
+			return [function() {
+				return memoizedSelector(getSnapshot());
+			}, null === maybeGetServerSnapshot ? void 0 : function() {
+				return memoizedSelector(maybeGetServerSnapshot());
+			}];
+		}, [
+			getSnapshot,
+			getServerSnapshot,
+			selector,
+			isEqual
+		]);
+		var value = useSyncExternalStore(subscribe, instRef[0], instRef[1]);
+		useEffect(function() {
+			inst.hasValue = !0;
+			inst.value = value;
+		}, [value]);
+		useDebugValue(value);
+		return value;
+	};
+}));
+var require_with_selector = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+	module.exports = require_with_selector_production();
+}));
+export { require_with_selector as t };

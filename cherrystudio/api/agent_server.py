@@ -7,9 +7,11 @@ import json
 import os
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 from typing import Optional
+
+from ..utils.client_disconnect import DisconnectQuietHandlerMixIn, DisconnectQuietMixIn
 
 # 导入统一日志模块
 import sys
@@ -38,9 +40,12 @@ _RE_SESSIONS_REORDER = re.compile(r'^/v1/agents/(?P<agent_id>[^/]+)/sessions/reo
 _RE_SESSION_BY_ID = re.compile(r'^/v1/agents/(?P<agent_id>[^/]+)/sessions/(?P<session_id>[^/]+)/?$')
 _RE_MESSAGES_BASE = re.compile(r'^/v1/agents/(?P<agent_id>[^/]+)/sessions/(?P<session_id>[^/]+)/messages/?$')
 _RE_MESSAGE_BY_ID = re.compile(r'^/v1/agents/(?P<agent_id>[^/]+)/sessions/(?P<session_id>[^/]+)/messages/(?P<message_id>[^/]+)/?$')
+_RE_COCO_APPLY = re.compile(r'^/v1/agents/(?P<agent_id>[^/]+)/sessions/(?P<session_id>[^/]+)/coco/apply/?$')
+_RE_COCO_REJECT = re.compile(r'^/v1/agents/(?P<agent_id>[^/]+)/sessions/(?P<session_id>[^/]+)/coco/reject/?$')
+_RE_COCO_CANVAS = re.compile(r'^/v1/agents/(?P<agent_id>[^/]+)/sessions/(?P<session_id>[^/]+)/coco/canvas/?$')
 
 
-class AgentAPIHandler(BaseHTTPRequestHandler):
+class AgentAPIHandler(DisconnectQuietHandlerMixIn, BaseHTTPRequestHandler):
     """Agent API 请求处理器"""
     
     providers_loader = None  # 类变量，由服务器设置
@@ -1294,6 +1299,20 @@ class AgentAPIHandler(BaseHTTPRequestHandler):
             if not agent:
                 self._sse_error('Agent not found', 'not_found')
                 return
+            if agent.get('type') == 'coco':
+                session = SessionStorage.get_session(agent_id, session_id)
+                if not session:
+                    self._sse_error('Session not found', 'not_found')
+                    return
+                self.send_response(200)
+                self._send_cors_headers()
+                self.send_header('Content-Type', 'text/event-stream')
+                self.send_header('Cache-Control', 'no-cache')
+                self.send_header('Connection', 'keep-alive')
+                self.end_headers()
+                from coco_agent_adapter import handle_coco_messages
+                handle_coco_messages(self, agent, session, content)
+                return
             session = SessionStorage.get_session(agent_id, session_id)
             if not session:
                 self._sse_error('Session not found', 'not_found')
@@ -1756,6 +1775,20 @@ class AgentAPIHandler(BaseHTTPRequestHandler):
                     self._json_response(200, {'data': sessions, 'total': len(sessions), 'limit': 100, 'offset': 0})
                     return
 
+                m = _RE_COCO_CANVAS.match(path)
+                if m:
+                    agent = AgentStorage.get_agent(m.group('agent_id'))
+                    session = SessionStorage.get_session(m.group('agent_id'), m.group('session_id'))
+                    if not agent or not session:
+                        self._json_response(404, {'error': {'message': 'Not found', 'type': 'not_found_error'}})
+                        return
+                    if agent.get('type') != 'coco':
+                        self._json_response(400, {'error': {'message': 'Not a COCO agent', 'type': 'validation_error'}})
+                        return
+                    from coco_agent_adapter import get_coco_canvas
+                    self._json_response(200, get_coco_canvas(agent, session))
+                    return
+
                 m = _RE_SESSION_BY_ID.match(path)
                 if m:
                     s = SessionStorage.get_session(m.group('agent_id'), m.group('session_id'))
@@ -1809,6 +1842,52 @@ class AgentAPIHandler(BaseHTTPRequestHandler):
 
                 data = self._read_json_body()
 
+                m = _RE_COCO_APPLY.match(path)
+                if m:
+                    agent = AgentStorage.get_agent(m.group('agent_id'))
+                    session = SessionStorage.get_session(m.group('agent_id'), m.group('session_id'))
+                    if not agent or not session:
+                        self._json_response(404, {'error': {'message': 'Not found', 'type': 'not_found_error'}})
+                        return
+                    if agent.get('type') != 'coco':
+                        self._json_response(400, {'error': {'message': 'Not a COCO agent', 'type': 'validation_error'}})
+                        return
+                    from coco_agent_adapter import apply_coco_proposal
+                    result = apply_coco_proposal(agent, session, data or {})
+                    self._json_response(200, result)
+                    return
+
+                m = _RE_COCO_CANVAS.match(path)
+                if m:
+                    agent = AgentStorage.get_agent(m.group('agent_id'))
+                    session = SessionStorage.get_session(m.group('agent_id'), m.group('session_id'))
+                    if not agent or not session:
+                        self._json_response(404, {'error': {'message': 'Not found', 'type': 'not_found_error'}})
+                        return
+                    if agent.get('type') != 'coco':
+                        self._json_response(400, {'error': {'message': 'Not a COCO agent', 'type': 'validation_error'}})
+                        return
+                    from coco_agent_adapter import apply_coco_proposal, canvas_from_pipeline_snapshot
+                    result = apply_coco_proposal(agent, session, data or {})
+                    pipeline_id = (session.get('configuration') or {}).get('coco_pipeline_session_id')
+                    if isinstance(result, dict) and pipeline_id:
+                        result = canvas_from_pipeline_snapshot(result, str(pipeline_id))
+                    self._json_response(200, result)
+                    return
+
+                m = _RE_COCO_REJECT.match(path)
+                if m:
+                    agent = AgentStorage.get_agent(m.group('agent_id'))
+                    if not agent:
+                        self._json_response(404, {'error': {'message': 'Agent not found', 'type': 'not_found_error'}})
+                        return
+                    if agent.get('type') != 'coco':
+                        self._json_response(400, {'error': {'message': 'Not a COCO agent', 'type': 'validation_error'}})
+                        return
+                    from coco_agent_adapter import reject_coco_proposal
+                    self._json_response(200, reject_coco_proposal())
+                    return
+
                 m = _RE_SESSIONS_BASE.match(path)
                 if m:
                     session = SessionStorage.create_session(m.group('agent_id'), data)
@@ -1855,6 +1934,13 @@ class AgentAPIHandler(BaseHTTPRequestHandler):
                 if m:
                     result = SessionStorage.update_session(m.group('agent_id'), m.group('session_id'), data)
                     if result:
+                        agent = AgentStorage.get_agent(m.group('agent_id'))
+                        if agent and agent.get('type') == 'coco' and 'name' in (data or {}):
+                            try:
+                                from coco_agent_adapter import refresh_coco_title
+                                refresh_coco_title(agent, result)
+                            except Exception as exc:  # noqa: BLE001
+                                _log(f"[coco] title refresh failed: {exc}")
                         self._json_response(200, result)
                     else:
                         self._json_response(404, {'error': {'message': 'Session not found', 'type': 'not_found_error'}})
@@ -2272,11 +2358,15 @@ class SessionStorage:
         return True
 
 
+class _AgentHTTPServer(DisconnectQuietMixIn, ThreadingHTTPServer):
+    daemon_threads = True
+
+
 class AgentServer:
     """Agent API 服务器"""
     
     def __init__(self, providers_loader=None):
-        self.server: Optional[ThreadingHTTPServer] = None
+        self.server: Optional[_AgentHTTPServer] = None
         self.thread: Optional[threading.Thread] = None
         self.port = 0
         self.host = '127.0.0.1'
@@ -2304,7 +2394,7 @@ class AgentServer:
             AgentAPIHandler.providers_loader = self.providers_loader
             
             # 创建服务器
-            self.server = ThreadingHTTPServer((host, port), AgentAPIHandler)
+            self.server = _AgentHTTPServer((host, port), AgentAPIHandler)
             self.server.daemon_threads = True
             self.port = self.server.server_port
             self.running = True

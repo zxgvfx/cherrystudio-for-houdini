@@ -31,6 +31,7 @@ import shutil
 import tempfile
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from datetime import datetime, timezone
 from typing import Optional
 from pathlib import Path
@@ -48,6 +49,7 @@ from .agent_permission_bridge import PermissionBridge
 from .headless_electron_manager import get_headless_electron_manager
 
 _log = network_logger
+_DATA_API_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="data-api")
 
 
 # ─── 后端服务调用工具 ─────────────────────────────────────────────────────────
@@ -128,9 +130,12 @@ class CherryStudioAPI(QObject):
         self._backend_url = url
         _log(f"[CherryStudioAPI] Backend URL set: {url}")
         self._headless_electron.set_python_backend_url(url)
-        ok, message = self._headless_electron.start()
-        if not ok:
-            _log(f"[CherryStudioAPI] Headless Electron unavailable: {message}")
+        if os.environ.get("CHERRY_PANEL_ATTACH") == "1":
+            self._headless_electron.begin_attach_in_background()
+        else:
+            ok, message = self._headless_electron.start()
+            if not ok:
+                _log(f"[CherryStudioAPI] Headless Electron unavailable: {message}")
         # _apply_secure_proxy() 在 __init__ 时 backend_url 还为空，未能发送到后端
         # 此处后端已就绪，补发代理配置
         if self._proxy_url or self._hardcoded_proxy:
@@ -399,10 +404,43 @@ class CherryStudioAPI(QObject):
         r = self._svc("/api/v1/files/read", {"path": path})
         return r.get("content") or ""
 
+    def _write_local_if_allowed(self, path: str, content: str) -> bool:
+        """Write paste/temp files locally when the backend sandbox rejects them."""
+        try:
+            abs_path = os.path.abspath(path)
+            app_data = os.path.abspath(self._get_app_data_dir())
+            temp_dir = os.path.abspath(os.path.join(tempfile.gettempdir(), "cherrystudio"))
+
+            def _within(target: str, root: str) -> bool:
+                t = os.path.normcase(target)
+                r = os.path.normcase(root)
+                return t == r or t.startswith(r + os.sep)
+
+            marker = os.sep + "temp" + os.sep + "cherrystudio" + os.sep
+            if not (
+                _within(abs_path, app_data)
+                or _within(abs_path, temp_dir)
+                or marker in os.path.normcase(abs_path)
+            ):
+                return False
+            os.makedirs(os.path.dirname(abs_path) or ".", exist_ok=True)
+            with open(abs_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            return True
+        except Exception as e:
+            _log(f"[fileWrite] local fallback failed: {e}")
+            return False
+
     @Slot(str, str, result=bool)
     def fileWrite(self, path: str, content: str) -> bool:
         r = self._svc("/api/v1/files/write", {"path": path, "content": content})
-        return not r.get("error")
+        if not r.get("error"):
+            return True
+        if self._write_local_if_allowed(path, content):
+            _log(f"[fileWrite] backend denied, wrote locally: {path}")
+            return True
+        _log(f"[fileWrite] {r.get('error')}")
+        return False
 
     @Slot(str, result=bool)
     def fileExists(self, path: str) -> bool:
@@ -1984,15 +2022,37 @@ class CherryStudioAPI(QObject):
                 "metadata": {"duration": 0, "timestamp": int(time.time() * 1000)},
             })
         try:
-            response = self._headless_electron.request(
-                "/data-api", req, timeout=120
-            )
+            from .data_api_defaults import normalize_data_api_request
+            req = normalize_data_api_request(req)
+
+            def _call() -> dict:
+                mgr = self._headless_electron
+                if not (mgr.is_running() and mgr._healthcheck()):
+                    ok, message = mgr.start(wait=1.5)
+                    if not ok:
+                        raise RuntimeError(message)
+                return mgr.request("/data-api", req, timeout=8, retry_on_error=False)
+
+            if os.environ.get("CHERRY_PANEL_ATTACH") == "1":
+                response = _DATA_API_POOL.submit(_call).result(timeout=10)
+            else:
+                response = _call()
             return json.dumps(response, ensure_ascii=False)
         except Exception as e:
+            message = str(e)
+            unavailable = isinstance(e, (FuturesTimeoutError, TimeoutError)) or (
+                "not running in COCO" in message or "timed out" in message.lower()
+            )
+            status = 503 if unavailable else 500
+            code = "SERVICE_UNAVAILABLE" if unavailable else "INTERNAL"
+            if isinstance(e, FuturesTimeoutError):
+                message = "对话服务启动中，请稍候"
+            elif "not running in COCO" in message:
+                message = "COCO 无头运行时未启动。请先打开 COCO Client，并确认 C:\\coco\\headless-runtime 存在。"
             return json.dumps({
                 "id": req.get("id", ""),
-                "status": 500,
-                "error": {"code": "INTERNAL", "message": str(e), "status": 500},
+                "status": status,
+                "error": {"code": code, "message": message, "status": status},
                 "metadata": {"duration": 0, "timestamp": int(time.time() * 1000)},
             }, ensure_ascii=False)
 
@@ -2069,7 +2129,7 @@ class CherryStudioAPI(QObject):
         created_at = row.get("created_at") or ""
         entity = {
             "id": row.get("id", ""),
-            "type": "claude-code",
+            "type": row.get("type") or "claude-code",
             "name": row.get("name") or "",
             "model": row.get("model"),
             "modelName": None,
@@ -2104,7 +2164,7 @@ class CherryStudioAPI(QObject):
             config["_knowledgeBaseIds"] = knowledge_base_ids
         slash_commands = config.pop("slash_commands", None) or []
         return {
-            "type": "claude-code",
+            "type": form.get("type") or "claude-code",
             "name": form.get("name"),
             "description": form.get("description"),
             "instructions": form.get("instructions"),
@@ -2539,11 +2599,14 @@ class CherryStudioAPI(QObject):
     @Slot(str, result=str)
     def fileCreateTempFile(self, file_name: str) -> str:
         try:
-            temp_dir = os.path.join(tempfile.gettempdir(), "cherrystudio")
+            safe_name = os.path.basename(file_name) or "temp.txt"
+            # Keep paste/clipboard temp files inside the write sandbox so
+            # /api/v1/files/write does not reject OS Temp paths.
+            temp_dir = os.path.join(self._get_app_data_dir(), "temp")
             os.makedirs(temp_dir, exist_ok=True)
-            return os.path.join(temp_dir, file_name)
+            return os.path.join(temp_dir, safe_name)
         except Exception:
-            return file_name
+            return os.path.basename(file_name) or file_name
 
     @Slot(str, str, result=str)
     def fileListDirectory(self, dir_path: str, options_json: str) -> str:

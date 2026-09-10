@@ -2,13 +2,15 @@
 文件操作路由
 
 对应原 CherryStudioAPI 中的文件读写相关 @Slot 方法。
-所有操作限定在 ~/.cherrystudio/ 目录内（安全沙箱）。
+写入限定在 APP_DATA_DIR（~/.cherrystudio/<dcc>/）以及系统临时目录下的
+cherrystudio 子目录（粘贴长文本 / 剪贴板图片会先落到这里）。
 """
 
 import os
 import json
 import mimetypes
 import shutil
+import tempfile
 import urllib.request
 import urllib.error
 import zipfile
@@ -361,21 +363,92 @@ def _read_only_roots() -> list[str]:
     appdata = os.environ.get("APPDATA", "")
     if appdata:
         roots.append(os.path.join(appdata, "CherryStudioHoudiniHeadless"))
+        roots.append(os.path.join(appdata, "CherryStudio"))
+    roots.append(str(Path.home() / ".cherrystudio" / "coco-assets"))
+    roots.append(str(_cherry_temp_dir()))
     return roots
 
 
+def _strip_extended_prefix(path_s: str) -> str:
+    """Strip Windows ``\\\\?\\`` / ``\\\\?\\UNC\\`` prefixes from resolved paths."""
+    if path_s.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + path_s[8:]
+    if path_s.startswith("\\\\?\\"):
+        return path_s[4:]
+    return path_s
+
+
+def _normalize_fs_path(path: str | Path) -> str:
+    """Absolute, normcased path without the Windows extended-length prefix."""
+    s = _strip_extended_prefix(os.fspath(path))
+    s = os.path.abspath(s)
+    return os.path.normcase(os.path.normpath(s))
+
+
+def _cherry_temp_dir() -> Path:
+    """OS temp subdir used by fileCreateTempFile for paste / clipboard files."""
+    return Path(os.path.abspath(os.path.join(tempfile.gettempdir(), "cherrystudio")))
+
+
+def _iter_os_temp_roots() -> list[str]:
+    """All temp locations this process (or Houdini) might use."""
+    roots: list[str] = []
+    seen: set[str] = set()
+    local_appdata = os.environ.get("LOCALAPPDATA") or ""
+    candidates = [
+        tempfile.gettempdir(),
+        os.environ.get("TEMP", ""),
+        os.environ.get("TMP", ""),
+        os.environ.get("TMPDIR", ""),
+        os.path.join(local_appdata, "Temp") if local_appdata else "",
+    ]
+    for raw in candidates:
+        if not raw:
+            continue
+        key = _normalize_fs_path(raw)
+        if key not in seen:
+            seen.add(key)
+            roots.append(key)
+    return roots
+
+
+def _is_path_within(target: Path, root: Path) -> bool:
+    """True if target is root or a descendant. Case-insensitive on Windows."""
+    target_s = _normalize_fs_path(target)
+    root_s = _normalize_fs_path(root)
+    sep = os.sep
+    return target_s == root_s or target_s.startswith(root_s + sep)
+
+
+def _is_cherry_temp_path(target: Path) -> bool:
+    """Allow {any OS temp}/cherrystudio/... including Houdini vs Qt TEMP mismatch."""
+    t = _normalize_fs_path(target)
+    for temp_root in _iter_os_temp_roots():
+        cherry = os.path.normcase(os.path.normpath(os.path.join(temp_root, "cherrystudio")))
+        if t == cherry or t.startswith(cherry + os.sep):
+            return True
+    # Fallback for Windows user temp when TEMP env in the backend differs.
+    marker = os.sep + "temp" + os.sep + "cherrystudio" + os.sep
+    appdata_temp = os.sep + "appdata" + os.sep + "local" + os.sep + "temp" + os.sep
+    return marker in t and appdata_temp in t
+
+
 def _safe_path(relative_path: str) -> str:
-    """将相对路径限定在 APP_DATA_DIR 内，防止路径穿越"""
-    base = Path(_get_app_data_dir()).resolve()
-    target = (base / relative_path).resolve()
-    if not str(target).startswith(str(base)):
-        raise PermissionError(f"Access denied: {relative_path}")
-    return str(target)
+    """Confine writes to APP_DATA_DIR or {temp}/cherrystudio."""
+    base = Path(_get_app_data_dir())
+    given = Path(relative_path)
+    if given.is_absolute():
+        target = Path(_strip_extended_prefix(os.path.abspath(relative_path)))
+    else:
+        target = Path(os.path.abspath(str(base / relative_path)))
+    if _is_path_within(target, base) or _is_cherry_temp_path(target):
+        return str(target)
+    raise PermissionError(f"Access denied: {relative_path}")
 
 
 def _safe_read_path(path_str: str) -> str:
     """
-    解析只读路径：允许 APP_DATA_DIR 和应用 resources 目录。
+    解析只读路径：允许 APP_DATA_DIR、应用 resources，以及 {temp}/cherrystudio。
     支持绝对路径和相对路径。
     """
     # electron-builder records bundled resources under the virtual
@@ -393,12 +466,8 @@ def _safe_read_path(path_str: str) -> str:
         if _is_read_granted(resolved):
             return str(resolved)
         for allowed in _read_only_roots():
-            allowed_resolved = Path(allowed).resolve()
-            try:
-                resolved.relative_to(allowed_resolved)
+            if _is_path_within(resolved, Path(allowed).resolve()):
                 return str(resolved)
-            except ValueError:
-                continue
         raise PermissionError(f"Read access denied: {path_str}")
     return _safe_path(path_str)
 
@@ -604,7 +673,38 @@ def file_write(ctx: dict) -> Any:
             f.write(content)
         return {"ok": True}
     except Exception as e:
-        _log(f"[files/write] {e}")
+        _log(
+            f"[files/write] {e} | src={__file__} | "
+            f"temp={_cherry_temp_dir()} | app={_get_app_data_dir()}"
+        )
+        return {"error": str(e)}
+
+
+@route("/api/v1/files/write-binary", methods=["POST"])
+def file_write_binary(ctx: dict) -> Any:
+    """写入文件内容（原始二进制）。
+
+    目标路径走 query（?path=...），请求体就是文件字节本身。图片/PDF/视频等
+    二进制必须绕开 JSON 和文本编码：UTF-8 解码会把 >=0x80 的字节替换成
+    U+FFFD，文本模式写入还会把 \\n 翻成 \\r\\n，两者都不可逆。
+    """
+    query = ctx.get("query", {}) or {}
+    raw_query_path = query.get("path")
+    path = raw_query_path[0] if isinstance(raw_query_path, list) else (raw_query_path or "")
+    if not path:
+        return {"error": "missing path"}
+    data = ctx.get("_raw_bytes") or b""
+    try:
+        full_path = _safe_path(path)
+        os.makedirs(os.path.dirname(full_path) or ".", exist_ok=True)
+        with open(full_path, "wb") as f:
+            f.write(data)
+        return {"ok": True, "path": full_path, "size": len(data)}
+    except Exception as e:
+        _log(
+            f"[files/write-binary] {e} | src={__file__} | "
+            f"temp={_cherry_temp_dir()} | app={_get_app_data_dir()}"
+        )
         return {"error": str(e)}
 
 

@@ -22,13 +22,11 @@
 # to $robocopyArgs below manually, but run with -WhatIf first to make sure you are
 # not about to delete something intentionally placed on the destination side.
 #
-# Also optionally syncs the packaged headless Electron app
-# (web\dist\win-unpacked, produced by `pnpm run build:unpack` in web\) to the
-# sibling `web\` folder next to `bin\cherrystudio`. The Python-managed
-# HeadlessElectronManager (api\headless_electron_manager.py) looks for this
-# self-contained build first; without it you'll see
-# "DataApiError: Electron executable not found" in the UI because there is no
-# way to run the raw dev web\node_modules tree in a deployed environment.
+# The packaged Electron runtime (`web\dist\win-unpacked`) is NOT copied into
+# `bin\web`. Zip it and publish to the J-drive auto-update share instead:
+#   J:\vfxtools\piplineTD\models\packages\Cherry-Studio-<ver>-win-unpacked.zip
+# `-IncludeWeb` remains for emergency local unpack copies only; prefer zip on J
+# and delete both source and COCO `win-unpacked` folders afterwards.
 #
 # IMPORTANT — the actual UI the user sees is a SEPARATE build artifact from
 # the headless Electron app above: `window_manager.py`'s QWebEngineView never
@@ -54,8 +52,8 @@
 # Usage:
 #   pwsh D:\python\cherrystudio-for-houdini\cherrystudio\sync_to_coco.ps1
 #   pwsh D:\python\cherrystudio-for-houdini\cherrystudio\sync_to_coco.ps1 -WhatIf          # preview only, no copy
-#   pwsh D:\python\cherrystudio-for-houdini\cherrystudio\sync_to_coco.ps1 -IncludeWeb      # also sync web\dist\win-unpacked (~1.2GB, run `pnpm run build:unpack` in web\ first)
 #   pwsh D:\python\cherrystudio-for-houdini\cherrystudio\sync_to_coco.ps1 -RefreshPublic   # refresh cherrystudio\public\ from web\out\renderer\ first (run `pnpm build` in web\ first)
+# Unpack zip belongs on J:\vfxtools\piplineTD\models\packages\, not in bin\web.
 
 param(
     [switch]$WhatIf,
@@ -66,18 +64,16 @@ param(
 $ErrorActionPreference = "Stop"
 
 $src = "D:\python\cherrystudio-for-houdini\cherrystudio"
-$dst = "D:\Development\coco\cocoApplication\bin\cherrystudio"
+$dstList = @(
+    "D:\Development\coco\cocoApplication\bin\cherrystudio"
+    "D:\PyCharmProjects\COCO\cocoApplication\bin\cherrystudio"
+)
 $webRoot = "D:\python\cherrystudio-for-houdini\web"
 $webDstRoot = "D:\Development\coco\cocoApplication\bin\web"
 
 if (-not (Test-Path $src)) {
     Write-Host "Source dir does not exist: $src" -ForegroundColor Red
     exit 1
-}
-
-if (-not (Test-Path $dst)) {
-    Write-Host "Destination dir does not exist, creating: $dst" -ForegroundColor Yellow
-    New-Item -ItemType Directory -Path $dst -Force | Out-Null
 }
 
 if ($RefreshPublic) {
@@ -112,40 +108,46 @@ $xd = @(
     (Join-Path $src "agent-runtime\node_modules")
     (Join-Path $src "services\node_modules")
 )
-$xf = @("*.pyc", "*.pyo", "main_old_backup.py", "main_temp.txt")
+$xf = @("*.pyc", "*.pyo", "main_old_backup.py", "main_temp.txt", "publish_hermes_agent.ps1")
 
-$robocopyArgs = @(
-    $src, $dst,
-    "/E",           # recurse, include empty dirs
-    "/XD"
-) + $xd + @("/XF") + $xf + @(
-    "/NFL", "/NDL", "/NP", "/R:2", "/W:1"
-)
+foreach ($dst in $dstList) {
+    if (-not (Test-Path $dst)) {
+        Write-Host "Destination dir does not exist, creating: $dst" -ForegroundColor Yellow
+        New-Item -ItemType Directory -Path $dst -Force | Out-Null
+    }
 
-if ($WhatIf) {
-    $robocopyArgs += "/L"
-    Write-Host "Preview mode (no files will be changed)" -ForegroundColor Cyan
-}
+    $robocopyArgs = @(
+        $src, $dst,
+        "/E",
+        "/XD"
+    ) + $xd + @("/XF") + $xf + @(
+        "/NFL", "/NDL", "/NP", "/R:2", "/W:1"
+    )
 
-Write-Host "Syncing $src -> $dst ..." -ForegroundColor Cyan
-& robocopy @robocopyArgs
-# robocopy exit codes 0-7 mean success; >=8 means failure
-$code = $LASTEXITCODE
-if ($code -ge 8) {
-    Write-Host "robocopy failed, exit code $code" -ForegroundColor Red
-    exit $code
-}
+    if ($WhatIf) {
+        $robocopyArgs += "/L"
+        Write-Host "Preview mode (no files will be changed)" -ForegroundColor Cyan
+    }
 
-Write-Host ""
-Write-Host "[OK] Sync complete" -ForegroundColor Green
-Write-Host "Key file check:" -ForegroundColor Yellow
-foreach ($check in @("main.py", "public\windows\main\index.html", "backend\server.py", "core\window_manager.py")) {
-    $p = Join-Path $dst $check
-    $ok = Test-Path $p
-    if ($ok) {
-        Write-Host ("  [OK]      {0}" -f $check) -ForegroundColor Green
-    } else {
-        Write-Host ("  [MISSING] {0}" -f $check) -ForegroundColor Red
+    Write-Host "Syncing $src -> $dst ..." -ForegroundColor Cyan
+    & robocopy @robocopyArgs
+    $code = $LASTEXITCODE
+    if ($code -ge 8) {
+        Write-Host "robocopy failed, exit code $code" -ForegroundColor Red
+        exit $code
+    }
+
+    Write-Host ""
+    Write-Host "[OK] Sync complete: $dst" -ForegroundColor Green
+    Write-Host "Key file check:" -ForegroundColor Yellow
+    foreach ($check in @("main.py", "public\windows\main\index.html", "backend\server.py", "core\window_manager.py", "dcc_adapter\__init__.py", "panel_host.py")) {
+        $p = Join-Path $dst $check
+        $ok = Test-Path $p
+        if ($ok) {
+            Write-Host ("  [OK]      {0}" -f $check) -ForegroundColor Green
+        } else {
+            Write-Host ("  [MISSING] {0}" -f $check) -ForegroundColor Red
+        }
     }
 }
 if ($IncludeWeb) {

@@ -87,6 +87,23 @@ def _api_base() -> str:
     return _DEFAULT_API_BASE
 
 
+def _operator_username() -> str:
+    """与 Cherry NewAPI 开通相同的用户名：newapi-user.json，否则 OS 登录名。
+
+    ai-pipeline 的 run 隔离 / per-user Token 申领都依赖 launch URL 上的
+    ``?operator=``；由跑在客户机上的 bridge 就近解析，不在 ai-pipeline 服务端猜。
+    """
+    try:
+        from cherrystudio.core.newapi_provisioning import NewApiProvisioningService
+
+        return str(
+            NewApiProvisioningService()._resolve_username("local-config") or ""
+        ).strip()
+    except Exception as exc:
+        _log(f"[ai-pipeline-bridge] resolve operator fallback: {exc}")
+        return (os.environ.get("USERNAME") or os.environ.get("USER") or "").strip()
+
+
 # ─────────────────────────────────────────────
 # Routes
 # ─────────────────────────────────────────────
@@ -106,6 +123,7 @@ def health(ctx: dict) -> Any:
     return {
         "plugin_id": "ai-pipeline-bridge",
         "api_base": api_base,
+        "operator": _operator_username(),
         "available": ok,
         "detail": detail,
     }
@@ -135,8 +153,8 @@ def open_gui(ctx: dict) -> Any:
     workflow_id = body.get("workflow_id")
     if workflow_id:
         args += ["--workflow-id", str(workflow_id)]
-    # 透传 cherrystudio 当前用户名，让 mask asset 的 audit 字段能写出"谁操作的"
-    operator = body.get("operator") or os.environ.get("USER") or os.environ.get("USERNAME")
+    # 透传客户机用户名（与 NewAPI 申领一致），写入 run.actor_id / asset 审计字段
+    operator = body.get("operator") or _operator_username()
     if operator:
         args += ["--operator", str(operator)]
 

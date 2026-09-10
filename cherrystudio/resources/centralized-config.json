@@ -1,6 +1,6 @@
 {
   "version": "2.1.0",
-  "lastUpdated": "2026-08-12",
+  "lastUpdated": "2026-09-10",
   "knowledgeBaseSource": "J:/vfxtools/piplineTD/models/knowledge_base/vectors",
   "proxy": {
     "bypassRules": "localhost,127.0.0.1,::1,*.ccc.net,192.168.*.*"
@@ -113,6 +113,22 @@
           "protocol": "image-edit"
         },
         {
+          "id": "gpt-image-2.5-flare@vapi",
+          "name": "gpt-image-2.5-flare",
+          "modelId": "gpt-image-2.5-flare@vapi",
+          "isCentralized": true,
+          "modality": "image",
+          "protocol": "image-edit"
+        },
+        {
+          "id": "gpt-image-2.5-sunburst@vapi",
+          "name": "gpt-image-2.5-sunburst",
+          "modelId": "gpt-image-2.5-sunburst@vapi",
+          "isCentralized": true,
+          "modality": "image",
+          "protocol": "image-edit"
+        },
+        {
           "id": "gemini-3.5-flash@vapi",
           "name": "gemini-3.5-flash",
           "modelId": "gemini-3.5-flash@vapi",
@@ -140,6 +156,7 @@
     {
       "id": "coco-rightcode",
       "name": "Coco · Code",
+      "enabled": false,
       "type": "openai",
       "apiHost": "http://new-api.ccc.net:3000",
       "apiKeyMode": "per-user-provisioned",
@@ -165,6 +182,7 @@
           "name": "nano-banana-pro",
           "modelId": "nano-banana-pro@rc",
           "isCentralized": true,
+          "enabled": false,
           "modality": "image",
           "protocol": "image-edit"
         },
@@ -173,6 +191,7 @@
           "name": "nano-banana-2",
           "modelId": "nano-banana-2@rc",
           "isCentralized": true,
+          "enabled": false,
           "modality": "image",
           "protocol": "image-edit"
         },
@@ -181,6 +200,7 @@
           "name": "gpt-image-2",
           "modelId": "gpt-image-2@rc",
           "isCentralized": true,
+          "enabled": false,
           "modality": "image",
           "protocol": "image-edit"
         },
@@ -189,6 +209,7 @@
           "name": "gpt-image-2-vip",
           "modelId": "gpt-image-2-vip@rc",
           "isCentralized": true,
+          "enabled": false,
           "modality": "image",
           "protocol": "image-edit"
         }
@@ -322,6 +343,7 @@
           "name": "gpt-image-2",
           "modelId": "gpt-image-2@atl",
           "isCentralized": true,
+          "enabled": false,
           "modality": "image",
           "protocol": "image-edit"
         },
@@ -330,6 +352,7 @@
           "name": "seedream-v5.0-lite",
           "modelId": "seedream-v5.0-lite@atl",
           "isCentralized": true,
+          "enabled": false,
           "modality": "image",
           "protocol": "image-edit"
         },
@@ -338,6 +361,7 @@
           "name": "seedream-v5.0-pro",
           "modelId": "seedream-v5.0-pro@atl",
           "isCentralized": true,
+          "enabled": false,
           "modality": "image",
           "protocol": "image-edit"
         },
@@ -346,6 +370,7 @@
           "name": "nano-banana-pro",
           "modelId": "nano-banana-pro@atl",
           "isCentralized": true,
+          "enabled": false,
           "modality": "image",
           "protocol": "image-edit"
         },
@@ -354,6 +379,7 @@
           "name": "nano-banana-2",
           "modelId": "nano-banana-2@atl",
           "isCentralized": true,
+          "enabled": false,
           "modality": "image",
           "protocol": "image-edit"
         },

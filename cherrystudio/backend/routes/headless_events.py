@@ -32,8 +32,14 @@ def headless_events(ctx):
                 frame = b": ping\n\n"
             handler.wfile.write(frame)
             handler.wfile.flush()
-    except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError, OSError) as exc:
-        _log(f"[HeadlessEvents] id={conn_id} connection error: {exc!r}")
+    except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError) as exc:
+        _log(f"[HeadlessEvents] id={conn_id} client disconnected: {exc.__class__.__name__}")
+    except OSError as exc:
+        winerror = getattr(exc, "winerror", None)
+        if winerror in (10053, 10054) or getattr(exc, "errno", None) in (32, 54, 104, 10053, 10054):
+            _log(f"[HeadlessEvents] id={conn_id} client disconnected: {exc.__class__.__name__}")
+        else:
+            _log(f"[HeadlessEvents] id={conn_id} connection error: {exc!r}")
     except Exception as exc:  # noqa: BLE001 - must not crash the request handler silently
         _log(f"[HeadlessEvents] id={conn_id} UNEXPECTED error: {exc!r}")
     finally:

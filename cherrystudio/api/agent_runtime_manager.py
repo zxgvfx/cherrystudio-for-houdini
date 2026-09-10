@@ -48,7 +48,10 @@ except Exception:  # pragma: no cover
 
 _CREATE_NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 _READY_RE = re.compile(r"AGENT_RUNTIME_READY\s+port=(\d+)")
-_ABI_MISMATCH_RE = re.compile(r"NODE_MODULE_VERSION")
+_ABI_MISMATCH_RE = re.compile(
+    r"NODE_MODULE_VERSION|ERR_DLOPEN_FAILED|compiled against a different Node\.js version|not a valid Win32 application",
+    re.IGNORECASE,
+)
 
 
 def _agent_runtime_dir() -> str:
@@ -388,8 +391,12 @@ def _remove_stale_native_builds(runtime_dir: str, log_fn) -> None:
 
 
 def _verify_native_modules(node_path: str, runtime_dir: str) -> bool:
-    """Actually loads better-sqlite3 under ``node_path`` to confirm the ABI
-    matches. ``npm rebuild`` can report success (exit code 0) via
+    """Actually opens an in-memory better-sqlite3 database under ``node_path``.
+
+    Importing the package alone is not enough: better-sqlite3 loads its native
+    ``.node`` binding lazily in ``new Database()``, which allowed a broken ABI
+    to pass verification and fail later while ``server.js`` initialized.
+    ``npm rebuild`` can report success (exit code 0) via
     ``prebuild-install`` slightly before the downloaded binary is fully
     flushed/visible on disk (seen in practice behind slow/proxied
     registries), so callers should verify rather than trust the exit code
@@ -397,7 +404,13 @@ def _verify_native_modules(node_path: str, runtime_dir: str) -> bool:
     """
     try:
         result = subprocess.run(
-            [node_path, "-e", "require('better-sqlite3')"],
+            [
+                node_path,
+                "-e",
+                "const Database=require('better-sqlite3');"
+                "const db=new Database(':memory:');"
+                "db.close();",
+            ],
             cwd=runtime_dir,
             capture_output=True,
             text=True,

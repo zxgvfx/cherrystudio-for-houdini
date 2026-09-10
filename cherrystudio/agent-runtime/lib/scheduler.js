@@ -159,7 +159,8 @@ class Scheduler {
         accessible_paths: agent.accessible_paths,
         allowed_tools: agent.allowed_tools,
         instructions: agent.instructions,
-        configuration: agent.configuration
+        configuration: agent.configuration,
+        agent_type: agent.type
       });
       this.db.setTaskSessionId(task.id, session.id);
     }

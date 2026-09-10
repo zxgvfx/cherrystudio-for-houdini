@@ -5,7 +5,6 @@
 
 import os
 import json
-from PySide6.QtCore import QUrl, Qt, QObject, QTimer
 
 # 在 Chromium 引擎初始化之前设置标志（必须在所有 PySide6 Qt 类 import 之前）。
 #
@@ -37,9 +36,14 @@ if "--proxy-bypass-list" not in _chrome_flags:
 # 、用户仍随时可能切回来查看的聊天面板来说是不必要的。Electron 桌面版对应设为
 # `backgroundThrottling: false`，这里用等价的 Chromium 命令行开关达到同样效果。
 for _f in [
-    "--disable-features=CalculateNativeWinOcclusion",
+    "--disable-features=CalculateNativeWinOcclusion,DirectComposition",
     "--disable-backgrounding-occluded-windows",
     "--disable-renderer-backgrounding",
+    # QtWebEngine 6.10.1 无障碍桥接空指针崩溃（QTBUG-142320）：Windows 中文
+    # 输入法经 UIA 查询文本会激活 Chromium 无障碍树，随后在
+    # QAccessible::uniqueId() 里 AV（Qt6Gui.dll 0xc0000005）。这是事件查看器里
+    # 第二多的崩溃签名，且通常发生在启动后 1~2 分钟用户刚开始打字时。
+    "--disable-renderer-accessibility",
 ]:
     if _f not in _chrome_flags:
         _flags_to_add.append(_f)
@@ -49,12 +53,42 @@ for _f in [
 # 解决：让 Chromium 通过 ANGLE 使用 D3D11（与 OpenGL 互不干扰），GPU 仍跑在
 # 独立子进程里（不加 --in-process-gpu，避免段错误）。
 #
+# CocoClient 独立进程里另一类崩溃：python.exe + Qt6Gui.dll c0000005（WER 同时
+# 加载 d3d11 / Qt6WebEngineCore / Qt6OpenGL）。流式插入 GLB/WebGL/视频时，
+# Chromium GPU 帧合成进 Qt Widgets 会把整个客户端打崩，Job Object 再连带无头
+# Electron。独立进程默认让 Qt/Chromium 合成走软件路径，同时固定 WebGL 使用
+# CPU SwiftShader；这样 GLB 仍可预览，但不会重新进入不稳定的 D3D11 路径。
+# 设 QTWEBENGINE_DISABLE_GPU=0 可恢复硬件 GPU。
+#
 # 重要：ensure_qtwebengine_initialized() 在 main.py 中是在 import window_manager
 # 之后才调用的，而此模块加载时就会 import QtWebEngineCore，所以 Chromium 标志
 # 必须在这里设置——app_lifecycle 里设置的已经太晚。
 try:
     from .app_lifecycle import detect_dcc_type as _detect_dcc
-    if _detect_dcc() not in ("standalone",):
+    _dcc = _detect_dcc()
+    _panel_attach = os.environ.get("CHERRY_PANEL_ATTACH") == "1"
+    if _panel_attach:
+        # Isolated DCC panel process: keep ANGLE/D3D11, but strip DirectComposition
+        # so QWindow.setParent into Houdini/Maya Qt still paints.
+        os.environ.setdefault("QTWEBENGINE_DISABLE_GPU", "0")
+        os.environ["QT_WIDGETS_RHI"] = "0"
+        _stale_tokens = {
+            "--disable-gpu",
+            "--disable-gpu-compositing",
+            "--use-angle=swiftshader",
+            "--enable-unsafe-swiftshader",
+        }
+        _chrome_flags = " ".join(_tok for _tok in _chrome_flags.split() if _tok not in _stale_tokens)
+        for _f in [
+            "--no-sandbox",
+            "--disable-gpu-sandbox",
+            "--use-gl=angle",
+            "--use-angle=d3d11",
+            "--disable-direct-composition",
+        ]:
+            if _f not in _chrome_flags:
+                _flags_to_add.append(_f)
+    elif _dcc not in ("standalone",):
         for _f in [
             "--no-sandbox",
             "--disable-gpu-sandbox",
@@ -63,6 +97,42 @@ try:
         ]:
             if _f not in _chrome_flags:
                 _flags_to_add.append(_f)
+    else:
+        _gpu_off = os.environ.get("QTWEBENGINE_DISABLE_GPU", "1") not in {"0", "false", "False"}
+        if _gpu_off:
+            os.environ["QTWEBENGINE_DISABLE_GPU"] = "1"
+            os.environ["QT_OPENGL"] = "software"
+            os.environ["QT_QUICK_BACKEND"] = "software"
+            os.environ["QSG_RENDER_LOOP"] = "basic"
+            os.environ["QT_WIDGETS_RHI"] = "0"
+            # `--disable-gpu` also disables WebGL. Keep frame compositing on the
+            # CPU, but run WebGL through ANGLE's CPU SwiftShader backend.
+            # 按整个 token 移除：之前用 str.replace 会把 "--disable-gpu-compositing"
+            # / "--disable-gpu-sandbox" 截成 "-compositing" / "-sandbox" 残片。
+            _stale_tokens = {"--disable-gpu", "--use-angle=d3d11", "--enable-gpu"}
+            _chrome_flags = " ".join(
+                _tok for _tok in _chrome_flags.split() if _tok not in _stale_tokens
+            )
+            for _f in (
+                "--no-sandbox",
+                "--disable-gpu-sandbox",
+                "--disable-gpu-compositing",
+                "--disable-direct-composition",
+                "--use-gl=angle",
+                "--use-angle=swiftshader",
+                "--enable-unsafe-swiftshader",
+            ):
+                if _f not in _chrome_flags:
+                    _flags_to_add.append(_f)
+        else:
+            for _f in (
+                "--no-sandbox",
+                "--disable-gpu-sandbox",
+                "--use-gl=angle",
+                "--use-angle=d3d11",
+            ):
+                if _f not in _chrome_flags:
+                    _flags_to_add.append(_f)
 except Exception:
     pass
 
@@ -71,6 +141,7 @@ if _flags_to_add:
         _chrome_flags + " " + " ".join(_flags_to_add)
     ).strip()
 
+from PySide6.QtCore import QUrl, Qt, QObject, QTimer, QCoreApplication, QEvent
 from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebEngineCore import (
@@ -144,6 +215,83 @@ from ..web.electron_injector import (
 )
 
 
+# ── WebEngine 对象的有序析构 ──────────────────────────────────────────────────
+# Qt WebEngine 要求：QWebEnginePage 必须先于其 QWebEngineProfile 析构，两者都必须
+# 先于 QApplication 析构。这里 profile 由 Python 持有（无 Qt parent），page 挂在
+# 窗口/容器上，进程退出时两者的析构顺序取决于解释器 GC 与 Qt 父子树的竞争，
+# 一旦 profile 先死，Chromium 会打印 "Release of profile requested but
+# WebEnginePage still not deleted. Expect troubles !" 然后 CHECK 失败
+# （Qt6WebEngineCore.dll 0x80000003）。在 aboutToQuit 阶段按 view → page →
+# profile 的顺序显式删除，可以把退出路径变成确定性的。
+_LIVE_WEBENGINE: list[dict] = []
+_SHUTDOWN_HOOKED = False
+
+
+def _flush_deferred_deletes() -> None:
+    try:
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    except Exception:
+        pass
+
+
+def _shutdown_webengine() -> None:
+    try:
+        from ..utils.crash_diagnostics import note
+        note(f"aboutToQuit: tearing down {len(_LIVE_WEBENGINE)} webengine view(s)")
+    except Exception:
+        pass
+    entries = list(_LIVE_WEBENGINE)
+    _LIVE_WEBENGINE.clear()
+    for entry in entries:
+        for timer in entry.get("timers", ()):
+            try:
+                timer.stop()
+            except Exception:
+                pass
+        web_view = entry.get("view")
+        page = entry.get("page")
+        profile = entry.get("profile")
+        try:
+            if web_view is not None:
+                web_view.hide()
+                web_view.stop()
+        except Exception:
+            pass
+        for obj in (web_view, page):
+            try:
+                if obj is not None:
+                    obj.deleteLater()
+            except Exception:
+                pass
+        _flush_deferred_deletes()
+        try:
+            if profile is not None:
+                profile.deleteLater()
+        except Exception:
+            pass
+        _flush_deferred_deletes()
+
+
+def _register_webengine_for_shutdown(web_view, page, profile, timers=()) -> None:
+    global _SHUTDOWN_HOOKED
+    _LIVE_WEBENGINE.append({
+        "view": web_view,
+        "page": page,
+        "profile": profile,
+        "timers": tuple(timers),
+    })
+    if _SHUTDOWN_HOOKED:
+        return
+    app = QCoreApplication.instance()
+    if app is None:
+        return
+    try:
+        app.aboutToQuit.connect(_shutdown_webengine)
+        _SHUTDOWN_HOOKED = True
+    except Exception as hook_err:
+        print(f"[WindowManager] aboutToQuit hook failed: {hook_err}")
+
+
 def _ensure_backend_service(static_dir: str = "") -> str:
     """
     确保后端服务可用，返回服务的 base URL。
@@ -173,6 +321,15 @@ def _ensure_backend_service(static_dir: str = "") -> str:
                 ).start()
             except Exception:
                 pass
+        else:
+            # Backend is a singleton in the DCC process. Reload files.py so
+            # paste-sandbox fixes apply when the Cherry window is reopened.
+            try:
+                import importlib
+                from ..backend.routes import files as files_mod
+                importlib.reload(files_mod)
+            except Exception as e:
+                print(f"[WindowManager] files.py reload skipped: {e}")
         # 注册静态文件目录
         server = svc.get_server()
         if server and static_dir and os.path.isdir(static_dir):
@@ -224,23 +381,39 @@ def _create_mcp_server(dcc_type: str):
     return None
 
 
-def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, parent=None):
+def create_window(
+    load_url: str,
+    theme: str = 'light',
+    as_widget: bool = False,
+    parent=None,
+    attach: bool = False,
+    backend_url: str = "",
+    session_id: str = "",
+    qt_bridge_url: str = "",
+    dcc_type: str = "",
+    dcc_hwnd: int = 0,
+    embed: bool = False,
+):
     """
     创建主窗口。
 
     架构步骤：
-    1. 启动后端服务（如未运行）
-    2. 注册 DCC 会话（启动 Houdini MCP Server）
+    1. 启动后端服务（如未运行）；attach 模式跳过，改用共享 backend
+    2. 注册 DCC 会话（启动 Houdini MCP Server）；attach 模式跳过
     3. 将 session_id 和 backend_url 注入到前端加载 URL
     4. 创建 QWebEngineView，前端通过 HTTP 直连后端（无 QWebChannel）
 
     Args:
         load_url: 要加载的 URL（本地文件路径或 HTTP URL）
         theme: 主题设置（'light' 或 'dark'）
+        attach: 外挂面板模式。不在本进程嵌入 backend / MCP，Qt invoke 走 qt_bridge_url。
 
     Returns:
         QMainWindow: 创建的主窗口实例
     """
+    provided_backend_url = backend_url
+    provided_session_id = session_id
+    provided_dcc_type = dcc_type
     try:
         # ── Step 1: 启动后端服务（同时注册静态文件目录） ─────────────────────
         # 如果 load_url 指向本地 index.html，将其所在目录作为静态文件根目录，
@@ -274,15 +447,23 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
                     static_dir = current_dir
                 static_subpath = os.path.relpath(abs_url, static_dir).replace(os.sep, '/')
 
-        backend_url = _ensure_backend_service(static_dir)
+        if attach:
+            backend_url = provided_backend_url
+            session_id = provided_session_id
+            serve_url = qt_bridge_url or backend_url
+            if serve_url and static_dir and not load_url.startswith("http"):
+                load_url = f"{serve_url.rstrip('/')}/{static_subpath}" if static_subpath else f"{serve_url.rstrip('/')}/"
+                print(f"[WindowManager] Attach panel loading frontend via HTTP: {load_url}")
+        else:
+            backend_url = _ensure_backend_service(static_dir)
 
-        # 如果后端可用且有静态目录，改为通过 HTTP 加载
-        if backend_url and static_dir and not load_url.startswith("http"):
-            load_url = f"{backend_url}/{static_subpath}" if static_subpath else f"{backend_url}/"
-            print(f"[WindowManager] Loading frontend via HTTP: {load_url}")
+            # 如果后端可用且有静态目录，改为通过 HTTP 加载
+            if backend_url and static_dir and not load_url.startswith("http"):
+                load_url = f"{backend_url}/{static_subpath}" if static_subpath else f"{backend_url}/"
+                print(f"[WindowManager] Loading frontend via HTTP: {load_url}")
 
-        # ── Step 2: 注册 DCC 会话 ────────────────────────────────────────────
-        session_id = _register_dcc_session(backend_url)
+            # ── Step 2: 注册 DCC 会话 ────────────────────────────────────────────
+            session_id = _register_dcc_session(backend_url)
 
         # ── Step 3: 将会话信息注入到 URL ─────────────────────────────────────
         if session_id and backend_url and "?" not in load_url:
@@ -294,13 +475,17 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
 
     except Exception as _setup_err:
         print(f"[WindowManager] Setup error (non-fatal): {_setup_err}")
-        backend_url = ""
-        session_id = ""
+        if not attach:
+            backend_url = ""
+            session_id = ""
+        else:
+            backend_url = provided_backend_url
+            session_id = provided_session_id
         load_url_with_params = load_url
 
     try:
-        # 在 Houdini 内部尽量挂到主窗口，避免焦点与生命周期问题（可被调用方覆盖）
-        if parent is None and not as_widget:
+        # 内嵌 attach 面板没有 hou；HWND 由面板进程自己 QWindow.setParent 进 DCC 宿主。
+        if parent is None and not as_widget and not attach:
             try:
                 import hou  # type: ignore
                 try:
@@ -314,38 +499,47 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
         # 如果需要 QWidget 模式，则不创建 QMainWindow
         window = None
         if not as_widget:
-            # 定义支持拖拽的 QMainWindow
-            class FramelessWindow(QMainWindow):
-                def __init__(self, parent=None):
-                    super().__init__(parent)
-                    self._is_dragging = False
-                    self._drag_position = None
+            if embed:
+                window = QMainWindow()
+                window.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool)
+                window.setWindowTitle("Cherry Agent")
+                window.resize(420, 720)
+                window.setAttribute(Qt.WA_NativeWindow, True)
+                window.setAttribute(Qt.WA_ShowWithoutActivating, True)
+                window.setAttribute(Qt.WA_QuitOnClose, False)
+            else:
+                # 定义支持拖拽的 QMainWindow
+                class FramelessWindow(QMainWindow):
+                    def __init__(self, parent=None):
+                        super().__init__(parent)
+                        self._is_dragging = False
+                        self._drag_position = None
 
-                def mousePressEvent(self, event):
-                    if event.button() == Qt.LeftButton:
-                        self._is_dragging = True
-                        self._drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
-                        event.accept()
-                    else:
-                        super().mousePressEvent(event)
+                    def mousePressEvent(self, event):
+                        if event.button() == Qt.LeftButton:
+                            self._is_dragging = True
+                            self._drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+                            event.accept()
+                        else:
+                            super().mousePressEvent(event)
 
-                def mouseMoveEvent(self, event):
-                    if self._is_dragging and event.buttons() & Qt.LeftButton:
-                        self.move(event.globalPosition().toPoint() - self._drag_position)
-                        event.accept()
-                    else:
-                        super().mouseMoveEvent(event)
+                    def mouseMoveEvent(self, event):
+                        if self._is_dragging and event.buttons() & Qt.LeftButton:
+                            self.move(event.globalPosition().toPoint() - self._drag_position)
+                            event.accept()
+                        else:
+                            super().mouseMoveEvent(event)
 
-                def mouseReleaseEvent(self, event):
-                    self._is_dragging = False
-                    super().mouseReleaseEvent(event)
+                    def mouseReleaseEvent(self, event):
+                        self._is_dragging = False
+                        super().mouseReleaseEvent(event)
 
-            window = FramelessWindow(parent)
-            # 设置无边框模式，因为 Cherry Studio 自带了窗口控制按钮
-            window.setWindowFlags(window.windowFlags() | Qt.FramelessWindowHint)
-            window.setAttribute(Qt.WA_TranslucentBackground)  # 允许透明背景，配合圆角
-            window.setWindowTitle("Cherry Studio")
-            window.resize(1400, 900)
+                window = FramelessWindow(parent)
+                # 设置无边框模式，因为 Cherry Studio 自带了窗口控制按钮
+                window.setWindowFlags(window.windowFlags() | Qt.FramelessWindowHint)
+                window.setAttribute(Qt.WA_TranslucentBackground)  # 允许透明背景，配合圆角
+                window.setWindowTitle("Cherry Studio")
+                window.resize(1400, 900)
 
         # 配置持久化存储（确保配置不会丢失）
         # 重要：必须在任何 WebEngine 相关对象创建之前设置
@@ -361,7 +555,11 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
         os.makedirs(cache_path, exist_ok=True)
         profile.setCachePath(cache_path)
         profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies)
-        profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.DiskHttpCache)
+        profile.setHttpCacheType(
+            QWebEngineProfile.HttpCacheType.NoCache
+            if attach
+            else QWebEngineProfile.HttpCacheType.DiskHttpCache
+        )
 
         print(f"持久化存储路径: {storage_path}")
         print(f"实际存储路径: {profile.persistentStoragePath()}")
@@ -550,7 +748,7 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
                     print(f"Error sending drop data: {e}")
 
         # 设置容器
-        container = WebContainer(web_view, window)
+        container = WebContainer(web_view, None if embed else window)
         container._profile = profile  # 生命周期
         if window is not None:
             window.setCentralWidget(container)
@@ -628,6 +826,14 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
         page_parent = window if window is not None else container
         page = _FilteredPage(profile, page_parent)
         web_view.setPage(page)
+        if embed:
+            try:
+                from PySide6.QtGui import QColor
+                web_view.page().setBackgroundColor(QColor(26, 26, 26))
+            except Exception:
+                pass
+            if window is not None:
+                window._cherry_web_view = web_view
 
         # ── 剪贴板读写权限自动授予 ───────────────────────────────────────────
         # 聊天输入框粘贴走的是现代 Async Clipboard API
@@ -718,12 +924,27 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
         _heartbeat_timer.setInterval(400)
 
         def _heartbeat_tick():
+            def _maybe_repaint(result=None):
+                if result == "paused":
+                    return
+                try:
+                    web_view.update()
+                except Exception:
+                    pass
+
             try:
-                page.runJavaScript("void 0")
-            except Exception:
-                pass
-            try:
-                web_view.update()
+                page.runJavaScript(
+                    "window.__cocoPauseQtHeartbeat === true ? 'paused' : 'ok'",
+                    _maybe_repaint,
+                )
+            except TypeError:
+                try:
+                    page.runJavaScript(
+                        "window.__cocoPauseQtHeartbeat === true ? 'paused' : 'ok'"
+                    )
+                except Exception:
+                    pass
+                _maybe_repaint()
             except Exception:
                 pass
 
@@ -808,22 +1029,26 @@ def create_window(load_url: str, theme: str = 'light', as_widget: bool = False, 
         # 0.5 注入会话信息（backend_url、session_id、dcc_type），供前端直接使用
         _backend_url_escaped = (backend_url or "").replace("\\", "\\\\").replace('"', '\\"')
         _session_id_escaped = (session_id or "").replace('"', '\\"')
-        _dcc_type = ""
-        try:
-            from ..dcc.session import DCCSession
-            _dcc_type = DCCSession.instance().dcc_type
-        except Exception:
-            pass
+        _qt_bridge_escaped = (qt_bridge_url or "").replace("\\", "\\\\").replace('"', '\\"')
+        _dcc_type = provided_dcc_type or ""
+        if not _dcc_type:
+            try:
+                from ..dcc.session import DCCSession
+                _dcc_type = DCCSession.instance().dcc_type
+            except Exception:
+                pass
         _dcc_type_escaped = (_dcc_type or "standalone").replace('"', '\\"')
         session_inject_script = QWebEngineScript()
         session_inject_script.setName("cherry-session-info")
         session_inject_script.setSourceCode(f"""
 // Cherry Studio 后端服务信息（由 Python 注入）
-window.__CHERRY_BACKEND_URL = "{_backend_url_escaped}";
-window.__CHERRY_SESSION_ID = "{_session_id_escaped}";
-window.__CHERRY_DCC_TYPE = "{_dcc_type_escaped}";
-window.__CHERRY_API_V2 = {"true" if _USE_V2_API else "false"};
-console.error('[Cherry] Backend URL:', window.__CHERRY_BACKEND_URL, 'Session:', window.__CHERRY_SESSION_ID, 'DCC:', window.__CHERRY_DCC_TYPE);
+        window.__CHERRY_BACKEND_URL = "{_backend_url_escaped}";
+        window.__CHERRY_QT_BRIDGE_URL = "{_qt_bridge_escaped}";
+        window.__CHERRY_SESSION_ID = "{_session_id_escaped}";
+        window.__CHERRY_DCC_TYPE = "{_dcc_type_escaped}";
+        window.__CHERRY_PANEL_ATTACH = "{"1" if attach else "0"}";
+        window.__CHERRY_API_V2 = {"true" if _USE_V2_API else "false"};
+console.error('[Cherry] Backend URL:', window.__CHERRY_BACKEND_URL, 'QtBridge:', window.__CHERRY_QT_BRIDGE_URL, 'Session:', window.__CHERRY_SESSION_ID, 'DCC:', window.__CHERRY_DCC_TYPE);
 """)
         session_inject_script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
         session_inject_script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
@@ -932,6 +1157,8 @@ console.error('[Cherry] Backend URL:', window.__CHERRY_BACKEND_URL, 'Session:', 
         holder = window if window is not None else container
         holder._webview_ref = web_view
         holder._api_ref = api
+
+        _register_webengine_for_shutdown(web_view, page, profile, timers=(_heartbeat_timer,))
         
         print("窗口创建成功" if window is not None else "组件创建成功")
         return window if window is not None else container

@@ -129,6 +129,13 @@ def register_session(ctx: dict) -> Any:
             "mcp_port": mcp_port,
             "dcc_type": dcc_type,
             "dcc_version": body.get("dccVersion", ""),
+            "dcc_display_name": body.get("dccDisplayName", ""),
+            "pid": body.get("pid") or 0,
+            "main_window_handle": body.get("mainWindowHandle") or 0,
+            "capabilities": body.get("capabilities") or [],
+            "hostname": body.get("hostname", ""),
+            "adapter_version": body.get("adapterVersion", ""),
+            "started_at": body.get("startedAt"),
         })
 
     _log(f"[sessions/register] {dcc_type} session registered: {session_id}, mcp_port={mcp_port}")
@@ -149,10 +156,26 @@ def unregister_session(ctx: dict) -> Any:
     body = ctx["body"]
     session_id = ctx.get("session_id", "") or body.get("sessionId", "")
     server = ctx.get("server")
-    if server and session_id in server._session_registry:
-        del server._session_registry[session_id]
+    if server and session_id:
+        server.unregister_session(session_id)
         _log(f"[sessions/unregister] Session removed: {session_id}")
     return {"ok": True}
+
+
+@route("/api/v1/sessions/heartbeat", methods=["POST"])
+def heartbeat_session(ctx: dict) -> Any:
+    body = ctx.get("body") or {}
+    session_id = ctx.get("session_id", "") or body.get("sessionId", "")
+    server = ctx.get("server")
+    if not server or not session_id:
+        return {"registered": False}
+    extra = {}
+    if body.get("pid"):
+        extra["pid"] = body.get("pid")
+    if body.get("mainWindowHandle"):
+        extra["main_window_handle"] = body.get("mainWindowHandle")
+    ok = server.heartbeat_session(session_id, extra or None)
+    return {"registered": bool(ok)}
 
 
 @route("/api/v1/agent/stop", methods=["POST"])

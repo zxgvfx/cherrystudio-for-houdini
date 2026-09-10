@@ -19,6 +19,7 @@ from socketserver import ThreadingMixIn
 from urllib.parse import urlparse, parse_qs, unquote
 from typing import Callable, Dict, Any, Optional
 
+from ..utils.client_disconnect import DisconnectQuietHandlerMixIn, DisconnectQuietMixIn
 from ..utils.logger import network_logger
 
 _log = network_logger
@@ -30,6 +31,27 @@ _CONNECTION_ERRORS = (
     BrokenPipeError,          # Linux/macOS 对端断开
     OSError,                  # 兜底（某些平台用 OSError 包装）
 )
+
+
+def _pid_alive(pid: int) -> bool:
+    if not pid:
+        return False
+    if os.name == "nt":
+        try:
+            import ctypes
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+            if handle:
+                ctypes.windll.kernel32.CloseHandle(handle)
+                return True
+            return False
+        except Exception:
+            return True
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
 
 
 # ─── 路由注册表 ────────────────────────────────────────────────────────────────
@@ -60,6 +82,8 @@ def prefix_route(prefix: str, methods=("GET", "POST")):
 
 def _import_routes():
     """延迟导入所有路由模块（避免循环导入）"""
+    import importlib
+
     from . import routes  # noqa: F401
     from .routes import (  # noqa: F401
         network,
@@ -70,6 +94,7 @@ def _import_routes():
         knowledge_base,
         agent,
         mcp,
+        dcc,
         memory,
         models,
         qt_bridge,
@@ -83,13 +108,17 @@ def _import_routes():
         headless_events,
     )
 
+    # Houdini keeps sys.modules across Cherry window restarts. Reload files.py
+    # so paste-sandbox fixes apply without a full DCC relaunch.
+    importlib.reload(files)
+
     from ..plugins import load_all_plugins
     load_all_plugins()
 
 
 # ─── 请求处理器 ────────────────────────────────────────────────────────────────
 
-class _Handler(BaseHTTPRequestHandler):
+class _Handler(DisconnectQuietHandlerMixIn, BaseHTTPRequestHandler):
     """通用请求处理器，将所有请求分发到已注册的路由"""
 
     server_instance: "BackendHTTPServer" = None
@@ -147,10 +176,14 @@ class _Handler(BaseHTTPRequestHandler):
             content_length = int(self.headers.get("Content-Length", 0))
             if content_length > 0:
                 raw_bytes = self.rfile.read(content_length)
-                try:
-                    body = json.loads(raw_bytes.decode("utf-8"))
-                except Exception:
-                    body = {"_raw": raw_bytes.decode("utf-8", errors="replace")}
+                # 二进制上传（如 /files/write-binary）只从 _raw_bytes 取值。跳过
+                # 解码，否则一个视频体积的 errors="replace" 字符串会白占几倍内存。
+                content_type = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+                if content_type != "application/octet-stream":
+                    try:
+                        body = json.loads(raw_bytes.decode("utf-8"))
+                    except Exception:
+                        body = {"_raw": raw_bytes.decode("utf-8", errors="replace")}
         except _CONNECTION_ERRORS:
             return  # 读请求体时断开，直接放弃
 
@@ -267,7 +300,7 @@ class _Handler(BaseHTTPRequestHandler):
 
 # ─── 多线程 HTTP Server ─────────────────────────────────────────────────────────
 
-class _ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+class _ThreadingHTTPServer(DisconnectQuietMixIn, ThreadingMixIn, HTTPServer):
     """
     多线程 HTTP Server。
     每个请求在独立线程中处理：
@@ -291,14 +324,47 @@ class BackendHTTPServer:
         self._session_registry: Dict[str, Dict] = {}
 
     def register_session(self, session_id: str, info: Dict):
-        self._session_registry[session_id] = info
-        _log(f"[BackendServer] Session registered: {session_id} -> {info}")
+        import time as _time
+        payload = dict(info or {})
+        payload.setdefault("registered_at", _time.time())
+        payload["last_heartbeat"] = _time.time()
+        self._session_registry[session_id] = payload
+        _log(f"[BackendServer] Session registered: {session_id} -> {payload}")
+
+    def unregister_session(self, session_id: str) -> bool:
+        existed = session_id in self._session_registry
+        self._session_registry.pop(session_id, None)
+        if existed:
+            _log(f"[BackendServer] Session unregistered: {session_id}")
+        return existed
+
+    def heartbeat_session(self, session_id: str, extra: Optional[Dict] = None) -> bool:
+        import time as _time
+        info = self._session_registry.get(session_id)
+        if not info:
+            return False
+        info["last_heartbeat"] = _time.time()
+        if extra:
+            info.update(extra)
+        return True
 
     def get_session(self, session_id: str) -> Dict:
+        self.prune_dead_sessions()
         return self._session_registry.get(session_id, {})
 
     def get_all_sessions(self) -> Dict:
+        self.prune_dead_sessions()
         return dict(self._session_registry)
+
+    def prune_dead_sessions(self) -> None:
+        dead = []
+        for sid, info in list(self._session_registry.items()):
+            pid = info.get("pid")
+            if pid and not _pid_alive(int(pid)):
+                dead.append(sid)
+        for sid in dead:
+            self._session_registry.pop(sid, None)
+            _log(f"[BackendServer] Pruned dead DCC session {sid}")
 
     def start(self) -> int:
         """启动服务器（非阻塞），返回实际监听的端口号"""

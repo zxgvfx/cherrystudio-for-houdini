@@ -202,11 +202,15 @@ def _start_pipeline(
     cfg = _build_config_override(workflow_meta, operator)
     if cfg:
         body["config_override"] = cfg
+    headers = {"Content-Type": "application/json"}
+    if operator:
+        body["actor_id"] = operator
+        headers["X-Actor-Id"] = operator
 
     req = urllib.request.Request(
         url=f"{api_base.rstrip('/')}/api/workflows/{workflow_id}/runs",
         data=json.dumps(body).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     try:

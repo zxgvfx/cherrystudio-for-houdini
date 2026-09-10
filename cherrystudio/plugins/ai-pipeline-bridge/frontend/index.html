@@ -178,9 +178,13 @@
     const state = {
       apiBase: "",
       bridgeBase: window.location.origin.replace(/\/+$/, ""),
+      operator: "",
       workflows: [],
       query: "",
       currentUrl: "",
+      frameReady: false,
+      frameMode: "",
+      pendingWorkflow: null,
     };
 
     const els = {
@@ -217,22 +221,76 @@
       try { localStorage.setItem(LAST_URL_KEY, url); } catch (_) {}
     }
 
+    function withOperatorParams(qs) {
+      if (state.operator) {
+        qs.set("operator", state.operator);
+        qs.set("actor_id", state.operator);
+      }
+      return qs;
+    }
+
+    function ensureOperatorInUrl(url) {
+      if (!url || !state.operator) return url;
+      try {
+        const next = new URL(url);
+        const hasIdentity = next.searchParams.get("operator")
+          || next.searchParams.get("actor_id")
+          || next.searchParams.get("username");
+        if (!hasIdentity) {
+          next.searchParams.set("operator", state.operator);
+          next.searchParams.set("actor_id", state.operator);
+        }
+        return next.toString();
+      } catch (_) {
+        return url;
+      }
+    }
+
+    function launchBaseUrl() {
+      const qs = withOperatorParams(new URLSearchParams({
+        bridge_base: state.bridgeBase,
+        prewarm: "1",
+      }));
+      return `${state.apiBase}/launch/?${qs.toString()}`;
+    }
+
+    function sendPendingWorkflow() {
+      if (!state.frameReady || state.frameMode !== "launch" || !state.pendingWorkflow) return;
+      const pending = state.pendingWorkflow;
+      state.pendingWorkflow = null;
+      els.frame.contentWindow?.postMessage({
+        type: "ai-pipeline:load-workflow",
+        workflowId: pending.id,
+        workflowVersion: pending.version,
+      }, new URL(state.apiBase).origin);
+    }
+
+    function prewarmLaunch() {
+      if (!state.apiBase || state.frameMode === "launch") return;
+      state.frameReady = false;
+      state.frameMode = "launch";
+      els.frame.src = launchBaseUrl();
+    }
+
     function openPipelineUrl(url) {
-      rememberUrl(url);
-      els.frame.src = url;
+      rememberUrl(ensureOperatorInUrl(url));
+      state.frameReady = false;
+      state.frameMode = state.currentUrl.startsWith(`${state.apiBase}/launch/`) ? "launch" : "other";
+      els.frame.src = state.currentUrl;
       els.launcher.hidden = true;
       els.shell.classList.remove("hidden");
       els.body.classList.add("embedded");
     }
 
     function showLauncher() {
-      els.frame.removeAttribute("src");
       state.currentUrl = "";
+      state.pendingWorkflow = null;
       try { localStorage.removeItem(LAST_URL_KEY); } catch (_) {}
       history.replaceState(null, "", window.location.pathname);
       els.body.classList.remove("embedded");
       els.shell.classList.add("hidden");
       els.launcher.hidden = false;
+      prewarmLaunch();
     }
 
     /** 统计 Launch 页会展示的输入项：legacy inputs + parameters(target=input)。 */
@@ -250,13 +308,15 @@
     }
 
     function launchWorkflow(workflowId, workflowVersion) {
-      const qs = new URLSearchParams({
+      const qs = withOperatorParams(new URLSearchParams({
         workflow_id: workflowId,
         bridge_base: state.bridgeBase,
-      });
+      }));
       if (workflowVersion) qs.set("version", workflowVersion);
       const url = `${state.apiBase}/launch/?${qs.toString()}`;
+      state.pendingWorkflow = { id: workflowId, version: workflowVersion || "" };
       openPipelineUrl(url);
+      sendPendingWorkflow();
     }
 
     function text(value, fallback = "") {
@@ -340,6 +400,7 @@
           throw new Error(health.error || health.detail || `HTTP ${healthResponse.status}`);
         }
         state.apiBase = String(health.api_base || "").replace(/\/+$/, "");
+        state.operator = String(health.operator || "").trim();
         if (!state.apiBase) throw new Error("ai-pipeline api_base 为空");
 
         const params = new URLSearchParams(window.location.search);
@@ -363,6 +424,7 @@
         }
         state.workflows = Array.isArray(payload.workflows) ? payload.workflows : [];
         render();
+        prewarmLaunch();
       } catch (error) {
         showError(error);
       }
@@ -374,10 +436,10 @@
     });
     els.refresh.addEventListener("click", load);
     els.backList.addEventListener("click", () => {
-      if (confirm("回到工作流列表？当前 AI Pipeline 页面会关闭，但 run 不会停止。")) showLauncher();
+      showLauncher();
     });
     els.reloadFrame.addEventListener("click", () => {
-      if (state.currentUrl) els.frame.src = state.currentUrl;
+      if (state.currentUrl) openPipelineUrl(state.currentUrl);
     });
     els.openExternal.addEventListener("click", () => {
       if (state.currentUrl) window.open(state.currentUrl, "_blank", "noopener");
@@ -386,7 +448,14 @@
       const msg = event.data;
       if (!msg || typeof msg !== "object") return;
       if (msg.type !== "ai-pipeline:navigate" || !msg.url) return;
-      rememberUrl(String(msg.url));
+      const nextUrl = ensureOperatorInUrl(String(msg.url));
+      rememberUrl(nextUrl);
+      state.frameMode = nextUrl.startsWith(`${state.apiBase}/launch/`) ? "launch" : "other";
+      if (els.frame.src !== nextUrl) els.frame.src = nextUrl;
+    });
+    els.frame.addEventListener("load", () => {
+      state.frameReady = true;
+      sendPendingWorkflow();
     });
     load();
   </script>

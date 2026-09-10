@@ -75,8 +75,9 @@ def ensure_qtwebengine_initialized():
         flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
         flag_set = set(flags.split()) if flags else set()
         
-        # 对于无 UI 场景（如 hython CLI），默认禁用 GPU 以避免崩溃
-        default_disable_gpu = False
+        # 无 UI（hython CLI）以及 CocoClient 独立进程：默认禁用硬件 GPU。
+        # 后者 python.exe 会在 Qt6Gui/D3D11 合成 WebEngine 帧时 AV。
+        default_disable_gpu = detect_dcc_type() == "standalone"
         try:
             if 'hou' in sys.modules:
                 import hou  # type: ignore
@@ -85,7 +86,7 @@ def ensure_qtwebengine_initialized():
         except Exception:
             pass
         
-        if default_disable_gpu and os.environ.get("QTWEBENGINE_DISABLE_GPU") not in {"1", "true", "True"}:
+        if default_disable_gpu and os.environ.get("QTWEBENGINE_DISABLE_GPU") not in {"0", "false", "False"}:
             os.environ["QTWEBENGINE_DISABLE_GPU"] = "1"
 
         # 根据 GPU 偏好设置标志。GUI 模式统一通过 ANGLE/D3D11 使用 GPU：
@@ -93,7 +94,13 @@ def ensure_qtwebengine_initialized():
         # Windows 驱动/嵌入窗口中会产生棋盘状纹理损坏。D3D11 仍是完整的
         # GPU 加速，只禁用不稳定的零拷贝上传路径。
         gpu_disabled = os.environ.get("QTWEBENGINE_DISABLE_GPU") in {"1", "true", "True"}
-        desired = ["--no-sandbox"]
+        # --disable-renderer-accessibility：QtWebEngine 6.10.1 的无障碍桥接存在
+        # 空指针崩溃（QTBUG-142320，QAccessible::uniqueId(nullptr) ← 
+        # BrowserAccessibilityManagerQt）。Windows 11 中文输入法通过 UIA 查询
+        # 文本时会激活 Chromium 的无障碍树，用户一开始打字就可能把 python.exe
+        # 打崩（Qt6Gui.dll 0xc0000005）。关闭渲染进程无障碍树是上游推荐的
+        # 通用 workaround，不影响输入法与正常交互。
+        desired = ["--no-sandbox", "--disable-renderer-accessibility"]
 
         # Remove stale/conflicting switches inherited from launchers or an older
         # initialization pass before selecting one deterministic render path.
@@ -110,9 +117,18 @@ def ensure_qtwebengine_initialized():
             ])
         else:
             flag_set.discard("--enable-gpu")
-            desired.append("--disable-gpu")
-            # Keep Chromium's software rasterizer available. Disabling both GPU
-            # and software rendering can produce a permanently blank WebEngine.
+            flag_set.discard("--disable-gpu")
+            flag_set.discard("--use-angle=d3d11")
+            desired.extend([
+                "--disable-gpu-sandbox",
+                "--disable-gpu-compositing",
+                "--use-gl=angle",
+                "--use-angle=swiftshader",
+                "--enable-unsafe-swiftshader",
+            ])
+            # Chromium's hardware path remains disabled by forcing ANGLE to the
+            # CPU SwiftShader backend. Unlike `--disable-gpu`, this preserves
+            # WebGL for GLB previews while Qt itself stays on software rendering.
         
         # 添加所需标志
         for item in desired:
@@ -136,6 +152,14 @@ def create_app():
     """
     from PySide6.QtCore import Qt, QCoreApplication
     from PySide6.QtWidgets import QApplication
+
+    # 尽早安装：qFatal 文本与原生崩溃时的 Python 线程栈需要在任何 Qt 对象
+    # 创建之前就开始记录，否则启动阶段的崩溃无从追溯。
+    try:
+        from ..utils.crash_diagnostics import install_crash_diagnostics
+        install_crash_diagnostics()
+    except Exception:
+        pass
     
     app = QApplication.instance()
     if app is None:

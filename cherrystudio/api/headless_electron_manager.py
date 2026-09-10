@@ -30,6 +30,7 @@ _CREATE_NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 _START_TIMEOUT = 75.0
 _MIGRATION_START_TIMEOUT = 30.0 * 60.0
 _MIGRATION_RESTART_EXIT_CODE = 42
+_DEFAULT_HEADLESS_HTTP_PORT = 34115
 
 
 def _project_root() -> str:
@@ -84,6 +85,74 @@ def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
+
+
+def _parse_headless_port(text: str) -> int:
+    raw = (text or "").strip()
+    if not raw:
+        return 0
+    if "://" in raw:
+        raw = raw.split("://", 1)[1]
+    if "/" in raw:
+        raw = raw.split("/", 1)[0]
+    if ":" in raw:
+        raw = raw.rsplit(":", 1)[-1]
+    try:
+        port = int(raw)
+    except ValueError:
+        return 0
+    return port if 1 <= port <= 65535 else 0
+
+
+def _headless_port_file_for(suffix: str) -> str:
+    ports = os.path.join(os.path.expanduser("~"), ".cherrystudio", "ports")
+    os.makedirs(ports, exist_ok=True)
+    safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in (suffix or "default"))
+    return os.path.join(ports, "headless-%s.port" % safe)
+
+
+def _candidate_ports() -> list[int]:
+    found: list[int] = []
+
+    def add(port: int) -> None:
+        if port and port not in found:
+            found.append(port)
+
+    add(_parse_headless_port(os.environ.get("CHERRY_HEADLESS_URL", "")))
+    add(_parse_headless_port(os.environ.get("CHERRY_HEADLESS_PORT", "")))
+    ports_dir = os.path.join(os.path.expanduser("~"), ".cherrystudio", "ports")
+    try:
+        names = sorted(os.listdir(ports_dir))
+    except OSError:
+        names = []
+    for name in names:
+        if not name.startswith("headless-") or not name.endswith(".port"):
+            continue
+        path = os.path.join(ports_dir, name)
+        try:
+            with open(path, encoding="utf-8") as fh:
+                add(_parse_headless_port(fh.read()))
+        except OSError:
+            continue
+    add(_DEFAULT_HEADLESS_HTTP_PORT)
+    return found
+
+
+def _attach_only() -> bool:
+    return os.environ.get("CHERRY_PANEL_ATTACH") == "1"
+
+
+def _attach_timeout() -> float:
+    raw = os.environ.get("CHERRY_HEADLESS_ATTACH_TIMEOUT", "").strip()
+    if raw:
+        try:
+            return max(0.05, float(raw))
+        except ValueError:
+            pass
+    # 外挂面板只附着 COCO 已拉起的运行时，冷启动 Electron 可能超过 20 秒。
+    if _attach_only():
+        return 45.0
+    return _START_TIMEOUT
 
 
 def _legacy_coco_migration_files() -> tuple[str, str] | None:
@@ -151,7 +220,7 @@ def _find_packaged_app() -> Optional[str]:
     try:
         top_level_entries = sorted(os.listdir(web_dir))
     except OSError:
-        return None
+        top_level_entries = []
 
     # Normally just "dist" (electron-builder's default `directories.output`),
     # but also accept e.g. "dist_v2" — an alternate output dir used when a
@@ -197,6 +266,12 @@ def _find_packaged_app() -> Optional[str]:
                     candidate = os.path.join(unpacked_dir, exe_name)
                     if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
                         return candidate
+
+    # Deployed CocoClient store from publish_headless_runtime.ps1. Last so a
+    # local web/dist unpack still wins during source rebuilds.
+    published = os.path.join(r"C:\coco\headless-runtime", "win-unpacked", "Cherry Studio.exe")
+    if os.path.isfile(published):
+        return published
     return None
 
 
@@ -288,13 +363,62 @@ class HeadlessElectronManager:
         # single-slot-per-topic map here was the root cause of a real bug.
         self._streams: dict[tuple[str, str], _StreamConnection] = {}
         self._python_backend_url = ""
+        self._attached = False
+        self._owns_process = False
+        self._attach_thread: Optional[threading.Thread] = None
 
     @property
     def base_url(self) -> str:
         return f"http://127.0.0.1:{self._port}" if self._port else ""
 
     def is_running(self) -> bool:
+        if self._attached:
+            return bool(self._port)
         return bool(self._proc and self._proc.poll() is None and self._port)
+
+    def _headless_port_file(self) -> str:
+        suffix = os.environ.get(
+            "CHERRY_HEADLESS_USER_DATA_SUFFIX", self._default_user_data_suffix()
+        )
+        return _headless_port_file_for(suffix)
+
+    def _write_headless_port_file(self) -> None:
+        if not self._port:
+            return
+        path = self._headless_port_file()
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("127.0.0.1:%s\n" % self._port)
+        except OSError as exc:
+            _log(f"[HeadlessElectron] failed to write port file {path}: {exc}")
+
+    def _remove_headless_port_file(self) -> None:
+        if not self._owns_process:
+            return
+        path = self._headless_port_file()
+        try:
+            if os.path.isfile(path):
+                os.remove(path)
+        except OSError:
+            pass
+
+    def _adopt_existing_unlocked(self) -> bool:
+        """Reuse a live headless HTTP bridge owned by another process."""
+        for port in _candidate_ports():
+            previous = self._port
+            self._port = port
+            if self._healthcheck():
+                self._attached = True
+                self._owns_process = False
+                self._proc = None
+                self._ensure_event_subscription()
+                self._push_managed_proxy()
+                self._push_backend_url()
+                self._write_headless_port_file()
+                _log(f"[HeadlessElectron] Attached to existing runtime at {self.base_url}")
+                return True
+            self._port = previous
+        return False
 
     def set_python_backend_url(self, url: str) -> None:
         """Pin the exact embedded backend for this DCC instance.
@@ -423,15 +547,32 @@ class HeadlessElectronManager:
                 f"(configuration hidden, non-fatal): {exc}"
             )
 
-    def start(self) -> tuple[bool, str]:
+    def start(self, wait: Optional[float] = None) -> tuple[bool, str]:
         with self._lock:
             self._desired_running = True
             if self.is_running() and self._healthcheck():
                 self._ensure_event_subscription()
                 self._push_managed_proxy()
                 self._push_backend_url()
+                self._write_headless_port_file()
+                return True, self.base_url
+            if self._adopt_existing_unlocked():
                 return True, self.base_url
 
+        if _attach_only():
+            timeout = _attach_timeout() if wait is None else max(0.05, float(wait))
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                with self._lock:
+                    if self._adopt_existing_unlocked():
+                        return True, self.base_url
+                time.sleep(0.25)
+            return False, (
+                "Headless Electron is not running in COCO. "
+                "Start COCO Client first, then reopen the DCC Agent panel."
+            )
+
+        with self._lock:
             web_dir = _web_dir()
             packaged_app = _find_packaged_app()
             if packaged_app:
@@ -453,6 +594,8 @@ class HeadlessElectronManager:
                 launch_cwd = web_dir
 
             self._stop_process_locked()
+            self._attached = False
+            self._owns_process = False
             self._port = _free_port()
             env = os.environ.copy()
             for key in ("PYTHONHOME", "PYTHONPATH", "ELECTRON_RUN_AS_NODE", "NODE_OPTIONS"):
@@ -540,9 +683,20 @@ class HeadlessElectronManager:
                     with self._lock:
                         self._stop_process_locked()
                     return self.start()
-                self.stop()
+                with self._lock:
+                    self._stop_process_locked()
+                    if self._adopt_existing_unlocked():
+                        _log(
+                            "[HeadlessElectron] Spawn exited "
+                            f"{code}; attached to the instance that holds the lock"
+                        )
+                        return True, self.base_url
                 return False, f"Headless Electron exited during startup (code {code})"
             if self._healthcheck():
+                with self._lock:
+                    self._owns_process = True
+                    self._attached = False
+                    self._write_headless_port_file()
                 self._ensure_event_subscription()
                 self._event_ready.wait(timeout=5)
                 self._push_managed_proxy()
@@ -554,14 +708,34 @@ class HeadlessElectronManager:
         self.stop()
         return False, "Headless Electron startup timed out"
 
+    def begin_attach_in_background(self) -> None:
+        """Attach/spawn without blocking the Qt GUI thread."""
+
+        def _run() -> None:
+            ok, message = self.start()
+            _log("[HeadlessElectron] background start ready=%s %s" % (ok, message))
+
+        with self._lock:
+            thread = self._attach_thread
+            if thread is not None and thread.is_alive():
+                return
+            thread = threading.Thread(target=_run, name="HeadlessElectronStart", daemon=True)
+            self._attach_thread = thread
+        thread.start()
+
     def ensure_running(self) -> None:
         if self.is_running() and self._healthcheck():
             return
-        ok, message = self.start()
+        wait = 2.0 if _attach_only() else None
+        ok, message = self.start(wait=wait)
         if not ok:
             raise RuntimeError(message)
 
     def restart(self) -> tuple[bool, str]:
+        if self._attached:
+            if self._healthcheck():
+                return True, self.base_url
+            return self.start()
         self.stop()
         return self.start()
 
@@ -572,9 +746,17 @@ class HeadlessElectronManager:
             for stream in list(self._streams.values()):
                 stream.close()
             self._streams.clear()
+            if self._attached:
+                self._attached = False
+                self._port = 0
+                self._proc = None
+                return
             self._stop_process_locked()
 
     def _stop_process_locked(self) -> None:
+        self._remove_headless_port_file()
+        self._owns_process = False
+        self._attached = False
         proc, self._proc = self._proc, None
         self._port = 0
         log_file, self._log_file = self._log_file, None

@@ -258,7 +258,7 @@ class AgentDb {
       .run({
         id,
         agent_id: agentId,
-        agent_type: 'claude-code',
+        agent_type: form.agent_type || form.agentType || 'claude-code',
         name: form.name ?? null,
         description: form.description ?? null,
         accessible_paths: JSON.stringify(form.accessible_paths || []),

@@ -1,0 +1,17 @@
+import "./react-C1DTAr29.js";
+import { t as createLucideIcon } from "./createLucideIcon-iAH3Or8b.js";
+/**
+* @license lucide-react v0.525.0 - ISC
+*
+* This source code is licensed under the ISC license.
+* See the LICENSE file in the root directory of this source tree.
+*/
+var __iconNode = [["path", {
+	d: "M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z",
+	key: "qn84l0"
+}], ["path", {
+	d: "m9.5 14.5 5-5",
+	key: "qviqfa"
+}]];
+var TicketSlash = createLucideIcon("ticket-slash", __iconNode);
+export { __iconNode, TicketSlash as default };

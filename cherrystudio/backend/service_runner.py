@@ -167,6 +167,22 @@ class BackendService:
                 os.path.expanduser("~"), ".cherrystudio", "ports", f"{session_id}.port"
             )
 
+    def _warm_headless(self) -> None:
+        """Coco 后端一启动就拉无头运行时，避免 Houdini 面板第一次 GET /agents 空等。"""
+        if os.environ.get("CHERRY_PANEL_ATTACH") == "1":
+            return
+
+        def _run() -> None:
+            try:
+                from ..api.headless_electron_manager import get_headless_electron_manager
+
+                ok, message = get_headless_electron_manager().start()
+                _log("[BackendService] headless ready=%s %s" % (ok, message))
+            except Exception as exc:  # noqa: BLE001
+                _log("[BackendService] headless warm failed: %s" % exc)
+
+        threading.Thread(target=_run, name="CherryHeadlessWarm", daemon=True).start()
+
     def start(self, host: str = "127.0.0.1", port: int = 0) -> int:
         """
         嵌入模式启动：在后台线程运行，立即返回实际端口号。
@@ -186,6 +202,7 @@ class BackendService:
         actual_port = self._server.start()
         _write_port_file(self._port_file, actual_port, host)
         _log(f"[BackendService] Started (embedded) on {host}:{actual_port}")
+        self._warm_headless()
         return actual_port
 
     def run_forever(self, host: str = "127.0.0.1", port: int = 9876):
@@ -210,6 +227,8 @@ class BackendService:
         print(f"  API prefix   : /api/v1/")
         print(f"{'='*55}")
         print("  Press Ctrl+C to stop.\n")
+
+        self._warm_headless()
 
         # 注册退出信号
         def _shutdown(sig, frame):

@@ -21,8 +21,8 @@ Cherry 只负责列出 ai-pipeline server 上已注册的 workflow，并跳转�
 
 1. 插件前端读取 `ai-pipeline-bridge` 配置中的 `api_base`
 2. 通过 bridge 后端请求 `GET /api/workflows`，列出所有已注册 workflow
-3. 用户选择一个 workflow 后，webview 跳转到 `{api_base}/launch/?workflow_id=<workflow_id>`
-4. ai-pipeline 的 `/launch/` 页面读取 workflow schema、上传输入 asset、启动 run
+3. 用户选择一个 workflow 后，webview 跳转到 `{api_base}/launch/?workflow_id=<workflow_id>&operator=<username>`
+4. ai-pipeline 的 `/launch/` 页面读取 workflow schema、上传输入 asset、启动 run（`operator` 写入 `run.actor_id`，与 NewAPI 用户名一致）
 5. run 进入 HITL 时，页面跳转到 ai-pipeline 的 `/review/`
 6. `/review/` 负责完成审阅、重试、before approve hook、delivery 等框架逻辑
 
@@ -62,7 +62,7 @@ API 地址按以下优先级解析：
 | 方法 | 路径 | 用途 | 透传到 ai-pipeline |
 |---|---|---|---|
 | `GET`  | `/plugins-ui/ai-pipeline-bridge/` | 通用 workflow 列表；带 `?workflow_id=...` 时兼容旧直接跳转 | — |
-| `GET`  | `/api/v1/plugins/ai-pipeline-bridge/health` | 检查后端 ai-pipeline 可达性 | `GET /api/nodes` |
+| `GET`  | `/api/v1/plugins/ai-pipeline-bridge/health` | 检查后端 ai-pipeline 可达性；返回 `operator`（与 NewAPI 用户名一致） | `GET /api/nodes` |
 | `GET`  | `/api/v1/plugins/ai-pipeline-bridge/workflows` | 兼容：列工作流目录 | `GET /api/workflows` |
 | `POST` | `/api/v1/plugins/ai-pipeline-bridge/open-gui` | 兼容：旧 Cherry 启动流程 | `POST /api/workflows/{id}/runs` |
 | `GET`  | `/api/v1/plugins/ai-pipeline-bridge/run?run_id=` | 兼容：查 run 状态 | `GET /api/workflows/runs/{run_id}` |
@@ -73,7 +73,7 @@ API 地址按以下优先级解析：
 ```json
 {
   "workflow_id": "sam3-image-to-3d",   // 默认 sam3-image-segment-only
-  "operator": "alice",                  // 写进 mask asset 审计字段
+  "operator": "alice",                  // 可选；省略时用 newapi-user.json 或 OS 登录名
   "open_in_browser": false              // true 时同时调 webbrowser.open 兜底
 }
 ```
